@@ -1,0 +1,132 @@
+﻿#include "SoccerGoalKickExecutionState.h"
+
+#include "SoccerMatchManager.h"
+#include "SoccerGoalLineRestart.h"
+#include "SoccerAICharacter.h"
+#include "SoccerBall.h"
+#include "SoccerDebugManager.h"
+#include "GameFramework/CharacterMovementComponent.h"
+
+bool FSoccerGoalKickExecutionState::Enter(ASoccerMatchManager& Manager)
+{
+	ASoccerAICharacter* Taker = Manager.GoalLineRestart.GetTaker();
+
+	if (
+		Manager.GoalLineRestart.GetType() != ESoccerGoalLineRestartType::GoalKick ||
+		!IsValid(Taker) ||
+		!IsValid(Manager.SoccerBall)
+	)
+	{
+		Manager.CancelGoalLineRestart();
+		return false;
+	}
+
+	FVector RunDirection = FVector::ForwardVector;
+	FVector RunThroughLocation = FVector::ZeroVector;
+
+	if (!Manager.BuildRestartKickRunGeometryFromCurrentTaker(
+		Taker,
+		Manager.GoalKickRunThroughDistance,
+		RunDirection,
+		RunThroughLocation
+	))
+	{
+		Manager.CancelGoalLineRestart();
+		return false;
+	}
+
+	Manager.GoalLineRestart.BeginGoalKickFinalRunRuntime(
+		Manager,
+		RunDirection,
+		RunThroughLocation
+	);
+
+	Manager.MatchPlayState = ESoccerMatchPlayState::GoalLineRestartTaking;
+	Manager.ResetActiveRestartReadyHold();
+
+	ASoccerDebugManager::Message(
+		&Manager,
+		ESoccerDebugCategory::Restarts,
+		TEXT("GOAL KICK EXECUTION: comienza la carrera final"),
+		FColor::Cyan
+	);
+	return true;
+}
+
+void FSoccerGoalKickExecutionState::Tick(
+	ASoccerMatchManager& Manager,
+	float DeltaTime
+)
+{
+	ASoccerAICharacter* Taker = Manager.GoalLineRestart.GetTaker();
+
+	if (
+		Manager.GoalLineRestart.GetType() != ESoccerGoalLineRestartType::GoalKick ||
+		!Manager.GoalLineRestart.IsGoalKickFinalRunActive() ||
+		!IsValid(Taker) ||
+		!IsValid(Manager.SoccerBall)
+	)
+	{
+		Manager.CancelGoalLineRestart();
+		Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+		return;
+	}
+
+	const FRotator DesiredRotation =
+		Manager.GoalLineRestart.GetGoalKickRunDirection().Rotation();
+
+	Taker->SetActorRotation(
+		FMath::RInterpConstantTo(
+			Taker->GetActorRotation(),
+			DesiredRotation,
+			DeltaTime,
+			540.0f
+		)
+	);
+
+	const ERestartKickContactResult ContactResult =
+		Manager.GoalLineRestart.EvaluateGoalKickContact(Manager);
+
+	if (ContactResult == ERestartKickContactResult::MissedBall)
+	{
+		Manager.GoalLineRestart.ResetGoalKickFinalRunRuntime(Manager);
+		Manager.RecalculateGoalLineRestartGeometry();
+
+		const FVector& RunUpStartLocation =
+			Manager.GoalLineRestart.GetGoalKickRunUpStartLocation();
+
+		if (IsValid(Taker) && !RunUpStartLocation.IsNearlyZero())
+		{
+			Manager.ActiveRestartAITargetLocations.Add(
+				Taker,
+				RunUpStartLocation
+			);
+		}
+
+		Manager.RequestMatchStateTransition(
+			ESoccerMatchStateTransition::GoalKickPreparation
+		);
+		return;
+	}
+
+	if (ContactResult != ERestartKickContactResult::Contact)
+	{
+		return;
+	}
+
+	if (UCharacterMovementComponent* Movement = Taker->GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		Movement->Velocity = FVector::ZeroVector;
+	}
+
+	Taker->SetActorRotation(
+		Manager.GoalLineRestart.GetKickDirection().Rotation()
+	);
+	Manager.CompleteGoalLineRestart();
+
+	if (Manager.GoalLineRestart.GetType() == ESoccerGoalLineRestartType::None)
+	{
+		Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+	}
+}

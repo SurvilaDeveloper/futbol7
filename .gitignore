@@ -1,0 +1,45 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+
+# Unreal generated
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Also ignore generated folders inside plugins
+**/Binaries/
+**/Intermediate/
+
+# Generated Visual Studio project files
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# Unreal temporary files
+*.opensdf
+*.sdf
+*.tmp
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Unreal Editor per-user settings
+Config/DefaultEditorPerProjectUserSettings.ini
+
+# Personal notes
+/notas
+notas/
+
+# Archives
+*.rar
+*.zip

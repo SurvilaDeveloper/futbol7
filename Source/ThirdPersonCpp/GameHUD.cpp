@@ -1,0 +1,1177 @@
+//GameHUD.cpp
+#include "GameHUD.h"
+
+#include "ThirdPersonCppCharacter.h"
+#include "Engine/Canvas.h"
+#include "Kismet/GameplayStatics.h"
+
+#include "SoccerMatchManager.h"
+#include "SoccerTeamTypes.h"
+
+#include "SoccerDebugManager.h"
+#include "SoccerFormationMenuWidget.h"
+#include "SoccerQuickTacticsWidget.h"
+#include "SoccerTacticalPresetManager.h"
+
+#include "Engine/Engine.h"
+#include "EngineUtils.h"
+#include "GameFramework/PlayerController.h"
+#include "TimerManager.h"
+#include "HAL/PlatformTime.h"
+
+
+void AGameHUD::BeginPlay()
+{
+	Super::BeginPlay();
+
+	FindMatchManager();
+	EnsureTacticalPresetManager();
+
+	if (
+		IsValid(MatchManager) &&
+		MatchManager->ShouldShowFormationMenuAtMatchStart()
+	)
+	{
+		FTimerDelegate OpenMenuDelegate;
+		OpenMenuDelegate.BindUObject(this, &AGameHUD::ShowFormationMenu);
+		GetWorldTimerManager().SetTimerForNextTick(OpenMenuDelegate);
+	}
+}
+
+void AGameHUD::ShowFormationMenu()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		return;
+	}
+
+	EnsureTacticalPresetManager();
+
+	APlayerController* PlayerController =
+		UGameplayStatics::GetPlayerController(GetWorld(), 0);
+
+	if (PlayerController == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(FormationMenuWidget))
+	{
+		FormationMenuWidget = CreateWidget<USoccerFormationMenuWidget>(
+			PlayerController,
+			USoccerFormationMenuWidget::StaticClass()
+		);
+	}
+
+	if (!IsValid(FormationMenuWidget))
+	{
+		return;
+	}
+
+	FormationMenuWidget->InitializeForMatchManager(
+		MatchManager,
+		TacticalPresetManager
+	);
+
+	if (!FormationMenuWidget->IsInViewport())
+	{
+		FormationMenuWidget->AddToViewport(100);
+	}
+
+	FormationMenuWidget->ActivateMenu(
+		MatchManager->ShouldPauseGameWhileFormationMenuOpen()
+	);
+}
+
+void AGameHUD::HideFormationMenu()
+{
+	if (IsValid(FormationMenuWidget) && FormationMenuWidget->IsInViewport())
+	{
+		FormationMenuWidget->CloseMenu();
+	}
+}
+
+void AGameHUD::ToggleFormationMenu()
+{
+	if (IsFormationMenuVisible())
+	{
+		HideFormationMenu();
+	}
+	else
+	{
+		ShowFormationMenu();
+	}
+}
+
+bool AGameHUD::IsFormationMenuVisible() const
+{
+	return
+		IsValid(FormationMenuWidget) &&
+		FormationMenuWidget->IsInViewport();
+}
+
+void AGameHUD::ShowQuickTacticsMenu()
+{
+	if (IsFormationMenuVisible())
+	{
+		return;
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+	EnsureTacticalPresetManager();
+
+	if (!IsValid(TacticalPresetManager))
+	{
+		return;
+	}
+
+	APlayerController* PlayerController =
+		UGameplayStatics::GetPlayerController(GetWorld(), 0);
+	if (PlayerController == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(QuickTacticsWidget))
+	{
+		QuickTacticsWidget = CreateWidget<USoccerQuickTacticsWidget>(
+			PlayerController,
+			USoccerQuickTacticsWidget::StaticClass()
+		);
+	}
+
+	if (!IsValid(QuickTacticsWidget))
+	{
+		return;
+	}
+
+	QuickTacticsWidget->InitializeForPresetManager(TacticalPresetManager);
+	if (!QuickTacticsWidget->IsInViewport())
+	{
+		QuickTacticsWidget->AddToViewport(110);
+	}
+	QuickTacticsWidget->ActivateMenu();
+}
+
+void AGameHUD::HideQuickTacticsMenu()
+{
+	if (IsValid(QuickTacticsWidget) && QuickTacticsWidget->IsInViewport())
+	{
+		QuickTacticsWidget->CloseMenu();
+	}
+}
+
+void AGameHUD::ToggleQuickTacticsMenu()
+{
+	if (IsQuickTacticsMenuVisible())
+	{
+		HideQuickTacticsMenu();
+	}
+	else
+	{
+		ShowQuickTacticsMenu();
+	}
+}
+
+bool AGameHUD::IsQuickTacticsMenuVisible() const
+{
+	return
+		IsValid(QuickTacticsWidget) &&
+		QuickTacticsWidget->IsInViewport();
+}
+
+void AGameHUD::ShowQuickTacticsFeedback(const FString& Message)
+{
+	QuickTacticsFeedbackText = Message;
+	QuickTacticsFeedbackExpiryRealTime = FPlatformTime::Seconds() + 2.25;
+}
+
+void AGameHUD::EnsureTacticalPresetManager()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	if (!IsValid(MatchManager) || IsValid(TacticalPresetManager))
+	{
+		return;
+	}
+
+	TacticalPresetManager = NewObject<USoccerTacticalPresetManager>(this);
+	if (IsValid(TacticalPresetManager))
+	{
+		TacticalPresetManager->Initialize(MatchManager);
+	}
+}
+
+void AGameHUD::DrawQuickTacticsFeedback()
+{
+	if (
+		Canvas == nullptr ||
+		QuickTacticsFeedbackText.IsEmpty() ||
+		FPlatformTime::Seconds() > QuickTacticsFeedbackExpiryRealTime
+	)
+	{
+		return;
+	}
+
+	UFont* SmallFont = GEngine != nullptr ? GEngine->GetSmallFont() : nullptr;
+	if (SmallFont == nullptr)
+	{
+		return;
+	}
+
+	const float TextScale = 1.15f;
+	float TextWidth = 0.0f;
+	float TextHeight = 0.0f;
+	GetTextSize(
+		QuickTacticsFeedbackText,
+		TextWidth,
+		TextHeight,
+		SmallFont,
+		TextScale
+	);
+
+	const float PaddingX = 16.0f;
+	const float PaddingY = 9.0f;
+	const float BoxWidth = TextWidth + PaddingX * 2.0f;
+	const float BoxHeight = TextHeight + PaddingY * 2.0f;
+	const float BoxX = FMath::Max(18.0f, Canvas->SizeX - BoxWidth - 28.0f);
+	const float BoxY = FMath::Max(
+		18.0f,
+		Canvas->SizeY - BoxHeight - 70.0f
+	);
+
+	DrawRect(
+		FLinearColor(0.02f, 0.12f, 0.08f, 0.86f),
+		BoxX,
+		BoxY,
+		BoxWidth,
+		BoxHeight
+	);
+	DrawText(
+		QuickTacticsFeedbackText,
+		FLinearColor(0.70f, 1.0f, 0.82f, 1.0f),
+		BoxX + PaddingX,
+		BoxY + PaddingY,
+		SmallFont,
+		TextScale
+	);
+}
+
+void AGameHUD::DrawHUD()
+{
+	Super::DrawHUD();
+
+	DrawMatchScoreboard();
+	DrawMatchClock();
+	DrawHumanPassRequestIndicator();
+	DrawHumanJumpHeaderIndicator();
+	DrawQuickTacticsFeedback();
+	DrawSoccerDebugTextFeed();
+	DrawSoccerDebugPanel();
+
+	AThirdPersonCppCharacter* PlayerCharacter = Cast<AThirdPersonCppCharacter>(
+		UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)
+	);
+
+	if (PlayerCharacter == nullptr)
+	{
+		return;
+	}
+
+	const int32 Score = PlayerCharacter->GetScore();
+
+	const FString ScoreText = FString::Printf(TEXT("Puntaje: %d"), Score);
+
+	DrawText(
+		ScoreText,
+		FColor::White,
+		50.0f,
+		50.0f,
+		nullptr,
+		2.0f
+	);
+
+	float AimScreenX = 0.0f;
+	float AimScreenY = 0.0f;
+
+	if (PlayerCharacter->GetAimCursorScreenPosition(AimScreenX, AimScreenY))
+	{
+		const float CursorSize = 10.0f;
+
+		DrawLine(
+			AimScreenX - CursorSize * 6,
+			AimScreenY,
+			AimScreenX + CursorSize * 6,
+			AimScreenY,
+			FLinearColor::Green,
+			2.0f
+		);
+
+		DrawLine(
+			AimScreenX,
+			AimScreenY - CursorSize,
+			AimScreenX,
+			AimScreenY + CursorSize,
+			FLinearColor::Green,
+			2.0f
+		);
+	}
+
+	const float BarX = 50.0f;
+	const float BarWidth = 260.0f;
+	const float BarHeight = 14.0f;
+
+	// ============================================================
+	// Barra de energia del jugador
+	// ============================================================
+
+	const float EnergyPercent = PlayerCharacter->GetPlayerEnergyPercent();
+
+	const float EnergyBarY = 105.0f;
+
+	DrawText(
+		TEXT("Energia"),
+		FColor::White,
+		BarX,
+		EnergyBarY - 28.0f,
+		nullptr,
+		1.2f
+	);
+
+	DrawRect(
+		FLinearColor(0.05f, 0.05f, 0.05f, 0.85f),
+		BarX,
+		EnergyBarY,
+		BarWidth,
+		BarHeight
+	);
+
+	DrawRect(
+		FLinearColor(0.0f, 0.8f, 0.25f, 1.0f),
+		BarX,
+		EnergyBarY,
+		BarWidth * EnergyPercent,
+		BarHeight
+	);
+
+	DrawLine(
+		BarX,
+		EnergyBarY,
+		BarX + BarWidth,
+		EnergyBarY,
+		FLinearColor::White,
+		1.0f
+	);
+
+	DrawLine(
+		BarX,
+		EnergyBarY + BarHeight,
+		BarX + BarWidth,
+		EnergyBarY + BarHeight,
+		FLinearColor::White,
+		1.0f
+	);
+
+	DrawLine(
+		BarX,
+		EnergyBarY,
+		BarX,
+		EnergyBarY + BarHeight,
+		FLinearColor::White,
+		1.0f
+	);
+
+	DrawLine(
+		BarX + BarWidth,
+		EnergyBarY,
+		BarX + BarWidth,
+		EnergyBarY + BarHeight,
+		FLinearColor::White,
+		1.0f
+	);
+
+	const FString EnergyText = FString::Printf(
+		TEXT("%d%%"),
+		FMath::RoundToInt(EnergyPercent * 100.0f)
+	);
+
+	DrawText(
+		EnergyText,
+		FColor::White,
+		BarX + BarWidth + 12.0f,
+		EnergyBarY - 5.0f,
+		nullptr,
+		1.0f
+	);
+
+	// ============================================================
+	// Barra de fuerza acumulada de patada release
+	// ============================================================
+
+	float KickChargePercent = 0.0f;
+
+	if (PlayerCharacter->GetKickChargePercent(KickChargePercent))
+	{
+		const float KickBarY = 150.0f;
+
+		DrawText(
+			TEXT("Fuerza de disparo"),
+			FColor::White,
+			BarX,
+			KickBarY - 28.0f,
+			nullptr,
+			1.2f
+		);
+
+		DrawRect(
+			FLinearColor(0.05f, 0.05f, 0.05f, 0.85f),
+			BarX,
+			KickBarY,
+			BarWidth,
+			BarHeight
+		);
+
+		DrawRect(
+			FLinearColor(1.0f, 0.7f, 0.0f, 1.0f),
+			BarX,
+			KickBarY,
+			BarWidth * KickChargePercent,
+			BarHeight
+		);
+
+		DrawLine(
+			BarX,
+			KickBarY,
+			BarX + BarWidth,
+			KickBarY,
+			FLinearColor::White,
+			1.0f
+		);
+
+		DrawLine(
+			BarX,
+			KickBarY + BarHeight,
+			BarX + BarWidth,
+			KickBarY + BarHeight,
+			FLinearColor::White,
+			1.0f
+		);
+
+		DrawLine(
+			BarX,
+			KickBarY,
+			BarX,
+			KickBarY + BarHeight,
+			FLinearColor::White,
+			1.0f
+		);
+
+		DrawLine(
+			BarX + BarWidth,
+			KickBarY,
+			BarX + BarWidth,
+			KickBarY + BarHeight,
+			FLinearColor::White,
+			1.0f
+		);
+	}
+}
+
+void AGameHUD::DrawHumanJumpHeaderIndicator()
+{
+	if (Canvas == nullptr)
+	{
+		return;
+	}
+
+	AThirdPersonCppCharacter* PlayerCharacter =
+		Cast<AThirdPersonCppCharacter>(
+			UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)
+		);
+
+	if (!IsValid(PlayerCharacter))
+	{
+		return;
+	}
+
+	FString StatusText;
+	FLinearColor StatusColor;
+
+	if (!PlayerCharacter->GetHumanJumpHeaderHUDStatus(
+		StatusText,
+		StatusColor
+	))
+	{
+		return;
+	}
+
+	UFont* SmallFont =
+		GEngine != nullptr
+		? GEngine->GetSmallFont()
+		: nullptr;
+
+	if (SmallFont == nullptr)
+	{
+		return;
+	}
+
+	const float TextScale = 1.10f;
+	float TextWidth = 0.0f;
+	float TextHeight = 0.0f;
+
+	GetTextSize(
+		StatusText,
+		TextWidth,
+		TextHeight,
+		SmallFont,
+		TextScale
+	);
+
+	const float PaddingX = 14.0f;
+	const float PaddingY = 8.0f;
+	const float BoxWidth = TextWidth + PaddingX * 2.0f;
+	const float BoxHeight = TextHeight + PaddingY * 2.0f;
+	const float BoxX = FMath::Max(18.0f, Canvas->SizeX - BoxWidth - 28.0f);
+	const float BoxY = 118.0f;
+
+	DrawRect(
+		FLinearColor(0.0f, 0.0f, 0.0f, 0.62f),
+		BoxX,
+		BoxY,
+		BoxWidth,
+		BoxHeight
+	);
+
+	DrawText(
+		StatusText,
+		StatusColor,
+		BoxX + PaddingX,
+		BoxY + PaddingY,
+		SmallFont,
+		TextScale
+	);
+}
+
+void AGameHUD::DrawMatchClock()
+{
+	if (Canvas == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	if (
+		!IsValid(MatchManager) ||
+		!MatchManager->ShouldShowMatchClockHUD()
+	)
+	{
+		return;
+	}
+
+	UFont* ClockFont =
+		GEngine != nullptr
+		? GEngine->GetSmallFont()
+		: nullptr;
+
+	if (ClockFont == nullptr)
+	{
+		return;
+	}
+
+	const ESoccerMatchPeriod MatchPeriod =
+		MatchManager->GetCurrentMatchPeriod();
+
+	FString PeriodText = TEXT("1T");
+	if (MatchPeriod == ESoccerMatchPeriod::HalfTime)
+	{
+		PeriodText = TEXT("ET");
+	}
+	else if (MatchPeriod == ESoccerMatchPeriod::SecondHalf)
+	{
+		PeriodText = TEXT("2T");
+	}
+	else if (MatchPeriod == ESoccerMatchPeriod::FullTime)
+	{
+		PeriodText = TEXT("FT");
+	}
+
+	const int32 TotalSeconds = FMath::Max(
+		0,
+		FMath::FloorToInt(MatchManager->GetTotalMatchElapsedSeconds())
+	);
+	const int32 Minutes = TotalSeconds / 60;
+	const int32 Seconds = TotalSeconds % 60;
+
+	FString ClockText = FString::Printf(
+		TEXT("%s  %02d:%02d"),
+		*PeriodText,
+		Minutes,
+		Seconds
+	);
+
+	if (MatchPeriod == ESoccerMatchPeriod::HalfTime)
+	{
+		ClockText += FString::Printf(
+			TEXT("  (%.1fs)"),
+			MatchManager->GetHalfTimeRemainingSeconds()
+		);
+	}
+
+	const float ClockScale = 1.2f;
+	float ClockWidth = 0.0f;
+	float ClockHeight = 0.0f;
+	GetTextSize(
+		ClockText,
+		ClockWidth,
+		ClockHeight,
+		ClockFont,
+		ClockScale
+	);
+
+	const float PaddingX = 14.0f;
+	const float PaddingY = 8.0f;
+	const float BoxWidth = ClockWidth + PaddingX * 2.0f;
+	const float BoxHeight = ClockHeight + PaddingY * 2.0f;
+
+	// El pedido de pase humano ocupa la esquina superior derecha.
+	// El reloj se mantiene centrado, debajo del marcador, para que
+	// ambos HUD sean independientes y no se superpongan.
+	const float BoxX = Canvas->SizeX * 0.5f - BoxWidth * 0.5f;
+	const float BoxY = 88.0f;
+
+	DrawRect(
+		FLinearColor(0.0f, 0.0f, 0.0f, 0.55f),
+		BoxX,
+		BoxY,
+		BoxWidth,
+		BoxHeight
+	);
+
+	DrawText(
+		ClockText,
+		FLinearColor::White,
+		BoxX + PaddingX,
+		BoxY + PaddingY,
+		ClockFont,
+		ClockScale
+	);
+}
+
+void AGameHUD::DrawHumanPassRequestIndicator()
+{
+	if (Canvas == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	if (
+		!IsValid(MatchManager) ||
+		!MatchManager->ShouldShowHumanPassRequestHUD()
+	)
+	{
+		return;
+	}
+
+	UFont* SmallFont =
+		GEngine != nullptr
+		? GEngine->GetSmallFont()
+		: nullptr;
+
+	if (SmallFont == nullptr)
+	{
+		return;
+	}
+
+	const ESoccerHumanPassRequestType RequestType =
+		MatchManager->GetActiveHumanPassRequestType();
+
+	FString StatusText = TEXT("PEDIDO: NINGUNO");
+	FLinearColor StatusColor(0.68f, 0.68f, 0.68f, 1.0f);
+
+	if (RequestType == ESoccerHumanPassRequestType::Normal)
+	{
+		StatusText = TEXT("PEDIDO: A LOS PIES");
+		StatusColor = FLinearColor(0.25f, 0.85f, 1.0f, 1.0f);
+	}
+	else if (RequestType == ESoccerHumanPassRequestType::AerialHeader)
+	{
+		StatusText = TEXT("PEDIDO: AEREO");
+		StatusColor = FLinearColor(1.0f, 0.78f, 0.18f, 1.0f);
+	}
+
+	if (RequestType != ESoccerHumanPassRequestType::None)
+	{
+		const float RemainingTime =
+			MatchManager->GetActiveHumanPassRequestRemainingTime();
+
+		if (RemainingTime >= 0.0f)
+		{
+			StatusText += FString::Printf(
+				TEXT("  %.1f s"),
+				RemainingTime
+			);
+		}
+	}
+
+	const float StatusScale = 1.15f;
+	float StatusWidth = 0.0f;
+	float StatusHeight = 0.0f;
+
+	GetTextSize(
+		StatusText,
+		StatusWidth,
+		StatusHeight,
+		SmallFont,
+		StatusScale
+	);
+
+	const float PaddingX = 14.0f;
+	const float PaddingY = 8.0f;
+	const float BoxWidth = StatusWidth + PaddingX * 2.0f;
+	const float BoxHeight = StatusHeight + PaddingY * 2.0f;
+	const float BoxX = FMath::Max(18.0f, Canvas->SizeX - BoxWidth - 28.0f);
+	const float BoxY = 28.0f;
+
+	DrawRect(
+		FLinearColor(0.0f, 0.0f, 0.0f, 0.62f),
+		BoxX,
+		BoxY,
+		BoxWidth,
+		BoxHeight
+	);
+
+	DrawText(
+		StatusText,
+		StatusColor,
+		BoxX + PaddingX,
+		BoxY + PaddingY,
+		SmallFont,
+		StatusScale
+	);
+
+	FString BriefText;
+	FLinearColor BriefColor;
+
+	if (!MatchManager->GetHumanPassRequestHUDBrief(
+		BriefText,
+		BriefColor
+	))
+	{
+		return;
+	}
+
+	const float BriefScale = 1.0f;
+	float BriefWidth = 0.0f;
+	float BriefHeight = 0.0f;
+
+	GetTextSize(
+		BriefText,
+		BriefWidth,
+		BriefHeight,
+		SmallFont,
+		BriefScale
+	);
+
+	const float BriefBoxWidth = BriefWidth + PaddingX * 2.0f;
+	const float BriefBoxHeight = BriefHeight + PaddingY * 2.0f;
+	const float BriefBoxX =
+		FMath::Max(18.0f, Canvas->SizeX - BriefBoxWidth - 28.0f);
+	const float BriefBoxY = BoxY + BoxHeight + 6.0f;
+
+	DrawRect(
+		FLinearColor(0.0f, 0.0f, 0.0f, 0.52f),
+		BriefBoxX,
+		BriefBoxY,
+		BriefBoxWidth,
+		BriefBoxHeight
+	);
+
+	DrawText(
+		BriefText,
+		BriefColor,
+		BriefBoxX + PaddingX,
+		BriefBoxY + PaddingY,
+		SmallFont,
+		BriefScale
+	);
+}
+
+
+void AGameHUD::DrawSoccerDebugTextFeed()
+{
+	if (Canvas == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(DebugManager))
+	{
+		DebugManager = ASoccerDebugManager::Get(this);
+	}
+
+	if (!IsValid(DebugManager) || !DebugManager->ShouldDrawTextFeed())
+	{
+		return;
+	}
+
+	TArray<FSoccerDebugPanelLine> Lines;
+	DebugManager->BuildVisibleTextFeedLines(Lines);
+
+	if (Lines.Num() <= 0)
+	{
+		return;
+	}
+
+	UFont* SmallFont = GEngine != nullptr ? GEngine->GetSmallFont() : nullptr;
+	if (SmallFont == nullptr)
+	{
+		return;
+	}
+
+	const float LineHeight = DebugManager->GetTextFeedLineHeight();
+	const float FeedLeft = DebugManager->GetTextFeedLeft();
+	const float BottomMargin = DebugManager->GetTextFeedBottomMargin();
+	const float Padding = 8.0f;
+
+	float MaxWidth = 0.0f;
+	for (const FSoccerDebugPanelLine& Line : Lines)
+	{
+		float W = 0.0f;
+		float H = 0.0f;
+		GetTextSize(Line.Text, W, H, SmallFont, Line.Scale);
+		MaxWidth = FMath::Max(MaxWidth, W);
+	}
+
+	const float FeedHeight = Padding * 2.0f + LineHeight * Lines.Num();
+	const float FeedY = FMath::Max(10.0f, Canvas->SizeY - BottomMargin - FeedHeight);
+
+	DrawRect(
+		FLinearColor(0.0f, 0.0f, 0.0f, DebugManager->GetTextFeedBackgroundAlpha()),
+		FeedLeft,
+		FeedY,
+		MaxWidth + Padding * 2.0f,
+		FeedHeight
+	);
+
+	float TextY = FeedY + Padding;
+	for (const FSoccerDebugPanelLine& Line : Lines)
+	{
+		DrawText(
+			Line.Text,
+			Line.Color,
+			FeedLeft + Padding,
+			TextY,
+			SmallFont,
+			Line.Scale
+		);
+		TextY += LineHeight;
+	}
+}
+
+void AGameHUD::DrawSoccerDebugPanel()
+{
+	if (Canvas == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(DebugManager))
+	{
+		DebugManager =
+			ASoccerDebugManager::Get(this);
+	}
+
+	if (
+		!IsValid(DebugManager) ||
+		!DebugManager->ShouldDrawPanel()
+		)
+	{
+		return;
+	}
+
+	TArray<FSoccerDebugPanelLine> Lines;
+
+	DebugManager->BuildVisiblePanelLines(
+		Lines
+	);
+
+	if (Lines.Num() <= 0)
+	{
+		return;
+	}
+
+	UFont* SmallFont =
+		GEngine != nullptr
+		? GEngine->GetSmallFont()
+		: nullptr;
+
+	if (SmallFont == nullptr)
+	{
+		return;
+	}
+
+	const float PanelWidth =
+		DebugManager->GetPanelWidth();
+
+	const float Padding =
+		DebugManager->GetPanelPadding();
+
+	const float LineHeight =
+		DebugManager->GetPanelLineHeight();
+
+	float PanelHeight =
+		Padding * 2.0f;
+
+	for (
+		const FSoccerDebugPanelLine& Line :
+		Lines
+		)
+	{
+		PanelHeight +=
+			LineHeight *
+			FMath::Max(
+				1.0f,
+				Line.Scale
+			);
+	}
+
+	const float PanelX =
+		FMath::Max(
+			10.0f,
+			Canvas->SizeX -
+			PanelWidth -
+			DebugManager->GetPanelRightMargin()
+		);
+
+	const float PanelY =
+		DebugManager->GetPanelTop();
+
+	DrawRect(
+		DebugManager->GetPanelBackgroundColor(),
+		PanelX,
+		PanelY,
+		PanelWidth,
+		PanelHeight
+	);
+
+	float TextY =
+		PanelY + Padding;
+
+	for (
+		const FSoccerDebugPanelLine& Line :
+		Lines
+		)
+	{
+		DrawText(
+			Line.Text,
+			Line.Color,
+			PanelX + Padding,
+			TextY,
+			SmallFont,
+			Line.Scale
+		);
+
+		TextY +=
+			LineHeight *
+			FMath::Max(
+				1.0f,
+				Line.Scale
+			);
+	}
+}
+
+void AGameHUD::FindMatchManager()
+{
+	MatchManager = nullptr;
+
+	UWorld* World = GetWorld();
+
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (TActorIterator<ASoccerMatchManager> It(World); It; ++It)
+	{
+		MatchManager = *It;
+		return;
+	}
+}
+
+FString AGameHUD::GetMatchStateText() const
+{
+	if (!IsValid(MatchManager))
+	{
+		return FString();
+	}
+
+	if (MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::HalfTime)
+	{
+		return TEXT("ENTRETIEMPO");
+	}
+
+	if (MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime)
+	{
+		return TEXT("FINAL");
+	}
+
+	switch (MatchManager->GetMatchPlayState())
+	{
+	case ESoccerMatchPlayState::GoalScored:
+		return TEXT("GOOOL");
+
+	case ESoccerMatchPlayState::Resetting:
+		return TEXT("Reiniciando");
+
+	case ESoccerMatchPlayState::Playing:
+	default:
+		return FString();
+	}
+}
+
+void AGameHUD::DrawMatchScoreboard()
+{
+	if (Canvas == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		return;
+	}
+
+	UFont* ScoreFont =
+		GEngine != nullptr
+		? GEngine->GetMediumFont()
+		: nullptr;
+
+	UFont* SmallFont =
+		GEngine != nullptr
+		? GEngine->GetSmallFont()
+		: nullptr;
+
+	if (ScoreFont == nullptr)
+	{
+		return;
+	}
+
+	const int32 PlayerScore = MatchManager->GetPlayerTeamScore();
+	const int32 OpponentScore = MatchManager->GetOpponentTeamScore();
+
+	const FString ScoreText = FString::Printf(
+		TEXT("PlayerTeam   %d  -  %d   OpponentTeam"),
+		PlayerScore,
+		OpponentScore
+	);
+
+	const float ScoreScale = 1.45f;
+
+	float ScoreTextWidth = 0.0f;
+	float ScoreTextHeight = 0.0f;
+
+	GetTextSize(
+		ScoreText,
+		ScoreTextWidth,
+		ScoreTextHeight,
+		ScoreFont,
+		ScoreScale
+	);
+
+	const float BoxPaddingX = 28.0f;
+	const float BoxPaddingY = 12.0f;
+
+	const float BoxWidth = ScoreTextWidth + BoxPaddingX * 2.0f;
+	const float BoxHeight = ScoreTextHeight + BoxPaddingY * 2.0f;
+
+	const float BoxX = Canvas->SizeX * 0.5f - BoxWidth * 0.5f;
+	const float BoxY = 22.0f;
+
+	DrawRect(
+		FLinearColor(0.0f, 0.0f, 0.0f, 0.55f),
+		BoxX,
+		BoxY,
+		BoxWidth,
+		BoxHeight
+	);
+
+	const float TextX = Canvas->SizeX * 0.5f - ScoreTextWidth * 0.5f;
+	const float TextY = BoxY + BoxPaddingY;
+
+	DrawText(
+		ScoreText,
+		FLinearColor(0.0f, 0.0f, 0.0f, 0.85f),
+		TextX + 1.0f,
+		TextY + 1.0f,
+		ScoreFont,
+		ScoreScale
+	);
+
+	DrawText(
+		ScoreText,
+		FLinearColor::White,
+		TextX,
+		TextY,
+		ScoreFont,
+		ScoreScale
+	);
+
+	const FString StateText = GetMatchStateText();
+
+	if (!StateText.IsEmpty() && SmallFont != nullptr)
+	{
+		const float StateScale = 1.2f;
+
+		float StateTextWidth = 0.0f;
+		float StateTextHeight = 0.0f;
+
+		GetTextSize(
+			StateText,
+			StateTextWidth,
+			StateTextHeight,
+			SmallFont,
+			StateScale
+		);
+
+		const float StateX = Canvas->SizeX * 0.5f - StateTextWidth * 0.5f;
+
+		// El reloj se dibuja centrado debajo del marcador. Reservamos
+		// ese espacio antes de mostrar mensajes como GOOOL, ENTRETIEMPO
+		// o FINAL.
+		const float StateY = BoxY + BoxHeight + 54.0f;
+
+		DrawText(
+			StateText,
+			FLinearColor::Yellow,
+			StateX,
+			StateY,
+			SmallFont,
+			StateScale
+		);
+	}
+}
