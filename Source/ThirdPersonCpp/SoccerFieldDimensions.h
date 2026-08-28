@@ -12,8 +12,17 @@ namespace SoccerFieldDimensions
 	// Cancha
 	// ============================================================
 
-	static constexpr float PitchLengthCm = 6000.0f;
-	static constexpr float PitchWidthCm = 4000.0f;
+	// Dimensiones de referencia con las que fueron calibrados originalmente
+	// los HomePositionActor y los offsets tacticos expresados en centimetros.
+	// NO son las dimensiones actuales de la cancha: sirven exclusivamente para
+	// convertir esas calibraciones antiguas a cualquier PitchLength/PitchWidth.
+	static constexpr float AuthoredReferencePitchLengthCm = 6000.0f;
+	static constexpr float AuthoredReferencePitchWidthCm = 4000.0f;
+
+	// Dimensiones actuales del campo. Cambiar solamente estas dos constantes
+	// debe adaptar geometria, referencias authored y shape tactico.
+	static constexpr float PitchLengthCm = 9000.0f;
+	static constexpr float PitchWidthCm = 6000.0f;
 
 	static constexpr float HalfPitchLengthCm = PitchLengthCm * 0.5f;
 	static constexpr float HalfPitchWidthCm = PitchWidthCm * 0.5f;
@@ -26,6 +35,32 @@ namespace SoccerFieldDimensions
 
 	static constexpr float NorthTouchLineY = HalfPitchWidthCm;
 	static constexpr float SouthTouchLineY = -HalfPitchWidthCm;
+
+	// ============================================================
+	// Escala de referencias/tuning authored
+	// ============================================================
+	// Muchos offsets tacticos fueron ajustados originalmente en la cancha
+	// 60x40. Estas funciones mantienen exactamente esos valores en 60x40 y
+	// los escalan por eje cuando cambia el tamano del campo.
+	FORCEINLINE float GetAuthoredLengthScale()
+	{
+		return PitchLengthCm / AuthoredReferencePitchLengthCm;
+	}
+
+	FORCEINLINE float GetAuthoredWidthScale()
+	{
+		return PitchWidthCm / AuthoredReferencePitchWidthCm;
+	}
+
+	FORCEINLINE float ScaleAuthoredLongitudinalDistance(float DistanceCm)
+	{
+		return DistanceCm * GetAuthoredLengthScale();
+	}
+
+	FORCEINLINE float ScaleAuthoredLateralDistance(float DistanceCm)
+	{
+		return DistanceCm * GetAuthoredWidthScale();
+	}
 
 	// ============================================================
 	// Recinto exterior

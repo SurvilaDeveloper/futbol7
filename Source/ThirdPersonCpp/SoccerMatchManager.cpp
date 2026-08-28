@@ -1766,25 +1766,32 @@ FVector ASoccerMatchManager::GetTeamRebasedFieldReferenceLocation(
 		? PlayerTeamInitialOwnGoalLineSign
 		: OpponentTeamInitialOwnGoalLineSign;
 
-	if (FMath::IsNearlyEqual(CurrentOwnGoalSign, InitialOwnGoalSign))
-	{
-		return ReferenceWorldLocation;
-	}
-
 	if (IsValid(SoccerField))
 	{
 		FVector LocalReference =
 			SoccerField->WorldToPitchLocal(ReferenceWorldLocation);
-		// A change of ends is a 180-degree rotation around the pitch center.
-		// X changes end and Y changes side relative to the team's attack.
-		LocalReference.X = -LocalReference.X;
-		LocalReference.Y = -LocalReference.Y;
+
+		// HomePositionActor and the other authored tactical references were
+		// positioned when the reference pitch was 60x40. Re-express them in
+		// current-pitch local coordinates before using them. This is essential
+		// for goalkeepers: otherwise moving a goal line outward leaves the old
+		// HomePositionActor deep inside the enlarged pitch.
+		LocalReference.X *= SoccerFieldDimensions::GetAuthoredLengthScale();
+		LocalReference.Y *= SoccerFieldDimensions::GetAuthoredWidthScale();
+
+		if (!FMath::IsNearlyEqual(CurrentOwnGoalSign, InitialOwnGoalSign))
+		{
+			// A change of ends is a 180-degree rotation around the pitch center.
+			// X changes end and Y changes side relative to the team's attack.
+			LocalReference.X = -LocalReference.X;
+			LocalReference.Y = -LocalReference.Y;
+		}
+
 		return SoccerField->PitchLocalToWorld(LocalReference);
 	}
 
-	// Without ASoccerField there is no authoritative center/rotation around
-	// which a side swap can be reconstructed safely. Keep the authored
-	// reference unchanged rather than reintroducing a world-axis assumption.
+	// Without ASoccerField there is no authoritative center/rotation/scale
+	// from which an authored field reference can be rebuilt safely.
 	return ReferenceWorldLocation;
 }
 
@@ -1863,6 +1870,8 @@ bool ASoccerMatchManager::RegisterControlledBallPossession(
 	PossessionTeam = ConvertTeamToPossessionTeam(
 		NewPossessingCharacter->GetTeam()
 	);
+
+	ClearFreeBallChaserMemory();
 
 	// Las órdenes anteriores pueden incluir a un rival presionando
 	// la pelota. Se limpian ahora para que deje de perseguir al arquero
@@ -2627,6 +2636,11 @@ FVector ASoccerMatchManager::BuildAttackShapeLocation(
 		return SoccerAICharacter->GetActorLocation();
 	}
 
+	const float PitchLengthScale =
+		SoccerFieldDimensions::GetAuthoredLengthScale();
+	const float PitchWidthScale =
+		SoccerFieldDimensions::GetAuthoredWidthScale();
+
 	const FVector AttackReferenceLocation =
 		GetAttackReferenceLocation(Team);
 
@@ -2787,36 +2801,36 @@ FVector ASoccerMatchManager::BuildAttackShapeLocation(
 	if (AttackOrder == ESoccerAIOrder::AttackSupportShort)
 	{
 		DesiredDepth =
-			ReferenceDepth - AttackShortSupportBackDistance;
+			ReferenceDepth - AttackShortSupportBackDistance * PitchLengthScale;
 
 		DesiredLateral =
 			ReferenceLateralOffset * 0.35f
-			+ LaneSign * AttackShortSupportSideOffset;
+			+ LaneSign * AttackShortSupportSideOffset * PitchWidthScale;
 	}
 	else if (AttackOrder == ESoccerAIOrder::AttackSupportForward)
 	{
 		DesiredDepth =
-			ReferenceDepth + AttackForwardSupportDistance;
+			ReferenceDepth + AttackForwardSupportDistance * PitchLengthScale;
 
 		DesiredLateral =
 			ReferenceLateralOffset * 0.20f
-			+ LaneSign * AttackForwardSupportSideOffset;
+			+ LaneSign * AttackForwardSupportSideOffset * PitchWidthScale;
 	}
 	else if (AttackOrder == ESoccerAIOrder::AttackRunIntoSpace)
 	{
 		DesiredDepth =
-			ReferenceDepth + AttackRunIntoSpaceDistance;
+			ReferenceDepth + AttackRunIntoSpaceDistance * PitchLengthScale;
 
 		DesiredLateral =
-			LaneSign * AttackRunIntoSpaceSideOffset;
+			LaneSign * AttackRunIntoSpaceSideOffset * PitchWidthScale;
 	}
 	else if (AttackOrder == ESoccerAIOrder::AttackWideSupport)
 	{
 		DesiredDepth =
-			ReferenceDepth + AttackWideSupportDistance;
+			ReferenceDepth + AttackWideSupportDistance * PitchLengthScale;
 
 		DesiredLateral =
-			LaneSign * AttackWideSupportSideOffset;
+			LaneSign * AttackWideSupportSideOffset * PitchWidthScale;
 	}
 	else if (AttackOrder == ESoccerAIOrder::AttackRestDefense)
 	{
@@ -2892,47 +2906,47 @@ FVector ASoccerMatchManager::BuildAttackShapeLocation(
 			// Defensor: no debe ir en la misma diagonal que el mediocampista.
 			// Queda un poco más atrás y conserva más su carril natural.
 			RoleDepthOffset =
-				-AttackShapeRoleDepthSeparation;
+				-AttackShapeRoleDepthSeparation * PitchLengthScale;
 
 			RoleLateralOffset =
-				SafeHomeSideSign * AttackShapeRoleLateralSeparation;
+				SafeHomeSideSign * AttackShapeRoleLateralSeparation * PitchWidthScale;
 		}
 		else if (AttackOrder == ESoccerAIOrder::AttackSupportShort)
 		{
 			// Apoyo corto: queda un poco más contenido,
 			// no calcado al apoyo adelantado.
 			RoleDepthOffset =
-				-AttackShapeRoleDepthSeparation * 0.35f;
+				-AttackShapeRoleDepthSeparation * PitchLengthScale * 0.35f;
 
 			RoleLateralOffset =
-				-SafeLaneSign * AttackShapeRoleLateralSeparation * 0.35f;
+				-SafeLaneSign * AttackShapeRoleLateralSeparation * PitchWidthScale * 0.35f;
 		}
 		else if (AttackOrder == ESoccerAIOrder::AttackSupportForward)
 		{
 			// Apoyo adelantado: se despega del defensor y del apoyo corto.
 			RoleDepthOffset =
-				AttackShapeRoleDepthSeparation * 0.55f;
+				AttackShapeRoleDepthSeparation * PitchLengthScale * 0.55f;
 
 			RoleLateralOffset =
-				SafeLaneSign * AttackShapeRoleLateralSeparation * 0.45f;
+				SafeLaneSign * AttackShapeRoleLateralSeparation * PitchWidthScale * 0.45f;
 		}
 		else if (AttackOrder == ESoccerAIOrder::AttackRunIntoSpace)
 		{
 			// Delantero profundo: más agresivo en profundidad.
 			RoleDepthOffset =
-				AttackShapeRoleDepthSeparation;
+				AttackShapeRoleDepthSeparation * PitchLengthScale;
 
 			RoleLateralOffset =
-				SafeLaneSign * AttackShapeRoleLateralSeparation * 0.25f;
+				SafeLaneSign * AttackShapeRoleLateralSeparation * PitchWidthScale * 0.25f;
 		}
 		else if (AttackOrder == ESoccerAIOrder::AttackWideSupport)
 		{
 			// Apoyo ancho: se abre más que el resto.
 			RoleDepthOffset =
-				AttackShapeRoleDepthSeparation * 0.25f;
+				AttackShapeRoleDepthSeparation * PitchLengthScale * 0.25f;
 
 			RoleLateralOffset =
-				SafeLaneSign * AttackShapeRoleLateralSeparation * 0.75f;
+				SafeLaneSign * AttackShapeRoleLateralSeparation * PitchWidthScale * 0.75f;
 		}
 
 		// Desfase personal estable.
@@ -2948,11 +2962,11 @@ FVector ASoccerMatchManager::BuildAttackShapeLocation(
 
 		float PersonalLateralOffset =
 			static_cast<float>(LateralBucket) *
-			AttackShapePersonalLateralSpacing;
+			AttackShapePersonalLateralSpacing * PitchWidthScale;
 
 		float PersonalDepthOffset =
 			static_cast<float>(DepthBucket) *
-			AttackShapePersonalDepthSpacing;
+			AttackShapePersonalDepthSpacing * PitchLengthScale;
 
 		// Si justo le tocó bucket 0, igual le damos un pequeño empujón
 		// para evitar que quede calcado con otro jugador.
@@ -2960,7 +2974,7 @@ FVector ASoccerMatchManager::BuildAttackShapeLocation(
 		{
 			PersonalLateralOffset =
 				SafeLaneSign *
-				AttackShapePersonalLateralSpacing *
+				AttackShapePersonalLateralSpacing * PitchWidthScale *
 				0.5f;
 		}
 
@@ -3211,11 +3225,20 @@ FVector ASoccerMatchManager::BuildAttackShapeLocation(
 			FieldLength - 320.0f
 		);
 
+	const float ScaledAttackShapeMaxLateralOffset =
+		FMath::Min(
+			AttackShapeMaxLateralOffset * PitchWidthScale,
+			FMath::Max(
+				0.0f,
+				SoccerFieldDimensions::HalfPitchWidthCm - 120.0f
+			)
+		);
+
 	DesiredLateral =
 		FMath::Clamp(
 			DesiredLateral,
-			-AttackShapeMaxLateralOffset,
-			AttackShapeMaxLateralOffset
+			-ScaledAttackShapeMaxLateralOffset,
+			ScaledAttackShapeMaxLateralOffset
 		);
 
 	FVector DesiredLocation =
@@ -6091,11 +6114,19 @@ FVector ASoccerMatchManager::BuildDefendProtectGoalLaneLocation(
 			FieldLength * 0.62f
 		);
 
+	const float ScaledShapeMaxLateralOffset =
+		FMath::Min(
+			SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+				AttackShapeMaxLateralOffset
+			),
+			FMath::Max(0.0f, SoccerFieldDimensions::HalfPitchWidthCm - 120.0f)
+		);
+
 	const float ClampedLateral =
 		FMath::Clamp(
 			DesiredLateral,
-			-AttackShapeMaxLateralOffset,
-			AttackShapeMaxLateralOffset
+			-ScaledShapeMaxLateralOffset,
+			ScaledShapeMaxLateralOffset
 		);
 
 	DesiredLocation =
@@ -6191,11 +6222,16 @@ FVector ASoccerMatchManager::BuildDefendCoverCenterLocation(
 			Team
 		);
 
+	const float ScaledDefensiveCoverCenterMaxLateralOffset =
+		SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+			DefensiveCoverCenterMaxLateralOffset
+		);
+
 	const float DesiredLateralOffset =
 		FMath::Clamp(
 			BallLateralOffset * DefensiveCoverCenterBallSideShiftAlpha,
-			-DefensiveCoverCenterMaxLateralOffset,
-			DefensiveCoverCenterMaxLateralOffset
+			-ScaledDefensiveCoverCenterMaxLateralOffset,
+			ScaledDefensiveCoverCenterMaxLateralOffset
 		);
 
 	FVector DesiredLocation =
@@ -6496,6 +6532,25 @@ ASoccerAICharacter* ASoccerMatchManager::FindBestDefensivePressureAI(
 
 	const FVector ThreatLocation =
 		GetCurrentDefensiveThreatLocation(DefendingTeam);
+
+	ASoccerAICharacter* CurrentPressureAI =
+		DefendingTeam == ESoccerTeam::PlayerTeam
+		? PlayerTeamPressureAI
+		: OpponentTeamPressureAI;
+
+	if (
+		IsValid(CurrentPressureAI) &&
+		CurrentPressureAI->GetTeam() == DefendingTeam &&
+		CurrentPressureAI->GetPlayerRole() != ESoccerPlayerRole::Goalkeeper &&
+		CanCharacterTouchBallNow(CurrentPressureAI) &&
+		FVector::Dist2D(
+			CurrentPressureAI->GetActorLocation(),
+			ThreatLocation
+		) <= FMath::Max(0.0f, DefensivePressureCommitDistance)
+		)
+	{
+		return CurrentPressureAI;
+	}
 
 	ASoccerAICharacter* BestCharacter = nullptr;
 	float BestScore = -TNumericLimits<float>::Max();
@@ -7188,11 +7243,19 @@ FVector ASoccerMatchManager::BuildDefendMarkReceiverLocation(
 			FieldLength * 0.82f
 		);
 
+	const float ScaledShapeMaxLateralOffset =
+		FMath::Min(
+			SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+				AttackShapeMaxLateralOffset
+			),
+			FMath::Max(0.0f, SoccerFieldDimensions::HalfPitchWidthCm - 120.0f)
+		);
+
 	const float ClampedLateral =
 		FMath::Clamp(
 			DesiredLateral,
-			-AttackShapeMaxLateralOffset,
-			AttackShapeMaxLateralOffset
+			-ScaledShapeMaxLateralOffset,
+			ScaledShapeMaxLateralOffset
 		);
 
 	DesiredLocation =
@@ -10037,11 +10100,23 @@ void ASoccerMatchManager::AssignAttackDefenseRoles()
 
 	UpdateCollectiveTacticalTransitionTracking();
 
-	const ESoccerTeam AttackingTeam =
+	ESoccerTeam AttackingTeam =
 		GetCurrentAttackingTeam();
 
-	const ESoccerTeam DefendingTeam =
+	ESoccerTeam DefendingTeam =
 		GetCurrentDefendingTeam();
+
+	ESoccerTeam EmergencyDefendingTeam = DefendingTeam;
+	const bool bDangerousLooseBallEmergency =
+		TryGetDangerousLooseBallEmergencyDefendingTeam(
+			EmergencyDefendingTeam
+		);
+
+	if (bDangerousLooseBallEmergency)
+	{
+		DefendingTeam = EmergencyDefendingTeam;
+		AttackingTeam = GetOppositeTeam(EmergencyDefendingTeam);
+	}
 
 	// Explicit man marking only belongs to the side currently defending.
 	ClearExplicitIndividualMarkingAssignmentsForTeam(AttackingTeam);
@@ -10138,8 +10213,20 @@ void ASoccerMatchManager::AssignAttackDefenseRoles()
 	ASoccerAICharacter* DefendingMarker = nullptr;
 	ASoccerCharacterBase* DangerousReceiver = nullptr;
 
-	DefendingPressure =
-		FindBestDefensivePressureAI(DefendingTeam);
+	if (bDangerousLooseBallEmergency)
+	{
+		ASoccerAICharacter* UnusedSecondEmergencyDefender = nullptr;
+		FindClosestTwoAICharactersToBall(
+			DefendingTeam,
+			DefendingPressure,
+			UnusedSecondEmergencyDefender
+		);
+	}
+	else
+	{
+		DefendingPressure =
+			FindBestDefensivePressureAI(DefendingTeam);
+	}
 
 	TArray<const ASoccerAICharacter*> ExcludedDefenders;
 
@@ -10466,7 +10553,18 @@ void ASoccerMatchManager::FindClosestTwoAICharactersToBall(
 				Candidates[Index].RankingTime -
 				Candidates[0].RankingTime;
 
+			const float PreviousChaserDistanceToBall =
+				FVector::Dist2D(
+					PreviousChaser->GetActorLocation(),
+					SoccerBall->GetActorLocation()
+				);
+
+			const bool bPreviousChaserCommittedAtCloseRange =
+				PreviousChaserDistanceToBall <=
+				FMath::Max(0.0f, FreeBallChaserCommitDistance);
+
 			if (
+				bPreviousChaserCommittedAtCloseRange ||
 				ChallengerAdvantage <=
 				FreeBallChaserSwitchRequiredTimeAdvantage
 				)
@@ -10521,6 +10619,7 @@ bool ASoccerMatchManager::DoesTeamHavePossession(ESoccerTeam Team) const
 void ASoccerMatchManager::ClearAttackState()
 {
 	ClearOpenPlayPassIntent();
+	ClearFreeBallChaserMemory();
 
 	bHasLastTouchTeam = false;
 	LastTouchCharacter = nullptr;
@@ -10536,6 +10635,12 @@ void ASoccerMatchManager::ClearAttackState()
 	OpponentTeamLastCollectivePossessionGainTime = -1000.0f;
 	PlayerTeamLastCollectivePossessionLossTime = -1000.0f;
 	OpponentTeamLastCollectivePossessionLossTime = -1000.0f;
+}
+
+void ASoccerMatchManager::ClearFreeBallChaserMemory()
+{
+	LastPlayerTeamFreeBallChaser = nullptr;
+	LastOpponentTeamFreeBallChaser = nullptr;
 }
 
 void ASoccerMatchManager::UpdateActiveRestartRestrictionSystem(
@@ -12326,13 +12431,119 @@ bool ASoccerMatchManager::UpdateActiveRestartReadiness(
 		RestartReadyHoldTime;
 }
 
+bool ASoccerMatchManager::IsImmediateDefensiveDangerForTeam(
+	ESoccerTeam Team
+) const
+{
+	if (
+		MatchPlayState != ESoccerMatchPlayState::Playing ||
+		IsRestartContextActive() ||
+		!IsValid(SoccerBall)
+		)
+	{
+		return false;
+	}
+
+	if (
+		PossessionTeam != ESoccerPossessionTeam::None &&
+		DoesTeamHavePossession(Team)
+		)
+	{
+		return false;
+	}
+
+	const float BallDepthAlpha = GetAttackDepthAlphaForLocation(
+		SoccerBall->GetActorLocation(),
+		Team
+	);
+
+	return BallDepthAlpha <= FMath::Clamp(
+		DefensiveEmergencyReactionDepthAlpha,
+		0.0f,
+		1.0f
+	);
+}
+
+bool ASoccerMatchManager::IsDangerousLooseBallEmergencyForTeam(
+	ESoccerTeam Team
+) const
+{
+	return
+		PossessionTeam == ESoccerPossessionTeam::None &&
+		!IsValid(PossessingCharacter) &&
+		IsImmediateDefensiveDangerForTeam(Team);
+}
+
+bool ASoccerMatchManager::TryGetDangerousLooseBallEmergencyDefendingTeam(
+	ESoccerTeam& OutDefendingTeam
+) const
+{
+	const bool bPlayerTeamEmergency =
+		IsDangerousLooseBallEmergencyForTeam(ESoccerTeam::PlayerTeam);
+	const bool bOpponentTeamEmergency =
+		IsDangerousLooseBallEmergencyForTeam(ESoccerTeam::OpponentTeam);
+
+	if (!bPlayerTeamEmergency && !bOpponentTeamEmergency)
+	{
+		return false;
+	}
+
+	if (bPlayerTeamEmergency && !bOpponentTeamEmergency)
+	{
+		OutDefendingTeam = ESoccerTeam::PlayerTeam;
+		return true;
+	}
+
+	if (bOpponentTeamEmergency && !bPlayerTeamEmergency)
+	{
+		OutDefendingTeam = ESoccerTeam::OpponentTeam;
+		return true;
+	}
+
+	const float PlayerDepth = GetAttackDepthAlphaForLocation(
+		SoccerBall->GetActorLocation(),
+		ESoccerTeam::PlayerTeam
+	);
+	const float OpponentDepth = GetAttackDepthAlphaForLocation(
+		SoccerBall->GetActorLocation(),
+		ESoccerTeam::OpponentTeam
+	);
+
+	OutDefendingTeam =
+		PlayerDepth <= OpponentDepth
+		? ESoccerTeam::PlayerTeam
+		: ESoccerTeam::OpponentTeam;
+
+	return true;
+}
+
 bool ASoccerMatchManager::IsTeamCurrentlyAttacking(ESoccerTeam Team) const
 {
+	ESoccerTeam EmergencyDefendingTeam = ESoccerTeam::PlayerTeam;
+	if (
+		TryGetDangerousLooseBallEmergencyDefendingTeam(
+			EmergencyDefendingTeam
+		)
+		)
+	{
+		return Team != EmergencyDefendingTeam;
+	}
+
 	return HasActiveAttack() && GetCurrentAttackingTeam() == Team;
 }
 
 bool ASoccerMatchManager::IsTeamCurrentlyDefending(ESoccerTeam Team) const
 {
+	ESoccerTeam EmergencyDefendingTeam = ESoccerTeam::PlayerTeam;
+	if (
+		TryGetDangerousLooseBallEmergencyDefendingTeam(
+			EmergencyDefendingTeam
+		)
+		)
+	{
+		return Team == EmergencyDefendingTeam;
+	}
+
 	return HasActiveAttack() && GetCurrentAttackingTeam() != Team;
 }
 
@@ -12415,7 +12626,9 @@ FVector ASoccerMatchManager::GetGoalkeeperMoveLocation(
 		);
 		const float FullBallDistance = FMath::Max(
 			1.0f,
-			GoalkeeperDynamicDepthFullBallDistance
+			SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+				GoalkeeperDynamicDepthFullBallDistance
+			)
 		);
 		const float DistanceFactor = FMath::Clamp(
 			BallDepthFromGoalLine / FullBallDistance,
@@ -12753,7 +12966,10 @@ FVector ASoccerMatchManager::GetOpenPlayCarryIntentTargetLocation(
 	}
 
 	const float DesiredDepth = FMath::Clamp(
-		CurrentDepth + CollectiveAttackChannelCarryLookAheadDistance,
+		CurrentDepth +
+			SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+				CollectiveAttackChannelCarryLookAheadDistance
+			),
 		120.0f,
 		FieldLength - 320.0f
 	);
@@ -12761,13 +12977,18 @@ FVector ASoccerMatchManager::GetOpenPlayCarryIntentTargetLocation(
 	float DesiredLateral = 0.0f;
 	const float WidthScale = GetCollectiveAttackWidthScale(Team);
 
+	const float ScaledCarryLateralOffset =
+		SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+			CollectiveAttackChannelCarryLateralOffset
+		);
+
 	if (TacticalPlan.AttackChannel == ESoccerAttackChannel::Left)
 	{
-		DesiredLateral = -CollectiveAttackChannelCarryLateralOffset * WidthScale;
+		DesiredLateral = -ScaledCarryLateralOffset * WidthScale;
 	}
 	else if (TacticalPlan.AttackChannel == ESoccerAttackChannel::Right)
 	{
-		DesiredLateral = CollectiveAttackChannelCarryLateralOffset * WidthScale;
+		DesiredLateral = ScaledCarryLateralOffset * WidthScale;
 	}
 
 	FVector TargetLocation =
@@ -13127,14 +13348,19 @@ float ASoccerMatchManager::GetCollectiveAttackChannelLateralShift(
 	const ESoccerAttackChannel Channel =
 		GetTacticalPlanForTeamInternal(Team).AttackChannel;
 
+	const float ScaledShapeShift =
+		SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+			CollectiveAttackChannelShapeShift
+		);
+
 	if (Channel == ESoccerAttackChannel::Left)
 	{
-		return -CollectiveAttackChannelShapeShift;
+		return -ScaledShapeShift;
 	}
 
 	if (Channel == ESoccerAttackChannel::Right)
 	{
-		return CollectiveAttackChannelShapeShift;
+		return ScaledShapeShift;
 	}
 
 	return 0.0f;
@@ -15017,6 +15243,50 @@ ASoccerCharacterBase* ASoccerMatchManager::GetLastTouchCharacter() const
 	return LastTouchCharacter;
 }
 
+bool ASoccerMatchManager::RegisterGoalkeeperReboundTouch(
+	ASoccerAICharacter* Goalkeeper
+)
+{
+	if (
+		!IsValid(Goalkeeper) ||
+		Goalkeeper->GetPlayerRole() != ESoccerPlayerRole::Goalkeeper
+		)
+	{
+		return false;
+	}
+
+	if (!TryRegisterIntentionalBallTouch(Goalkeeper))
+	{
+		return false;
+	}
+
+	// The save has already touched and released the ball. Make the logical
+	// possession state match the physics immediately instead of waiting for the
+	// next periodic possession scan.
+	PossessingCharacter = nullptr;
+	PossessionTeam = ESoccerPossessionTeam::None;
+
+	ClearAssignedAI();
+	MatchStateUpdateAccumulator = 0.0f;
+
+	if (
+		MatchPlayState == ESoccerMatchPlayState::Playing &&
+		!IsRestartContextActive()
+		)
+	{
+		if (HasActiveAttack())
+		{
+			AssignAttackDefenseRoles();
+		}
+		else
+		{
+			AssignFreeBallRoles();
+		}
+	}
+
+	return true;
+}
+
 void ASoccerMatchManager::RegisterIntentionalBallTouch(
 	ASoccerCharacterBase* TouchingCharacter
 )
@@ -15873,11 +16143,16 @@ FVector ASoccerMatchManager::BuildDynamicTeamShapeLocationRaw(
 		BallLateralOffset *
 		DynamicShapeBallSideShiftAlpha;
 
+	const float ScaledDynamicShapeMaxLateralShift =
+		SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+			DynamicShapeMaxLateralShift
+		);
+
 	LateralShift =
 		FMath::Clamp(
 			LateralShift,
-			-DynamicShapeMaxLateralShift,
-			DynamicShapeMaxLateralShift
+			-ScaledDynamicShapeMaxLateralShift,
+			ScaledDynamicShapeMaxLateralShift
 		);
 
 	const float StructuralLateralKeepAlpha =
@@ -17962,6 +18237,22 @@ FVector ASoccerMatchManager::AdjustAttackMoveLocationUsingSpace(
 	RightDirection =
 		RightDirection.GetSafeNormal();
 
+	const float ScaledAttackSpaceDepthSearchStep =
+		SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+			AttackSpaceDepthSearchStep
+		);
+	const float ScaledAttackSpaceLateralSearchStep =
+		SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+			AttackSpaceLateralSearchStep
+		);
+	const float ScaledAttackShapeMaxLateralOffset =
+		FMath::Min(
+			SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+				AttackShapeMaxLateralOffset
+			),
+			FMath::Max(0.0f, SoccerFieldDimensions::HalfPitchWidthCm - 120.0f)
+		);
+
 	const float BaseLateral =
 		GetFieldLateralOffsetForTeam(
 			BaseLocation,
@@ -18017,50 +18308,50 @@ FVector ASoccerMatchManager::AdjustAttackMoveLocationUsingSpace(
 
 	if (AttackOrder == ESoccerAIOrder::AttackSupportShort)
 	{
-		CandidateOffsets.Add(FVector2D(-AttackSpaceDepthSearchStep, 0.0f));
-		CandidateOffsets.Add(FVector2D(0.0f, AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(0.0f, -AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(-AttackSpaceDepthSearchStep, AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(-AttackSpaceDepthSearchStep, -AttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(-ScaledAttackSpaceDepthSearchStep, 0.0f));
+		CandidateOffsets.Add(FVector2D(0.0f, ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(0.0f, -ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(-ScaledAttackSpaceDepthSearchStep, ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(-ScaledAttackSpaceDepthSearchStep, -ScaledAttackSpaceLateralSearchStep));
 	}
 	else if (AttackOrder == ESoccerAIOrder::AttackSupportForward)
 	{
-		CandidateOffsets.Add(FVector2D(AttackSpaceDepthSearchStep, 0.0f));
-		CandidateOffsets.Add(FVector2D(0.0f, AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(0.0f, -AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(AttackSpaceDepthSearchStep, AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(AttackSpaceDepthSearchStep, -AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(-AttackSpaceDepthSearchStep, AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(-AttackSpaceDepthSearchStep, -AttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(ScaledAttackSpaceDepthSearchStep, 0.0f));
+		CandidateOffsets.Add(FVector2D(0.0f, ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(0.0f, -ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(ScaledAttackSpaceDepthSearchStep, ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(ScaledAttackSpaceDepthSearchStep, -ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(-ScaledAttackSpaceDepthSearchStep, ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(-ScaledAttackSpaceDepthSearchStep, -ScaledAttackSpaceLateralSearchStep));
 	}
 	else if (AttackOrder == ESoccerAIOrder::AttackRunIntoSpace)
 	{
-		CandidateOffsets.Add(FVector2D(AttackSpaceDepthSearchStep, 0.0f));
-		CandidateOffsets.Add(FVector2D(AttackSpaceDepthSearchStep, AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(AttackSpaceDepthSearchStep, -AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(AttackSpaceDepthSearchStep * 1.6f, AttackSpaceLateralSearchStep * 0.5f));
-		CandidateOffsets.Add(FVector2D(AttackSpaceDepthSearchStep * 1.6f, -AttackSpaceLateralSearchStep * 0.5f));
+		CandidateOffsets.Add(FVector2D(ScaledAttackSpaceDepthSearchStep, 0.0f));
+		CandidateOffsets.Add(FVector2D(ScaledAttackSpaceDepthSearchStep, ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(ScaledAttackSpaceDepthSearchStep, -ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(ScaledAttackSpaceDepthSearchStep * 1.6f, ScaledAttackSpaceLateralSearchStep * 0.5f));
+		CandidateOffsets.Add(FVector2D(ScaledAttackSpaceDepthSearchStep * 1.6f, -ScaledAttackSpaceLateralSearchStep * 0.5f));
 	}
 	else if (AttackOrder == ESoccerAIOrder::AttackWideSupport)
 	{
-		CandidateOffsets.Add(FVector2D(0.0f, LaneSign * AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(AttackSpaceDepthSearchStep, LaneSign * AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(-AttackSpaceDepthSearchStep * 0.5f, LaneSign * AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(0.0f, LaneSign * AttackSpaceLateralSearchStep * 1.6f));
+		CandidateOffsets.Add(FVector2D(0.0f, LaneSign * ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(ScaledAttackSpaceDepthSearchStep, LaneSign * ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(-ScaledAttackSpaceDepthSearchStep * 0.5f, LaneSign * ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(0.0f, LaneSign * ScaledAttackSpaceLateralSearchStep * 1.6f));
 	}
 	else if (
 		AttackOrder == ESoccerAIOrder::AttackRestDefense ||
 		AttackOrder == ESoccerAIOrder::AttackCompensateCover
 		)
 	{
-		CandidateOffsets.Add(FVector2D(0.0f, AttackSpaceLateralSearchStep * 0.5f));
-		CandidateOffsets.Add(FVector2D(0.0f, -AttackSpaceLateralSearchStep * 0.5f));
-		CandidateOffsets.Add(FVector2D(-AttackSpaceDepthSearchStep * 0.5f, 0.0f));
+		CandidateOffsets.Add(FVector2D(0.0f, ScaledAttackSpaceLateralSearchStep * 0.5f));
+		CandidateOffsets.Add(FVector2D(0.0f, -ScaledAttackSpaceLateralSearchStep * 0.5f));
+		CandidateOffsets.Add(FVector2D(-ScaledAttackSpaceDepthSearchStep * 0.5f, 0.0f));
 	}
 	else
 	{
-		CandidateOffsets.Add(FVector2D(0.0f, AttackSpaceLateralSearchStep));
-		CandidateOffsets.Add(FVector2D(0.0f, -AttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(0.0f, ScaledAttackSpaceLateralSearchStep));
+		CandidateOffsets.Add(FVector2D(0.0f, -ScaledAttackSpaceLateralSearchStep));
 	}
 
 	FVector BestLocation = BaseLocation;
@@ -18102,8 +18393,8 @@ FVector ASoccerMatchManager::AdjustAttackMoveLocationUsingSpace(
 		const float ClampedLateral =
 			FMath::Clamp(
 				CandidateLateral,
-				-AttackShapeMaxLateralOffset,
-				AttackShapeMaxLateralOffset
+				-ScaledAttackShapeMaxLateralOffset,
+				ScaledAttackShapeMaxLateralOffset
 			);
 
 		CandidateLocation =

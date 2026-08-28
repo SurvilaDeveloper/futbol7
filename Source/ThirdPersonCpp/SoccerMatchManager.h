@@ -135,6 +135,13 @@ public:
 		ASoccerCharacterBase* TouchingCharacter
 	);
 
+	// A goalkeeper deflection/body rebound is an intentional touch but the ball
+	// remains loose. Besides recording the rules touch, clear stale possession and
+	// refresh open-play roles immediately so defenders react in the same frame.
+	bool RegisterGoalkeeperReboundTouch(
+		ASoccerAICharacter* Goalkeeper
+	);
+
 	bool TryRegisterIntentionalBallTouch(
 		ASoccerCharacterBase* TouchingCharacter
 	);
@@ -936,11 +943,18 @@ bool IsPenaltyMatchStateActive() const;
 		ESoccerTeam Team
 	) const;
 
+	bool IsImmediateDefensiveDangerForTeam(ESoccerTeam Team) const;
+	bool IsDangerousLooseBallEmergencyForTeam(ESoccerTeam Team) const;
+	bool TryGetDangerousLooseBallEmergencyDefendingTeam(
+		ESoccerTeam& OutDefendingTeam
+	) const;
+
 	ESoccerPossessionTeam ConvertTeamToPossessionTeam(ESoccerTeam Team) const;
 
 	bool DoesTeamHavePossession(ESoccerTeam Team) const;
 
 	void ClearAttackState();
+	void ClearFreeBallChaserMemory();
 
 	void UpdateActiveRestartRestrictionSystem(float DeltaTime);
 
@@ -1930,6 +1944,19 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Match")
 		float MatchStateUpdateInterval = 0.15f;
 
+	// Any uncontrolled/opponent-controlled ball this deep toward a team's own
+	// goal activates faster defensive reaction. If the ball is specifically
+	// loose, it also overrides last-touch tactical phase so a goalkeeper rebound
+	// cannot make his own team behave as the attacking side.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Defense|Emergency Reaction", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float DefensiveEmergencyReactionDepthAlpha = 0.42f;
+
+	// Normal tactical role assignment runs at MatchStateUpdateInterval. Close to
+	// goal we temporarily use a faster cadence so rebounds and second balls are
+	// reacted to without making the whole match-state loop more expensive.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Defense|Emergency Reaction", meta = (ClampMin = "0.01"))
+		float DefensiveEmergencyReactionUpdateInterval = 0.05f;
+
 	// Todas las reanudaciones esperan que cada bot alcance su destino y
 	// reduzca la velocidad antes de autorizar al ejecutor.
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restart Preparation", meta = (ClampMin = "1.0"))
@@ -2198,6 +2225,12 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Interception|Role Selection", meta = (ClampMin = "0.0"))
 		float FreeBallChaserSwitchRequiredTimeAdvantage = 0.18f;
+
+	// Once the current free-ball chaser is already this close, do not hand the
+	// chase to a slightly better teammate. The commitment releases naturally if
+	// the ball moves away and the chaser leaves this radius.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Interception|Role Selection", meta = (ClampMin = "0.0"))
+		float FreeBallChaserCommitDistance = 220.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Interception|Role Selection", meta = (ClampMin = "0.0"))
 		float FreeBallUnreachableCandidatePenalty = 4.0f;
@@ -3068,6 +3101,12 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Defense Stability")
 		float DefensivePressureCurrentRoleBonus = 650.0f;
+
+	// A designated presser that is already within this distance finishes the
+	// pressure instead of turning away because another teammate's tactical score
+	// became marginally better on the next role-selection update.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Defense Stability", meta = (ClampMin = "0.0"))
+		float DefensivePressureCommitDistance = 220.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Defense Stability")
 		float DefensiveGoalLaneCurrentRoleBonus = 820.0f;

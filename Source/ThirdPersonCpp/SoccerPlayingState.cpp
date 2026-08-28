@@ -43,7 +43,30 @@ void FSoccerPlayingState::Tick(ASoccerMatchManager& Manager, float DeltaTime)
 	}
 
 	Manager.MatchStateUpdateAccumulator += DeltaTime;
-	if (Manager.MatchStateUpdateAccumulator < Manager.MatchStateUpdateInterval)
+
+	float EffectiveUpdateInterval =
+		FMath::Max(0.01f, Manager.MatchStateUpdateInterval);
+
+	const bool bImmediateDefensiveDanger =
+		Manager.IsImmediateDefensiveDangerForTeam(
+			ESoccerTeam::PlayerTeam
+		) ||
+		Manager.IsImmediateDefensiveDangerForTeam(
+			ESoccerTeam::OpponentTeam
+		);
+
+	if (bImmediateDefensiveDanger)
+	{
+		EffectiveUpdateInterval = FMath::Min(
+			EffectiveUpdateInterval,
+			FMath::Max(
+				0.01f,
+				Manager.DefensiveEmergencyReactionUpdateInterval
+			)
+		);
+	}
+
+	if (Manager.MatchStateUpdateAccumulator < EffectiveUpdateInterval)
 	{
 		return;
 	}
@@ -99,6 +122,11 @@ void FSoccerPlayingState::Tick(ASoccerMatchManager& Manager, float DeltaTime)
 	if (bPossessionChanged)
 	{
 		Manager.ClearAssignedAI();
+
+		if (IsValid(Manager.PossessingCharacter))
+		{
+			Manager.ClearFreeBallChaserMemory();
+		}
 	}
 
 	if (Manager.HasActiveAttack())

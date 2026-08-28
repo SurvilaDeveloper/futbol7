@@ -10,6 +10,7 @@ class USceneComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 class UMaterialInterface;
+class ANavMeshBoundsVolume;
 
 UCLASS()
 class THIRDPERSONCPP_API ASoccerField : public AActor
@@ -61,8 +62,21 @@ public:
 
 protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void BeginPlay() override;
 
 private:
+	UPROPERTY(EditAnywhere, Category = "Soccer Field|Navigation")
+		bool bAutoSizeNavigationBounds = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer Field|Navigation", meta = (ClampMin = "0.0"))
+		float NavigationBoundsOutsideMarginCm = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer Field|Navigation", meta = (ClampMin = "1.0"))
+		float NavigationBoundsHeightCm = 200.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer Field|Navigation")
+		float NavigationBoundsBottomLocalZ = -1.0f;
+
 	UPROPERTY(VisibleAnywhere, Category = "Soccer Field")
 		USceneComponent* FieldRoot = nullptr;
 
@@ -98,6 +112,9 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer Field|Materials")
 		UMaterialInterface* GoalNetMaterial = nullptr;
+
+	void UpdateNavigationBounds();
+	ANavMeshBoundsVolume* FindNavigationBoundsVolume() const;
 
 	UStaticMeshComponent* CreateBoxComponent(
 		UStaticMesh* Mesh,

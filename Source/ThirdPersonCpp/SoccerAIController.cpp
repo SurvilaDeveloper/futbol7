@@ -5280,10 +5280,15 @@ TryBuildGoalkeeperTrajectoryPrepositionTarget(
 		InwardDirection
 	);
 
+	const float ScaledTrajectoryPrepositionMaxDepth =
+		SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+			GoalkeeperTrajectoryPrepositionMaxDepthFromGoal
+		);
+
 	if (
 		BallDepthFromGoalLine <= 1.0f ||
 		BallDepthFromGoalLine >
-		FMath::Max(1.0f, GoalkeeperTrajectoryPrepositionMaxDepthFromGoal)
+		FMath::Max(1.0f, ScaledTrajectoryPrepositionMaxDepth)
 		)
 	{
 		return false;
@@ -12379,13 +12384,6 @@ void ASoccerAIController::ApplyGoalkeeperDeflectEffect(
 		SoccerBall
 	);
 
-	if (IsValid(MatchManager))
-	{
-		MatchManager->RegisterIntentionalBallTouch(
-			SoccerCharacter
-		);
-	}
-
 	FVector GoalCenterLocation = GetGoalkeeperHomeLocation(SoccerCharacter);
 
 	if (IsValid(MatchManager))
@@ -12425,6 +12423,21 @@ void ASoccerAIController::ApplyGoalkeeperDeflectEffect(
 		GoalkeeperDeflectForwardStrength,
 		GoalkeeperDeflectUpwardStrength
 	);
+
+	if (IsValid(MatchManager))
+	{
+		MatchManager->RegisterGoalkeeperReboundTouch(SoccerCharacter);
+	}
+
+	if (
+		bUseGoalkeeperPostReboundEarlyRecovery &&
+		SoccerCharacter->IsGoalkeeperActionActive()
+		)
+	{
+		SoccerCharacter->StopGoalkeeperActionMontage(
+			GoalkeeperPostReboundRecoveryBlendOutTime
+		);
+	}
 
 	SetGoalkeeperBehaviorMode(
 		ESoccerGoalkeeperBehaviorMode::Retreating
@@ -12466,13 +12479,6 @@ void ASoccerAIController::ApplyGoalkeeperBodyReboundEffect(
 		SoccerCharacter,
 		SoccerBall
 	);
-
-	if (IsValid(MatchManager))
-	{
-		MatchManager->RegisterIntentionalBallTouch(
-			SoccerCharacter
-		);
-	}
 
 	FVector GoalCenterLocation = GetGoalkeeperHomeLocation(SoccerCharacter);
 
@@ -12518,6 +12524,21 @@ void ASoccerAIController::ApplyGoalkeeperBodyReboundEffect(
 		GoalkeeperBodyReboundForwardStrength,
 		GoalkeeperBodyReboundUpwardStrength
 	);
+
+	if (IsValid(MatchManager))
+	{
+		MatchManager->RegisterGoalkeeperReboundTouch(SoccerCharacter);
+	}
+
+	if (
+		bUseGoalkeeperPostReboundEarlyRecovery &&
+		SoccerCharacter->IsGoalkeeperActionActive()
+		)
+	{
+		SoccerCharacter->StopGoalkeeperActionMontage(
+			GoalkeeperPostReboundRecoveryBlendOutTime
+		);
+	}
 
 	SetGoalkeeperBehaviorMode(
 		ESoccerGoalkeeperBehaviorMode::Retreating

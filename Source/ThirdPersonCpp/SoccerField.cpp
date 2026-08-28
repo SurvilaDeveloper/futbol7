@@ -4,6 +4,10 @@
 #include "SoccerFieldDimensions.h"
 
 #include "Components/SceneComponent.h"
+#include "Components/BrushComponent.h"
+#include "EngineUtils.h"
+#include "NavMesh/NavMeshBoundsVolume.h"
+#include "NavigationSystem.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
@@ -729,6 +733,8 @@ void ASoccerField::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 
+	UpdateNavigationBounds();
+
 	if (OuterGround != nullptr && OuterGroundMaterial != nullptr)
 	{
 		OuterGround->SetMaterial(0, OuterGroundMaterial);
@@ -763,6 +769,164 @@ void ASoccerField::OnConstruction(const FTransform& Transform)
 		{
 			Component->SetMaterial(0, GoalNetMaterial);
 		}
+	}
+}
+
+void ASoccerField::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// OnConstruction keeps the editor representation synchronized, while this
+	// second pass guarantees that cooked/runtime worlds use the same bounds.
+	UpdateNavigationBounds();
+}
+
+ANavMeshBoundsVolume* ASoccerField::FindNavigationBoundsVolume() const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return nullptr;
+	}
+
+	const FVector PitchCenter = GetPitchCenterWorldLocation();
+	ANavMeshBoundsVolume* BestVolume = nullptr;
+	float BestDistanceSquared = TNumericLimits<float>::Max();
+
+	for (TActorIterator<ANavMeshBoundsVolume> It(World); It; ++It)
+	{
+		ANavMeshBoundsVolume* Candidate = *It;
+		if (Candidate == nullptr)
+		{
+			continue;
+		}
+
+		const float DistanceSquared = FVector::DistSquared2D(
+			Candidate->GetActorLocation(),
+			PitchCenter
+		);
+
+		if (DistanceSquared < BestDistanceSquared)
+		{
+			BestDistanceSquared = DistanceSquared;
+			BestVolume = Candidate;
+		}
+	}
+
+	return BestVolume;
+}
+
+void ASoccerField::UpdateNavigationBounds()
+{
+	if (!bAutoSizeNavigationBounds)
+	{
+		return;
+	}
+
+	ANavMeshBoundsVolume* NavigationBoundsVolume = FindNavigationBoundsVolume();
+	if (NavigationBoundsVolume == nullptr)
+	{
+		return;
+	}
+
+	UBrushComponent* BrushComponent = NavigationBoundsVolume->GetBrushComponent();
+	if (BrushComponent == nullptr)
+	{
+		return;
+	}
+
+	// Query the brush in identity space instead of assuming the 6000x4000x200
+	// dimensions currently configured in the level. This keeps the sizing
+	// idempotent even after the volume has already been resized once.
+	const FBoxSphereBounds LocalBrushBounds =
+		BrushComponent->CalcBounds(FTransform::Identity);
+	const FVector BaseBrushSize = LocalBrushBounds.BoxExtent * 2.0f;
+
+	if (
+		BaseBrushSize.X <= KINDA_SMALL_NUMBER ||
+		BaseBrushSize.Y <= KINDA_SMALL_NUMBER ||
+		BaseBrushSize.Z <= KINDA_SMALL_NUMBER
+	)
+	{
+		return;
+	}
+
+	const float SafeOutsideMargin = FMath::Max(0.0f, NavigationBoundsOutsideMarginCm);
+	const float SafeHeight = FMath::Max(1.0f, NavigationBoundsHeightCm);
+	const FVector FieldScale = GetActorScale3D().GetAbs();
+
+	const FVector DesiredWorldSize(
+		(SoccerFieldDimensions::PitchLengthCm + SafeOutsideMargin * 2.0f) * FieldScale.X,
+		(SoccerFieldDimensions::PitchWidthCm + SafeOutsideMargin * 2.0f) * FieldScale.Y,
+		SafeHeight * FieldScale.Z
+	);
+
+	const FVector DesiredVolumeScale(
+		DesiredWorldSize.X / BaseBrushSize.X,
+		DesiredWorldSize.Y / BaseBrushSize.Y,
+		DesiredWorldSize.Z / BaseBrushSize.Z
+	);
+
+	const float CenterLocalZ =
+		NavigationBoundsBottomLocalZ + SafeHeight * 0.5f;
+	const FVector DesiredBrushCenterWorld = GetPitchCenterWorldLocation(CenterLocalZ);
+	const FRotator DesiredRotation = GetActorRotation();
+
+	// Compensate if the editor brush pivot is not exactly at the brush center.
+	const FVector ScaledLocalBrushCenter =
+		LocalBrushBounds.Origin * DesiredVolumeScale;
+	const FVector DesiredActorLocation =
+		DesiredBrushCenterWorld - DesiredRotation.RotateVector(ScaledLocalBrushCenter);
+
+	const bool bLocationChanged =
+		!NavigationBoundsVolume->GetActorLocation().Equals(DesiredActorLocation, 0.1f);
+	const bool bRotationChanged =
+		!NavigationBoundsVolume->GetActorRotation().Equals(DesiredRotation, 0.01f);
+	const bool bScaleChanged =
+		!NavigationBoundsVolume->GetActorScale3D().Equals(DesiredVolumeScale, 0.0001f);
+
+	if (!bLocationChanged && !bRotationChanged && !bScaleChanged)
+	{
+		return;
+	}
+
+	USceneComponent* NavigationRoot = NavigationBoundsVolume->GetRootComponent();
+	if (NavigationRoot == nullptr)
+	{
+		return;
+	}
+
+	const EComponentMobility::Type OriginalMobility = NavigationRoot->Mobility;
+	if (OriginalMobility == EComponentMobility::Static)
+	{
+		NavigationRoot->SetMobility(EComponentMobility::Stationary);
+	}
+
+	NavigationBoundsVolume->SetActorLocationAndRotation(
+		DesiredActorLocation,
+		DesiredRotation,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics
+	);
+	NavigationBoundsVolume->SetActorScale3D(DesiredVolumeScale);
+
+	// UE4 registers navigation bounds from the brush component bounds. Refresh
+	// them explicitly before notifying the navigation system.
+	NavigationRoot->UpdateBounds();
+	BrushComponent->UpdateBounds();
+
+	if (OriginalMobility == EComponentMobility::Static)
+	{
+		NavigationRoot->SetMobility(EComponentMobility::Static);
+	}
+
+	UNavigationSystemV1* NavigationSystem =
+		FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
+
+	if (NavigationSystem != nullptr)
+	{
+		NavigationSystem->OnNavigationBoundsUpdated(NavigationBoundsVolume);
 	}
 }
 

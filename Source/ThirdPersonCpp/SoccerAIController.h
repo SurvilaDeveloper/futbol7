@@ -2303,6 +2303,16 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper")
 		float GoalkeeperDeflectUpwardStrength = 180.0f;
 
+	// Once a deflection/body rebound has already happened, keeping the keeper
+	// locked until the full save montage ends makes second-ball reactions late.
+	// Blend out the remaining save immediately and let normal loose-ball logic
+	// evaluate again on the next controller Tick.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Save Recovery")
+		bool bUseGoalkeeperPostReboundEarlyRecovery = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Save Recovery", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float GoalkeeperPostReboundRecoveryBlendOutTime = 0.10f;
+
 	// ============================================================
 	// GOALKEEPER SAVE TIMING DEBUG
 	// ============================================================
