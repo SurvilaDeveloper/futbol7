@@ -57,6 +57,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Control")
 		bool IsKicking() const;
 
+	// True only while a left/right click has explicitly reserved the next
+	// playable ball action for the human. The MatchManager uses this intent to
+	// keep a slower teammate from duplicating the same recovery run.
+	UFUNCTION(BlueprintPure, Category = "Soccer|Control")
+		bool HasActiveHumanBallClaim() const;
+
 	/** True while the human has an assisted jump-header request armed, queued, or playing. */
 	UFUNCTION(BlueprintPure, Category = "Soccer|Aerial|Human")
 		bool IsHumanJumpHeaderRequestActive() const;
@@ -242,6 +248,8 @@ void StartAutoPassCollectCarry();
 
 	void EnterManualControl();
 	void EnterChasingBall();
+	void ActivateHumanBallClaim();
+	void ClearHumanBallClaim();
 
 	void RegisterDribbleInput(const FVector& Direction, float Value);
 	void UpdatePhysicalDribbleControl();
@@ -360,6 +368,10 @@ private:
 		ASoccerBall* ControlledBall = nullptr;
 
 	ESoccerPlayerControlState SoccerControlState = ESoccerPlayerControlState::Manual;
+
+	// This is deliberately separate from ChasingBall: that control state is
+	// also entered by automatic aerial follow-ups and other non-click systems.
+	bool bHumanBallClaimActive = false;
 
 	ESoccerPendingKickMode PendingKickMode = ESoccerPendingKickMode::None;
 

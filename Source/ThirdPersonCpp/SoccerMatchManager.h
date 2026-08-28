@@ -939,6 +939,15 @@ bool IsPenaltyMatchStateActive() const;
 		ASoccerAICharacter*& OutSecondClosest
 	);
 
+	float GetBallRecoveryRankingTime(
+		const ASoccerCharacterBase* Candidate
+	) const;
+
+	bool ShouldAIYieldBallRecoveryToHuman(
+		ESoccerTeam Team,
+		const ASoccerAICharacter* CandidateAI
+	) const;
+
 	ASoccerAICharacter* FindActiveAIAutoPassRecoveryCharacterForTeam(
 		ESoccerTeam Team
 	) const;
@@ -2237,6 +2246,20 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Interception|Role Selection", meta = (ClampMin = "0.0"))
 		float FreeBallNoPredictionCandidatePenalty = 8.0f;
+
+	// A click-driven human recovery participates in the same predictive timing
+	// comparison as the AI. A teammate keeps chasing only when it reaches the
+	// ball by at least the configured advantage.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Human Ball Claim")
+		bool bEnableHumanBallClaimPriority = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Human Ball Claim", meta = (ClampMin = "0.0"))
+		float HumanBallClaimAIRequiredTimeAdvantage = 0.20f;
+
+	// Near the team's own goal, defensive safety remains stronger than the
+	// anti-crowding preference and a bot may help even if the human arrives first.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Human Ball Claim")
+		bool bAllowAIHumanClaimDefensiveEmergencyHelp = true;
 
 	UPROPERTY()
 		ASoccerAICharacter* PlayerTeamSupportAI = nullptr;

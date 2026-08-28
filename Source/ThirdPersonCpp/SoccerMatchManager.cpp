@@ -10083,11 +10083,27 @@ void ASoccerMatchManager::AssignFreeBallRoles()
 		PlayerTeamSupportAI
 	);
 
+	if (ShouldAIYieldBallRecoveryToHuman(
+		ESoccerTeam::PlayerTeam,
+		PlayerTeamPressureAI
+	))
+	{
+		PlayerTeamPressureAI = nullptr;
+	}
+
 	FindClosestTwoAICharactersToBall(
 		ESoccerTeam::OpponentTeam,
 		OpponentTeamPressureAI,
 		OpponentTeamSupportAI
 	);
+
+	if (ShouldAIYieldBallRecoveryToHuman(
+		ESoccerTeam::OpponentTeam,
+		OpponentTeamPressureAI
+	))
+	{
+		OpponentTeamPressureAI = nullptr;
+	}
 }
 
 void ASoccerMatchManager::AssignAttackDefenseRoles()
@@ -10161,6 +10177,14 @@ void ASoccerMatchManager::AssignAttackDefenseRoles()
 		}
 	}
 
+	if (ShouldAIYieldBallRecoveryToHuman(
+		AttackingTeam,
+		AttackingRecoveryAI
+	))
+	{
+		AttackingRecoveryAI = nullptr;
+	}
+
 	TArray<const ASoccerAICharacter*> ExcludedAttackers;
 
 	if (AttackingRecoveryAI != nullptr)
@@ -10226,6 +10250,14 @@ void ASoccerMatchManager::AssignAttackDefenseRoles()
 	{
 		DefendingPressure =
 			FindBestDefensivePressureAI(DefendingTeam);
+	}
+
+	if (ShouldAIYieldBallRecoveryToHuman(
+		DefendingTeam,
+		DefendingPressure
+	))
+	{
+		DefendingPressure = nullptr;
 	}
 
 	TArray<const ASoccerAICharacter*> ExcludedDefenders;
@@ -10411,6 +10443,132 @@ ASoccerAICharacter* ASoccerMatchManager::FindActiveAIAutoPassRecoveryCharacterFo
 	return BestCharacter;
 }
 
+float ASoccerMatchManager::GetBallRecoveryRankingTime(
+	const ASoccerCharacterBase* Candidate
+) const
+{
+	if (!IsValid(Candidate) || !IsValid(SoccerBall))
+	{
+		return TNumericLimits<float>::Max();
+	}
+
+	FSoccerBallInterceptionResult InterceptionResult;
+
+	if (Candidate->FindBestBallInterception(
+		SoccerBall,
+		InterceptionResult
+	))
+	{
+		if (InterceptionResult.bCanArriveInTime)
+		{
+			return FMath::Max(
+				InterceptionResult.BallArrivalTime,
+				InterceptionResult.PlayerArrivalTime
+			);
+		}
+
+		return
+			FreeBallUnreachableCandidatePenalty +
+			InterceptionResult.PlayerArrivalTime +
+			FMath::Max(
+				0.0f,
+				-InterceptionResult.ArrivalTimeMargin
+			);
+	}
+
+	return
+		FreeBallNoPredictionCandidatePenalty +
+		Candidate->EstimateArrivalTimeToLocation(
+			SoccerBall->GetActorLocation()
+		);
+}
+
+bool ASoccerMatchManager::ShouldAIYieldBallRecoveryToHuman(
+	ESoccerTeam Team,
+	const ASoccerAICharacter* CandidateAI
+) const
+{
+	if (
+		!bEnableHumanBallClaimPriority ||
+		MatchPlayState != ESoccerMatchPlayState::Playing ||
+		IsRestartContextActive() ||
+		!IsValid(SoccerBall) ||
+		!IsValid(CandidateAI) ||
+		CandidateAI->GetTeam() != Team
+		)
+	{
+		return false;
+	}
+
+	AThirdPersonCppCharacter* HumanCharacter =
+		FindHumanCharacterForTeam(Team);
+
+	if (
+		!IsValid(HumanCharacter) ||
+		!HumanCharacter->HasActiveHumanBallClaim() ||
+		!CanCharacterTouchBallNow(HumanCharacter)
+		)
+	{
+		return false;
+	}
+
+	// Close to the team's own goal, defensive safety deliberately wins over
+	// the anti-crowding preference. The existing emergency depth is the single
+	// source of truth for this exception.
+	if (
+		bAllowAIHumanClaimDefensiveEmergencyHelp &&
+		IsImmediateDefensiveDangerForTeam(Team)
+		)
+	{
+		return false;
+	}
+
+	// Preserve the existing reservation for the author of an AI auto-pass. It
+	// is an intentional continuation of possession, not a generic teammate
+	// joining a loose-ball race.
+	if (
+		FindActiveAIAutoPassRecoveryCharacterForTeam(Team) ==
+			CandidateAI
+		)
+	{
+		return false;
+	}
+
+	const float HumanRankingTime =
+		GetBallRecoveryRankingTime(HumanCharacter);
+
+	const float AIRankingTime =
+		GetBallRecoveryRankingTime(CandidateAI);
+
+	const float InvalidRankingThreshold =
+		TNumericLimits<float>::Max() * 0.5f;
+
+	if (
+		!FMath::IsFinite(HumanRankingTime) ||
+		HumanRankingTime >= InvalidRankingThreshold
+		)
+	{
+		// If the human has no usable route/prediction, do not suppress the bot.
+		return false;
+	}
+
+	if (
+		!FMath::IsFinite(AIRankingTime) ||
+		AIRankingTime >= InvalidRankingThreshold
+		)
+	{
+		return true;
+	}
+
+	const float AIInterceptionAdvantage =
+		HumanRankingTime - AIRankingTime;
+
+	return AIInterceptionAdvantage < FMath::Max(
+		0.0f,
+		HumanBallClaimAIRequiredTimeAdvantage
+	);
+}
+
 void ASoccerMatchManager::FindClosestTwoAICharactersToBall(
 	ESoccerTeam Team,
 	ASoccerAICharacter*& OutClosest,
@@ -10475,40 +10633,8 @@ void ASoccerMatchManager::FindClosestTwoAICharactersToBall(
 			continue;
 		}
 
-		float RankingTime = TNumericLimits<float>::Max();
-		FSoccerBallInterceptionResult InterceptionResult;
-
-		if (Candidate->FindBestBallInterception(
-			SoccerBall,
-			InterceptionResult
-		))
-		{
-			if (InterceptionResult.bCanArriveInTime)
-			{
-				RankingTime = FMath::Max(
-					InterceptionResult.BallArrivalTime,
-					InterceptionResult.PlayerArrivalTime
-				);
-			}
-			else
-			{
-				RankingTime =
-					FreeBallUnreachableCandidatePenalty +
-					InterceptionResult.PlayerArrivalTime +
-					FMath::Max(
-						0.0f,
-						-InterceptionResult.ArrivalTimeMargin
-					);
-			}
-		}
-		else
-		{
-			RankingTime =
-				FreeBallNoPredictionCandidatePenalty +
-				Candidate->EstimateArrivalTimeToLocation(
-					SoccerBall->GetActorLocation()
-				);
-		}
+		const float RankingTime =
+			GetBallRecoveryRankingTime(Candidate);
 
 		if (!FMath::IsFinite(RankingTime))
 		{

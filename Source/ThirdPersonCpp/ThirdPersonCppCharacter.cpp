@@ -496,6 +496,20 @@ bool AThirdPersonCppCharacter::IsKicking() const
 	return SoccerControlState == ESoccerPlayerControlState::Kicking;
 }
 
+bool AThirdPersonCppCharacter::HasActiveHumanBallClaim() const
+{
+	if (!bHumanBallClaimActive)
+	{
+		return false;
+	}
+
+	return
+		SoccerControlState == ESoccerPlayerControlState::ChasingBall ||
+		SoccerControlState == ESoccerPlayerControlState::Kicking ||
+		SoccerControlState == ESoccerPlayerControlState::DribbleTurning ||
+		bIsHumanStealAttemptActive;
+}
+
 bool AThirdPersonCppCharacter::IsHumanJumpHeaderRequestActive() const
 {
 	return bHumanJumpHeaderRequestActive;
@@ -1258,6 +1272,7 @@ void AThirdPersonCppCharacter::EnterManualControl()
 
 	ClearAutoPassFollowState();
 	ClearBallPursuitTarget();
+	ClearHumanBallClaim();
 
 	SoccerControlState = ESoccerPlayerControlState::Manual;
 	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
@@ -1272,6 +1287,16 @@ void AThirdPersonCppCharacter::EnterChasingBall()
 
 	SoccerControlState = ESoccerPlayerControlState::ChasingBall;
 	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
+}
+
+void AThirdPersonCppCharacter::ActivateHumanBallClaim()
+{
+	bHumanBallClaimActive = true;
+}
+
+void AThirdPersonCppCharacter::ClearHumanBallClaim()
+{
+	bHumanBallClaimActive = false;
 }
 
 void AThirdPersonCppCharacter::StartBallControl()
@@ -1581,6 +1606,8 @@ bool AThirdPersonCppCharacter::ArmHumanJumpHeaderRequestFromCurrentInput()
 	{
 		return false;
 	}
+
+	ActivateHumanBallClaim();
 
 	const float InitialChargePercent = GetCurrentKickChargePercent();
 	const float InitialHorizontalSpeed = FMath::Lerp(
@@ -2006,6 +2033,7 @@ void AThirdPersonCppCharacter::PossessBall()
 
 	ClearAutoPassFollowState();
 	ClearBallPursuitTarget();
+	ClearHumanBallClaim();
 
 	SoccerControlState = ESoccerPlayerControlState::PossessingBall;
 	PendingKickMode = ESoccerPendingKickMode::None;
@@ -2050,6 +2078,7 @@ void AThirdPersonCppCharacter::ReleaseBallForAISteal()
 	ClearHumanStealAttemptOnly();
 	ClearAutoPassFollowState();
 	ClearHumanJumpHeaderRequest(true, true);
+	ClearHumanBallClaim();
 
 	PendingKickMode = ESoccerPendingKickMode::None;
 	PendingKickTarget = FVector::ZeroVector;
@@ -2091,6 +2120,7 @@ void AThirdPersonCppCharacter::ReleaseBallForMatchRestart(bool bShowFeedback)
 	ClearHumanStealAttemptOnly();
 	ClearAutoPassFollowState();
 	ClearHumanJumpHeaderRequest(true, true);
+	ClearHumanBallClaim();
 
 	PendingKickMode = ESoccerPendingKickMode::None;
 	PendingKickTarget = FVector::ZeroVector;
@@ -3094,6 +3124,14 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 			);
 		}
 
+		if (
+			ActiveStrongRunDribbleTurnKickMode !=
+				ESoccerPendingKickMode::KickAndFollow
+			)
+		{
+			ClearHumanBallClaim();
+		}
+
 		LastKickTime = GetWorld()->GetTimeSeconds();
 
 		return;
@@ -3150,6 +3188,7 @@ void AThirdPersonCppCharacter::FinishStrongRunDribbleTurnAnimation()
 		return;
 	}
 
+	ClearHumanBallClaim();
 	SoccerControlState = ESoccerPlayerControlState::PossessingBall;
 	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
 
@@ -3520,6 +3559,7 @@ void AThirdPersonCppCharacter::FinishNormalRunDribbleTurnAnimation()
 
 	bActiveNormalRunDribbleTurnHasImpactedBall = false;
 
+	ClearHumanBallClaim();
 	SoccerControlState = ESoccerPlayerControlState::PossessingBall;
 	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
 
@@ -4254,6 +4294,7 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 		PendingKickMode = ESoccerPendingKickMode::None;
 		PendingKickTarget = FVector::ZeroVector;
 
+		ActivateHumanBallClaim();
 		EnterChasingBall();
 
 		/* First click asks for a controlled reception: chest, then soft head. */
@@ -4512,6 +4553,11 @@ void AThirdPersonCppCharacter::StoreKickTarget(ESoccerPendingKickMode KickMode)
 
 		return;
 	}
+
+	// StoreKickTarget is reached only from the left/right click handlers. Once
+	// the field target is valid, the human owns this recovery attempt until the
+	// action finishes or manual input cancels it.
+	ActivateHumanBallClaim();
 
 	/*
 	 * While an assisted jump header is already queued, another click only
@@ -4980,6 +5026,11 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 			TargetKickMinTravelTime,
 			TargetKickMaxTravelTime
 		);
+	}
+
+	if (ActiveKickMode != ESoccerPendingKickMode::KickAndFollow)
+	{
+		ClearHumanBallClaim();
 	}
 
 	LastKickTime = GetWorld()->GetTimeSeconds();
@@ -5613,6 +5664,8 @@ void AThirdPersonCppCharacter::StartHumanStealAttempt(
 	{
 		return;
 	}
+
+	ActivateHumanBallClaim();
 
 	bIsHumanStealAttemptActive = true;
 	HumanStealTargetAICharacter = TargetAICharacter;
