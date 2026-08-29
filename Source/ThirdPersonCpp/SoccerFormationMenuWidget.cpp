@@ -14,6 +14,7 @@
 #include "Components/EditableTextBox.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/ScaleBox.h"
 #include "Components/ScrollBox.h"
 #include "Components/SizeBox.h"
 #include "Components/Spacer.h"
@@ -135,13 +136,18 @@ namespace
 		{ ESoccerIndividualDefensiveInstruction::MarkTightly, TEXT("Marcar de cerca") }
 	};
 
-	const FLinearColor MenuBackground(0.020f, 0.030f, 0.045f, 0.985f);
-	const FLinearColor CardBackground(0.040f, 0.058f, 0.080f, 0.96f);
-	const FLinearColor SelectorBackground(0.055f, 0.075f, 0.100f, 1.0f);
-	const FLinearColor SelectorFocused(0.075f, 0.34f, 0.48f, 1.0f);
+	// The coach menu deliberately leaves the paused match visible behind it.
+	// Controls remain more opaque than the structural surfaces so text and focus
+	// feedback stay readable even over bright stadiums.
+	const FLinearColor MenuBackground(0.020f, 0.030f, 0.045f, 0.76f);
+	const FLinearColor CardBackground(0.040f, 0.058f, 0.080f, 0.52f);
+	const FLinearColor SelectorBackground(0.055f, 0.075f, 0.100f, 0.86f);
+	const FLinearColor SelectorFocused(0.075f, 0.34f, 0.48f, 0.96f);
 	const FLinearColor Accent(0.20f, 0.72f, 0.95f, 1.0f);
 	const FLinearColor WarmAccent(0.95f, 0.74f, 0.22f, 1.0f);
 	const FLinearColor MutedText(0.62f, 0.68f, 0.74f, 1.0f);
+	const float PresetPreviewWidth = 570.0f;
+	const float PresetPreviewHeight = 180.0f;
 
 	UTextBlock* MakeTextBlock(
 		UWidgetTree* WidgetTree,
@@ -230,7 +236,7 @@ namespace
 			return nullptr;
 		}
 
-		Button->SetBackgroundColor(FLinearColor(0.08f, 0.11f, 0.15f, 1.0f));
+		Button->SetBackgroundColor(FLinearColor(0.08f, 0.11f, 0.15f, 0.90f));
 		UTextBlock* Text = MakeTextBlock(WidgetTree, Label, TextColor, FontSize);
 		if (Text != nullptr)
 		{
@@ -252,7 +258,7 @@ namespace
 		if (Border != nullptr)
 		{
 			Border->SetBrushColor(Color);
-			Border->SetPadding(FMargin(14.0f));
+			Border->SetPadding(FMargin(22.0f));
 		}
 		return Border;
 	}
@@ -727,36 +733,36 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 	WidgetTree->RootWidget = RootCanvas;
 
 	UBorder* ScreenDim = WidgetTree->ConstructWidget<UBorder>();
-	ScreenDim->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.56f));
+	ScreenDim->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.22f));
 	UCanvasPanelSlot* DimSlot = RootCanvas->AddChildToCanvas(ScreenDim);
 	DimSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
 	DimSlot->SetOffsets(FMargin(0.0f));
 
 	UBorder* MenuBorder = WidgetTree->ConstructWidget<UBorder>();
 	MenuBorder->SetBrushColor(MenuBackground);
-	MenuBorder->SetPadding(FMargin(22.0f, 18.0f));
+	MenuBorder->SetPadding(FMargin(30.0f, 24.0f));
 
 	UCanvasPanelSlot* MenuCanvasSlot = RootCanvas->AddChildToCanvas(MenuBorder);
-	MenuCanvasSlot->SetAnchors(FAnchors(0.5f, 0.5f));
-	MenuCanvasSlot->SetAlignment(FVector2D(0.5f, 0.5f));
-	MenuCanvasSlot->SetPosition(FVector2D::ZeroVector);
-	MenuCanvasSlot->SetSize(FVector2D(1160.0f, 650.0f));
+	// Percentage anchors make the menu occupy almost all of the usable viewport
+	// at every DPI scale without relying on a resolution-specific fixed size.
+	MenuCanvasSlot->SetAnchors(FAnchors(0.025f, 0.035f, 0.975f, 0.965f));
+	MenuCanvasSlot->SetOffsets(FMargin(0.0f));
 
 	UVerticalBox* MainColumn = WidgetTree->ConstructWidget<UVerticalBox>();
 	MenuBorder->AddChild(MainColumn);
 
 	// Header
 	UHorizontalBox* HeaderRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-	AddVerticalChild(MainColumn, HeaderRow, FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+	AddVerticalChild(MainColumn, HeaderRow, FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
 	UVerticalBox* HeaderLeft = WidgetTree->ConstructWidget<UVerticalBox>();
-	AddHorizontalChild(HeaderRow, HeaderLeft, FMargin(0.0f, 0.0f, 12.0f, 0.0f), ESlateSizeRule::Fill);
+	AddHorizontalChild(HeaderRow, HeaderLeft, FMargin(0.0f, 0.0f, 24.0f, 0.0f), ESlateSizeRule::Fill);
 
 	UTextBlock* TitleText = MakeTextBlock(
 		WidgetTree,
 		TEXT("SISTEMA Y TÁCTICA"),
 		FLinearColor(0.97f, 0.98f, 1.0f, 1.0f),
-		27
+		31
 	);
 	AddVerticalChild(HeaderLeft, TitleText);
 
@@ -764,7 +770,7 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 		WidgetTree,
 		TEXT("PlayerTeam  |  --"),
 		MutedText,
-		16
+		18
 	);
 	AddVerticalChild(HeaderLeft, HeaderContextText, FMargin(0.0f, 3.0f, 0.0f, 0.0f));
 
@@ -772,37 +778,52 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 		WidgetTree,
 		TEXT("Rival: --"),
 		FLinearColor(0.78f, 0.82f, 0.86f, 1.0f),
-		16
+		18
 	);
 	HeaderOpponentText->SetJustification(ETextJustify::Right);
-	AddHorizontalChild(HeaderRow, HeaderOpponentText, FMargin(12.0f, 7.0f, 0.0f, 0.0f));
+	AddHorizontalChild(
+		HeaderRow,
+		HeaderOpponentText,
+		FMargin(0.0f, 0.0f, 22.0f, 0.0f),
+		ESlateSizeRule::Automatic,
+		VAlign_Center
+	);
+
+	USizeBox* CloseSizeBox = WidgetTree->ConstructWidget<USizeBox>();
+	CloseSizeBox->SetWidthOverride(230.0f);
+	CloseSizeBox->SetHeightOverride(46.0f);
+	CloseButton = MakeButton(WidgetTree, TEXT("VOLVER AL PARTIDO"), 16);
+	CloseButton->SetBackgroundColor(FLinearColor(0.11f, 0.16f, 0.21f, 0.92f));
+	CloseButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleCloseClicked);
+	CloseSizeBox->AddChild(CloseButton);
+	AddHorizontalChild(HeaderRow, CloseSizeBox, FMargin(0.0f), ESlateSizeRule::Automatic, VAlign_Center);
 
 	// Tabs
 	UHorizontalBox* TabRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-	AddVerticalChild(MainColumn, TabRow, FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+	AddVerticalChild(MainColumn, TabRow, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
-	PresetsTabButton = MakeButton(WidgetTree, TEXT("PRESETS"), 17);
-	FormationTabButton = MakeButton(WidgetTree, TEXT("FORMACIÓN"), 17);
-	TacticsTabButton = MakeButton(WidgetTree, TEXT("TÁCTICA"), 17);
-	InstructionsTabButton = MakeButton(WidgetTree, TEXT("INSTRUCCIONES"), 17);
+	PresetsTabButton = MakeButton(WidgetTree, TEXT("PRESETS"), 19);
+	FormationTabButton = MakeButton(WidgetTree, TEXT("FORMACIÓN"), 19);
+	TacticsTabButton = MakeButton(WidgetTree, TEXT("TÁCTICA"), 19);
+	InstructionsTabButton = MakeButton(WidgetTree, TEXT("INSTRUCCIONES"), 19);
 
 	PresetsTabButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandlePresetsTabClicked);
 	FormationTabButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleFormationTabClicked);
 	TacticsTabButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleTacticsTabClicked);
 	InstructionsTabButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleInstructionsTabClicked);
 
-	AddHorizontalChild(TabRow, PresetsTabButton, FMargin(0.0f, 0.0f, 5.0f, 0.0f), ESlateSizeRule::Fill);
-	AddHorizontalChild(TabRow, FormationTabButton, FMargin(5.0f), ESlateSizeRule::Fill);
-	AddHorizontalChild(TabRow, TacticsTabButton, FMargin(5.0f), ESlateSizeRule::Fill);
-	AddHorizontalChild(TabRow, InstructionsTabButton, FMargin(5.0f, 0.0f, 0.0f, 0.0f), ESlateSizeRule::Fill);
+	AddHorizontalChild(TabRow, PresetsTabButton, FMargin(0.0f, 0.0f, 8.0f, 0.0f), ESlateSizeRule::Fill);
+	AddHorizontalChild(TabRow, FormationTabButton, FMargin(8.0f), ESlateSizeRule::Fill);
+	AddHorizontalChild(TabRow, TacticsTabButton, FMargin(8.0f), ESlateSizeRule::Fill);
+	AddHorizontalChild(TabRow, InstructionsTabButton, FMargin(8.0f, 0.0f, 0.0f, 0.0f), ESlateSizeRule::Fill);
 
 	// Page area
-	UBorder* PageBorder = MakeCard(WidgetTree, FLinearColor(0.028f, 0.043f, 0.060f, 1.0f));
-	PageBorder->SetPadding(FMargin(16.0f));
+	UBorder* PageBorder = MakeCard(WidgetTree, FLinearColor(0.028f, 0.043f, 0.060f, 0.34f));
+	PageBorder->SetPadding(FMargin(26.0f));
 	AddVerticalChild(
 		MainColumn,
 		PageBorder,
-		FMargin(0.0f, 0.0f, 0.0f, 10.0f),
+		FMargin(0.0f, 0.0f, 0.0f, 16.0f),
 		HAlign_Fill,
 		ESlateSizeRule::Fill
 	);
@@ -831,37 +852,32 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 	BuildTacticsPage(TacticsPage);
 	BuildInstructionsPage(InstructionsPage);
 
-	// Footer
+	// Quiet, single-line contextual footer. The close action lives in the header.
 	UHorizontalBox* FooterRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-	AddVerticalChild(MainColumn, FooterRow, FMargin(0.0f, 4.0f, 0.0f, 0.0f));
-
-	UVerticalBox* FooterTextColumn = WidgetTree->ConstructWidget<UVerticalBox>();
-	AddHorizontalChild(FooterRow, FooterTextColumn, FMargin(0.0f, 0.0f, 14.0f, 0.0f), ESlateSizeRule::Fill);
+	AddVerticalChild(MainColumn, FooterRow, FMargin(0.0f, 2.0f, 0.0f, 0.0f));
 
 	StatusText = MakeTextBlock(
 		WidgetTree,
 		TEXT("Listo."),
 		FLinearColor(0.72f, 0.86f, 0.96f, 1.0f),
-		14
+		16
 	);
-	AddVerticalChild(FooterTextColumn, StatusText);
+	AddHorizontalChild(
+		FooterRow,
+		StatusText,
+		FMargin(0.0f, 0.0f, 30.0f, 0.0f),
+		ESlateSizeRule::Fill,
+		VAlign_Center
+	);
 
 	ControlHintText = MakeTextBlock(
 		WidgetTree,
 		TEXT("Mouse: cambiar   Flechas: navegar/cambiar   PgUp/PgDn: sección   Enter: cambiar   M/Esc: cerrar"),
 		MutedText,
-		13
+		15
 	);
-	AddVerticalChild(FooterTextColumn, ControlHintText, FMargin(0.0f, 3.0f, 0.0f, 0.0f));
-
-	USizeBox* CloseSizeBox = WidgetTree->ConstructWidget<USizeBox>();
-	CloseSizeBox->SetWidthOverride(210.0f);
-	CloseSizeBox->SetHeightOverride(42.0f);
-	CloseButton = MakeButton(WidgetTree, TEXT("VOLVER AL PARTIDO"), 15);
-	CloseButton->SetBackgroundColor(FLinearColor(0.11f, 0.16f, 0.21f, 1.0f));
-	CloseButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleCloseClicked);
-	CloseSizeBox->AddChild(CloseButton);
-	AddHorizontalChild(FooterRow, CloseSizeBox);
+	ControlHintText->SetJustification(ETextJustify::Right);
+	AddHorizontalChild(FooterRow, ControlHintText, FMargin(0.0f), ESlateSizeRule::Automatic, VAlign_Center);
 
 	// Stage 16D2: destructive preset deletion gets its own modal layer.
 	// The full-screen border blocks mouse interaction with the coach menu below.
@@ -880,15 +896,15 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 	DeleteOverlaySlot->SetZOrder(100);
 
 	USizeBox* DeleteDialogSize = WidgetTree->ConstructWidget<USizeBox>();
-	DeleteDialogSize->SetWidthOverride(520.0f);
-	DeleteDialogSize->SetHeightOverride(235.0f);
+	DeleteDialogSize->SetWidthOverride(620.0f);
+	DeleteDialogSize->SetHeightOverride(280.0f);
 	PresetDeleteConfirmationOverlay->AddChild(DeleteDialogSize);
 
 	UBorder* DeleteDialogCard = MakeCard(
 		WidgetTree,
 		FLinearColor(0.035f, 0.050f, 0.068f, 1.0f)
 	);
-	DeleteDialogCard->SetPadding(FMargin(24.0f, 20.0f));
+	DeleteDialogCard->SetPadding(FMargin(30.0f, 26.0f));
 	DeleteDialogSize->AddChild(DeleteDialogCard);
 
 	UVerticalBox* DeleteDialogColumn = WidgetTree->ConstructWidget<UVerticalBox>();
@@ -898,7 +914,7 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 		WidgetTree,
 		TEXT("ELIMINAR PRESET"),
 		FLinearColor(0.95f, 0.37f, 0.37f, 1.0f),
-		20
+		23
 	);
 	DeleteDialogTitle->SetJustification(ETextJustify::Center);
 	AddVerticalChild(
@@ -911,7 +927,7 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 		WidgetTree,
 		TEXT("¿Eliminar este preset?"),
 		FLinearColor(0.92f, 0.94f, 0.97f, 1.0f),
-		16
+		18
 	);
 	PresetDeleteConfirmationText->SetJustification(ETextJustify::Center);
 	PresetDeleteConfirmationText->SetAutoWrapText(true);
@@ -927,7 +943,7 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 		WidgetTree->ConstructWidget<UHorizontalBox>();
 	AddVerticalChild(DeleteDialogColumn, DeleteDialogButtons);
 
-	PresetDeleteCancelButton = MakeButton(WidgetTree, TEXT("CANCELAR"), 15);
+	PresetDeleteCancelButton = MakeButton(WidgetTree, TEXT("CANCELAR"), 17);
 	PresetDeleteCancelButton->SetBackgroundColor(
 		FLinearColor(0.11f, 0.16f, 0.21f, 1.0f)
 	);
@@ -942,7 +958,7 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 		ESlateSizeRule::Fill
 	);
 
-	PresetDeleteConfirmButton = MakeButton(WidgetTree, TEXT("ELIMINAR"), 15);
+	PresetDeleteConfirmButton = MakeButton(WidgetTree, TEXT("ELIMINAR"), 17);
 	PresetDeleteConfirmButton->SetBackgroundColor(
 		FLinearColor(0.42f, 0.08f, 0.09f, 1.0f)
 	);
@@ -974,12 +990,12 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 
 	UBorder* LibraryCard = MakeCard(WidgetTree);
 	USizeBox* LibrarySize = WidgetTree->ConstructWidget<USizeBox>();
-	LibrarySize->SetWidthOverride(500.0f);
+	LibrarySize->SetWidthOverride(620.0f);
 	LibrarySize->AddChild(LibraryCard);
 	AddHorizontalChild(
 		ContentRow,
 		LibrarySize,
-		FMargin(0.0f, 0.0f, 16.0f, 0.0f),
+		FMargin(0.0f, 0.0f, 28.0f, 0.0f),
 		ESlateSizeRule::Automatic,
 		VAlign_Fill
 	);
@@ -991,15 +1007,15 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("BIBLIOTECA DE ESTRATEGIAS"),
 		Accent,
-		20
+		23
 	);
-	AddVerticalChild(LibraryColumn, LibraryTitle, FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+	AddVerticalChild(LibraryColumn, LibraryTitle, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
 	BuiltInPresetSelector = BuildSelectorRow(
 		LibraryColumn,
 		TEXT("DEL JUEGO"),
-		120.0f,
-		225.0f
+		145.0f,
+		285.0f
 	);
 	BuiltInPresetSelector.PreviousButton->OnClicked.AddDynamic(
 		this,
@@ -1013,8 +1029,8 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	PresetSelector = BuildSelectorRow(
 		LibraryColumn,
 		TEXT("MIS PRESETS"),
-		120.0f,
-		225.0f
+		145.0f,
+		285.0f
 	);
 	PresetSelector.PreviousButton->OnClicked.AddDynamic(
 		this,
@@ -1029,25 +1045,25 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("TIPO: PRESET DEL JUEGO · SOLO LECTURA"),
 		FLinearColor(0.93f, 0.78f, 0.36f, 1.0f),
-		11
+		14
 	);
 	AddVerticalChild(
 		LibraryColumn,
 		PresetSelectionOriginText,
-		FMargin(2.0f, 4.0f, 2.0f, 2.0f)
+		FMargin(2.0f, 8.0f, 2.0f, 4.0f)
 	);
 
 	ActivePresetText = MakeTextBlock(
 		WidgetTree,
 		TEXT("ACTIVO: configuración manual"),
 		FLinearColor(0.82f, 0.93f, 1.0f, 1.0f),
-		15
+		18
 	);
 	ActivePresetText->SetAutoWrapText(true);
 	AddVerticalChild(
 		LibraryColumn,
 		ActivePresetText,
-		FMargin(2.0f, 12.0f, 2.0f, 4.0f)
+		FMargin(2.0f, 18.0f, 2.0f, 7.0f)
 	);
 
 	UHorizontalBox* ActivePresetStateRow =
@@ -1055,14 +1071,14 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	AddVerticalChild(
 		LibraryColumn,
 		ActivePresetStateRow,
-		FMargin(2.0f, 0.0f, 2.0f, 8.0f)
+		FMargin(2.0f, 0.0f, 2.0f, 14.0f)
 	);
 
 	ActivePresetStateText = MakeTextBlock(
 		WidgetTree,
 		TEXT("ESTADO: SIN PRESET ACTIVO"),
 		FLinearColor(0.70f, 0.75f, 0.80f, 1.0f),
-		11
+		14
 	);
 	AddHorizontalChild(
 		ActivePresetStateRow,
@@ -1075,7 +1091,7 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	PresetRevertButton = MakeButton(
 		WidgetTree,
 		TEXT("REVERTIR CAMBIOS"),
-		11
+		13
 	);
 	PresetRevertButton->SetBackgroundColor(
 		FLinearColor(0.36f, 0.22f, 0.06f, 1.0f)
@@ -1087,8 +1103,8 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	PresetRevertButton->SetVisibility(ESlateVisibility::Collapsed);
 
 	USizeBox* PresetRevertSize = WidgetTree->ConstructWidget<USizeBox>();
-	PresetRevertSize->SetWidthOverride(155.0f);
-	PresetRevertSize->SetHeightOverride(28.0f);
+	PresetRevertSize->SetWidthOverride(185.0f);
+	PresetRevertSize->SetHeightOverride(36.0f);
 	PresetRevertSize->AddChild(PresetRevertButton);
 	AddHorizontalChild(
 		ActivePresetStateRow,
@@ -1102,23 +1118,23 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("VISTA PREVIA · NO APLICA CAMBIOS"),
 		Accent,
-		13
+		16
 	);
 	AddVerticalChild(
 		LibraryColumn,
 		PresetPreviewTitle,
-		FMargin(2.0f, 6.0f, 2.0f, 5.0f)
+		FMargin(2.0f, 10.0f, 2.0f, 9.0f)
 	);
 
 	PresetFormationPreviewSizeBox = WidgetTree->ConstructWidget<USizeBox>();
-	PresetFormationPreviewSizeBox->SetWidthOverride(460.0f);
-	PresetFormationPreviewSizeBox->SetHeightOverride(108.0f);
+	PresetFormationPreviewSizeBox->SetWidthOverride(PresetPreviewWidth);
+	PresetFormationPreviewSizeBox->SetHeightOverride(PresetPreviewHeight);
 	PresetFormationPreviewCanvas = WidgetTree->ConstructWidget<UCanvasPanel>();
 	PresetFormationPreviewSizeBox->AddChild(PresetFormationPreviewCanvas);
 	AddVerticalChild(
 		LibraryColumn,
 		PresetFormationPreviewSizeBox,
-		FMargin(0.0f, 0.0f, 0.0f, 6.0f),
+		FMargin(0.0f, 0.0f, 0.0f, 10.0f),
 		HAlign_Center
 	);
 
@@ -1126,21 +1142,21 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("Todavía no hay presets guardados."),
 		FLinearColor(0.86f, 0.90f, 0.94f, 1.0f),
-		11
+		14
 	);
 	AddVerticalChild(
 		LibraryColumn,
 		PresetFormationSummaryText,
-		FMargin(2.0f, 0.0f, 2.0f, 5.0f)
+		FMargin(2.0f, 0.0f, 2.0f, 10.0f)
 	);
 
 	USizeBox* PresetTacticalSummarySize =
 		WidgetTree->ConstructWidget<USizeBox>();
-	PresetTacticalSummarySize->SetHeightOverride(86.0f);
+	PresetTacticalSummarySize->SetHeightOverride(112.0f);
 	AddVerticalChild(
 		LibraryColumn,
 		PresetTacticalSummarySize,
-		FMargin(0.0f, 0.0f, 0.0f, 5.0f)
+		FMargin(0.0f, 0.0f, 0.0f, 10.0f)
 	);
 
 	UHorizontalBox* PresetTacticalSummaryRow =
@@ -1149,13 +1165,13 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 
 	UBorder* PresetAttackCard = MakeCard(
 		WidgetTree,
-		FLinearColor(0.035f, 0.080f, 0.065f, 1.0f)
+		FLinearColor(0.035f, 0.080f, 0.065f, 0.62f)
 	);
-	PresetAttackCard->SetPadding(FMargin(8.0f, 6.0f));
+	PresetAttackCard->SetPadding(FMargin(14.0f, 11.0f));
 	AddHorizontalChild(
 		PresetTacticalSummaryRow,
 		PresetAttackCard,
-		FMargin(0.0f, 0.0f, 4.0f, 0.0f),
+		FMargin(0.0f, 0.0f, 7.0f, 0.0f),
 		ESlateSizeRule::Fill,
 		VAlign_Fill
 	);
@@ -1168,31 +1184,31 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("ATAQUE"),
 		FLinearColor(0.34f, 0.88f, 0.50f, 1.0f),
-		11
+		14
 	);
 	AddVerticalChild(
 		PresetAttackColumn,
 		PresetAttackTitle,
-		FMargin(0.0f, 0.0f, 0.0f, 2.0f)
+		FMargin(0.0f, 0.0f, 0.0f, 5.0f)
 	);
 
 	PresetAttackSummaryText = MakeTextBlock(
 		WidgetTree,
 		TEXT("--"),
 		FLinearColor(0.76f, 0.82f, 0.87f, 1.0f),
-		10
+		13
 	);
 	AddVerticalChild(PresetAttackColumn, PresetAttackSummaryText);
 
 	UBorder* PresetDefenseCard = MakeCard(
 		WidgetTree,
-		FLinearColor(0.085f, 0.050f, 0.055f, 1.0f)
+		FLinearColor(0.085f, 0.050f, 0.055f, 0.62f)
 	);
-	PresetDefenseCard->SetPadding(FMargin(8.0f, 6.0f));
+	PresetDefenseCard->SetPadding(FMargin(14.0f, 11.0f));
 	AddHorizontalChild(
 		PresetTacticalSummaryRow,
 		PresetDefenseCard,
-		FMargin(4.0f, 0.0f, 0.0f, 0.0f),
+		FMargin(7.0f, 0.0f, 0.0f, 0.0f),
 		ESlateSizeRule::Fill,
 		VAlign_Fill
 	);
@@ -1205,19 +1221,19 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("DEFENSA"),
 		FLinearColor(0.95f, 0.48f, 0.38f, 1.0f),
-		11
+		14
 	);
 	AddVerticalChild(
 		PresetDefenseColumn,
 		PresetDefenseTitle,
-		FMargin(0.0f, 0.0f, 0.0f, 2.0f)
+		FMargin(0.0f, 0.0f, 0.0f, 5.0f)
 	);
 
 	PresetDefenseSummaryText = MakeTextBlock(
 		WidgetTree,
 		TEXT("--"),
 		FLinearColor(0.76f, 0.82f, 0.87f, 1.0f),
-		10
+		13
 	);
 	AddVerticalChild(PresetDefenseColumn, PresetDefenseSummaryText);
 
@@ -1225,7 +1241,7 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("Instrucciones personalizadas: --"),
 		FLinearColor(0.66f, 0.73f, 0.79f, 1.0f),
-		10
+		13
 	);
 	AddVerticalChild(
 		LibraryColumn,
@@ -1233,7 +1249,7 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		FMargin(2.0f, 0.0f, 2.0f, 0.0f)
 	);
 
-	UBorder* ActionsCard = MakeCard(WidgetTree, FLinearColor(0.045f, 0.065f, 0.085f, 1.0f));
+	UBorder* ActionsCard = MakeCard(WidgetTree, FLinearColor(0.045f, 0.065f, 0.085f, 0.58f));
 	AddHorizontalChild(ContentRow, ActionsCard, FMargin(0.0f), ESlateSizeRule::Fill, VAlign_Fill);
 
 	UVerticalBox* ActionsColumn = WidgetTree->ConstructWidget<UVerticalBox>();
@@ -1243,40 +1259,75 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("GESTIÓN DEL PRESET"),
 		WarmAccent,
-		20
+		23
 	);
-	AddVerticalChild(ActionsColumn, ActionsTitle, FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+	AddVerticalChild(ActionsColumn, ActionsTitle, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
+
+	UHorizontalBox* ActionsBodyRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+	AddVerticalChild(
+		ActionsColumn,
+		ActionsBodyRow,
+		FMargin(0.0f),
+		HAlign_Fill,
+		ESlateSizeRule::Fill
+	);
+
+	UVerticalBox* ManagementColumn = WidgetTree->ConstructWidget<UVerticalBox>();
+	AddHorizontalChild(
+		ActionsBodyRow,
+		ManagementColumn,
+		FMargin(0.0f, 0.0f, 18.0f, 0.0f),
+		ESlateSizeRule::Fill,
+		VAlign_Fill
+	);
+
+	UVerticalBox* ToolsColumn = WidgetTree->ConstructWidget<UVerticalBox>();
+	AddHorizontalChild(
+		ActionsBodyRow,
+		ToolsColumn,
+		FMargin(18.0f, 0.0f, 0.0f, 0.0f),
+		ESlateSizeRule::Fill,
+		VAlign_Fill
+	);
 
 	UTextBlock* NameLabel = MakeTextBlock(
 		WidgetTree,
 		TEXT("Nombre para guardar o renombrar"),
 		FLinearColor(0.78f, 0.82f, 0.86f, 1.0f),
-		14
+		16
 	);
-	AddVerticalChild(ActionsColumn, NameLabel, FMargin(0.0f, 0.0f, 0.0f, 5.0f));
+	AddVerticalChild(ManagementColumn, NameLabel, FMargin(0.0f, 0.0f, 0.0f, 8.0f));
 
 	USizeBox* NameSize = WidgetTree->ConstructWidget<USizeBox>();
-	NameSize->SetHeightOverride(38.0f);
+	NameSize->SetHeightOverride(46.0f);
 	PresetNameTextBox = WidgetTree->ConstructWidget<UEditableTextBox>();
 	PresetNameTextBox->SetHintText(FText::FromString(TEXT("Ej. Presión alta")));
 	NameSize->AddChild(PresetNameTextBox);
-	AddVerticalChild(ActionsColumn, NameSize, FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+	AddVerticalChild(ManagementColumn, NameSize, FMargin(0.0f, 0.0f, 0.0f, 20.0f));
 
-	PresetApplyButton = MakeButton(WidgetTree, TEXT("APLICAR SELECCIONADO"), 15);
-	PresetApplyButton->SetBackgroundColor(FLinearColor(0.08f, 0.42f, 0.28f, 1.0f));
+	PresetApplyButton = MakeButton(WidgetTree, TEXT("APLICAR SELECCIONADO"), 17);
+	PresetApplyButton->SetBackgroundColor(FLinearColor(0.08f, 0.42f, 0.28f, 0.96f));
 	PresetApplyButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetApplyClicked
 	);
 	USizeBox* ApplySize = WidgetTree->ConstructWidget<USizeBox>();
-	ApplySize->SetHeightOverride(42.0f);
+	ApplySize->SetHeightOverride(50.0f);
 	ApplySize->AddChild(PresetApplyButton);
-	AddVerticalChild(ActionsColumn, ApplySize, FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+	AddVerticalChild(ManagementColumn, ApplySize, FMargin(0.0f, 0.0f, 0.0f, 22.0f));
+
+	UTextBlock* SaveTitle = MakeTextBlock(
+		WidgetTree,
+		TEXT("GUARDAR CAMBIOS"),
+		FLinearColor(0.72f, 0.78f, 0.83f, 1.0f),
+		15
+	);
+	AddVerticalChild(ManagementColumn, SaveTitle, FMargin(0.0f, 0.0f, 0.0f, 9.0f));
 
 	UHorizontalBox* SaveRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-	AddVerticalChild(ActionsColumn, SaveRow, FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+	AddVerticalChild(ManagementColumn, SaveRow, FMargin(0.0f, 0.0f, 0.0f, 20.0f));
 
-	PresetSaveCurrentButton = MakeButton(WidgetTree, TEXT("GUARDAR ACTUAL"), 14);
+	PresetSaveCurrentButton = MakeButton(WidgetTree, TEXT("GUARDAR ACTUAL"), 16);
 	PresetSaveCurrentButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetSaveCurrentClicked
@@ -1284,11 +1335,11 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	AddHorizontalChild(
 		SaveRow,
 		PresetSaveCurrentButton,
-		FMargin(0.0f, 0.0f, 5.0f, 0.0f),
+		FMargin(0.0f, 0.0f, 7.0f, 0.0f),
 		ESlateSizeRule::Fill
 	);
 
-	PresetOverwriteButton = MakeButton(WidgetTree, TEXT("SOBRESCRIBIR"), 14);
+	PresetOverwriteButton = MakeButton(WidgetTree, TEXT("SOBRESCRIBIR"), 16);
 	PresetOverwriteButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetOverwriteClicked
@@ -1296,14 +1347,22 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	AddHorizontalChild(
 		SaveRow,
 		PresetOverwriteButton,
-		FMargin(5.0f, 0.0f, 0.0f, 0.0f),
+		FMargin(7.0f, 0.0f, 0.0f, 0.0f),
 		ESlateSizeRule::Fill
 	);
 
-	UHorizontalBox* ManageRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-	AddVerticalChild(ActionsColumn, ManageRow, FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+	UTextBlock* OrganizeTitle = MakeTextBlock(
+		WidgetTree,
+		TEXT("ORGANIZAR BIBLIOTECA"),
+		FLinearColor(0.72f, 0.78f, 0.83f, 1.0f),
+		15
+	);
+	AddVerticalChild(ManagementColumn, OrganizeTitle, FMargin(0.0f, 0.0f, 0.0f, 9.0f));
 
-	PresetRenameButton = MakeButton(WidgetTree, TEXT("RENOMBRAR"), 14);
+	UHorizontalBox* ManageRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+	AddVerticalChild(ManagementColumn, ManageRow, FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+
+	PresetRenameButton = MakeButton(WidgetTree, TEXT("RENOMBRAR"), 16);
 	PresetRenameButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetRenameClicked
@@ -1311,11 +1370,11 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	AddHorizontalChild(
 		ManageRow,
 		PresetRenameButton,
-		FMargin(0.0f, 0.0f, 4.0f, 0.0f),
+		FMargin(0.0f, 0.0f, 7.0f, 0.0f),
 		ESlateSizeRule::Fill
 	);
 
-	PresetDuplicateButton = MakeButton(WidgetTree, TEXT("DUPLICAR"), 14);
+	PresetDuplicateButton = MakeButton(WidgetTree, TEXT("DUPLICAR"), 16);
 	PresetDuplicateButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetDuplicateClicked
@@ -1323,31 +1382,25 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	AddHorizontalChild(
 		ManageRow,
 		PresetDuplicateButton,
-		FMargin(4.0f, 0.0f, 4.0f, 0.0f),
+		FMargin(7.0f, 0.0f, 0.0f, 0.0f),
 		ESlateSizeRule::Fill
 	);
 
-	PresetDeleteButton = MakeButton(WidgetTree, TEXT("ELIMINAR"), 14);
-	PresetDeleteButton->SetBackgroundColor(FLinearColor(0.34f, 0.10f, 0.11f, 1.0f));
+	// Destructive actions are kept away from the everyday organization controls.
+	PresetDeleteButton = MakeButton(WidgetTree, TEXT("ELIMINAR PRESET..."), 15);
+	PresetDeleteButton->SetBackgroundColor(FLinearColor(0.34f, 0.10f, 0.11f, 0.86f));
 	PresetDeleteButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetDeleteClicked
 	);
-	AddHorizontalChild(
-		ManageRow,
-		PresetDeleteButton,
-		FMargin(4.0f, 0.0f, 0.0f, 0.0f),
-		ESlateSizeRule::Fill
-	);
-
 	UHorizontalBox* OrderRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-	AddVerticalChild(ActionsColumn, OrderRow, FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+	AddVerticalChild(ManagementColumn, OrderRow, FMargin(0.0f, 0.0f, 0.0f, 24.0f));
 
 	UTextBlock* OrderLabel = MakeTextBlock(
 		WidgetTree,
 		TEXT("ORDEN EN LA BIBLIOTECA"),
 		FLinearColor(0.66f, 0.72f, 0.78f, 1.0f),
-		12
+		14
 	);
 	AddHorizontalChild(
 		OrderRow,
@@ -1357,70 +1410,84 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		VAlign_Center
 	);
 
-	PresetMoveUpButton = MakeButton(WidgetTree, TEXT("SUBIR"), 12);
+	PresetMoveUpButton = MakeButton(WidgetTree, TEXT("SUBIR"), 14);
 	PresetMoveUpButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetMoveUpClicked
 	);
 	USizeBox* MoveUpSize = WidgetTree->ConstructWidget<USizeBox>();
-	MoveUpSize->SetWidthOverride(92.0f);
-	MoveUpSize->SetHeightOverride(30.0f);
+	MoveUpSize->SetWidthOverride(112.0f);
+	MoveUpSize->SetHeightOverride(38.0f);
 	MoveUpSize->AddChild(PresetMoveUpButton);
 	AddHorizontalChild(
 		OrderRow,
 		MoveUpSize,
-		FMargin(0.0f, 0.0f, 4.0f, 0.0f),
+		FMargin(0.0f, 0.0f, 6.0f, 0.0f),
 		ESlateSizeRule::Automatic,
 		VAlign_Center
 	);
 
-	PresetMoveDownButton = MakeButton(WidgetTree, TEXT("BAJAR"), 12);
+	PresetMoveDownButton = MakeButton(WidgetTree, TEXT("BAJAR"), 14);
 	PresetMoveDownButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetMoveDownClicked
 	);
 	USizeBox* MoveDownSize = WidgetTree->ConstructWidget<USizeBox>();
-	MoveDownSize->SetWidthOverride(92.0f);
-	MoveDownSize->SetHeightOverride(30.0f);
+	MoveDownSize->SetWidthOverride(112.0f);
+	MoveDownSize->SetHeightOverride(38.0f);
 	MoveDownSize->AddChild(PresetMoveDownButton);
 	AddHorizontalChild(
 		OrderRow,
 		MoveDownSize,
-		FMargin(4.0f, 0.0f, 0.0f, 0.0f),
+		FMargin(6.0f, 0.0f, 0.0f, 0.0f),
 		ESlateSizeRule::Automatic,
 		VAlign_Center
 	);
+
+	UTextBlock* DangerTitle = MakeTextBlock(
+		WidgetTree,
+		TEXT("ZONA DE ELIMINACIÓN"),
+		FLinearColor(0.84f, 0.56f, 0.56f, 1.0f),
+		14
+	);
+	AddVerticalChild(ManagementColumn, DangerTitle, FMargin(0.0f, 8.0f, 0.0f, 9.0f));
+
+	USizeBox* DeletePresetSize = WidgetTree->ConstructWidget<USizeBox>();
+	DeletePresetSize->SetWidthOverride(230.0f);
+	DeletePresetSize->SetHeightOverride(42.0f);
+	DeletePresetSize->AddChild(PresetDeleteButton);
+	AddVerticalChild(ManagementColumn, DeletePresetSize, FMargin(0.0f), HAlign_Left);
 
 	UTextBlock* JsonTitle = MakeTextBlock(
 		WidgetTree,
 		TEXT("IMPORTAR / EXPORTAR JSON"),
 		WarmAccent,
-		16
+		18
 	);
 	AddVerticalChild(
-		ActionsColumn,
+		ToolsColumn,
 		JsonTitle,
-		FMargin(0.0f, 2.0f, 0.0f, 6.0f)
+		FMargin(0.0f, 2.0f, 0.0f, 10.0f)
 	);
 
 	UTextBlock* JsonHelp = MakeTextBlock(
 		WidgetTree,
 		TEXT("Los archivos se intercambian en Saved/TacticalPresets/Exchange. Exportar no cambia el equipo; importar crea un preset local nuevo y tampoco lo aplica."),
 		FLinearColor(0.66f, 0.72f, 0.78f, 1.0f),
-		12
+		14
 	);
 	JsonHelp->SetAutoWrapText(true);
 	AddVerticalChild(
-		ActionsColumn,
+		ToolsColumn,
 		JsonHelp,
-		FMargin(0.0f, 0.0f, 0.0f, 6.0f)
+		FMargin(0.0f, 0.0f, 0.0f, 10.0f)
 	);
 
 	JsonFileSelector = BuildSelectorRow(
-		ActionsColumn,
+		ToolsColumn,
 		TEXT("JSON DETECTADO"),
-		125.0f,
-		210.0f
+		130.0f,
+		220.0f
 	);
 	JsonFileSelector.PreviousButton->OnClicked.AddDynamic(
 		this,
@@ -1433,12 +1500,12 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 
 	UHorizontalBox* JsonActionRow = WidgetTree->ConstructWidget<UHorizontalBox>();
 	AddVerticalChild(
-		ActionsColumn,
+		ToolsColumn,
 		JsonActionRow,
-		FMargin(0.0f, 5.0f, 0.0f, 12.0f)
+		FMargin(0.0f, 8.0f, 0.0f, 24.0f)
 	);
 
-	PresetJsonExportButton = MakeButton(WidgetTree, TEXT("EXPORTAR JSON"), 12);
+	PresetJsonExportButton = MakeButton(WidgetTree, TEXT("EXPORTAR JSON"), 14);
 	PresetJsonExportButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetJsonExportClicked
@@ -1446,13 +1513,13 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	AddHorizontalChild(
 		JsonActionRow,
 		PresetJsonExportButton,
-		FMargin(0.0f, 0.0f, 4.0f, 0.0f),
+		FMargin(0.0f, 0.0f, 6.0f, 0.0f),
 		ESlateSizeRule::Fill
 	);
 
-	PresetJsonImportButton = MakeButton(WidgetTree, TEXT("IMPORTAR JSON"), 12);
+	PresetJsonImportButton = MakeButton(WidgetTree, TEXT("IMPORTAR JSON"), 14);
 	PresetJsonImportButton->SetBackgroundColor(
-		FLinearColor(0.08f, 0.32f, 0.43f, 1.0f)
+		FLinearColor(0.08f, 0.32f, 0.43f, 0.94f)
 	);
 	PresetJsonImportButton->OnClicked.AddDynamic(
 		this,
@@ -1461,11 +1528,11 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	AddHorizontalChild(
 		JsonActionRow,
 		PresetJsonImportButton,
-		FMargin(4.0f, 0.0f, 4.0f, 0.0f),
+		FMargin(6.0f, 0.0f, 6.0f, 0.0f),
 		ESlateSizeRule::Fill
 	);
 
-	PresetJsonRefreshButton = MakeButton(WidgetTree, TEXT("ACTUALIZAR"), 12);
+	PresetJsonRefreshButton = MakeButton(WidgetTree, TEXT("ACTUALIZAR"), 14);
 	PresetJsonRefreshButton->OnClicked.AddDynamic(
 		this,
 		&USoccerFormationMenuWidget::HandlePresetJsonRefreshClicked
@@ -1473,7 +1540,7 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 	AddHorizontalChild(
 		JsonActionRow,
 		PresetJsonRefreshButton,
-		FMargin(4.0f, 0.0f, 0.0f, 0.0f),
+		FMargin(6.0f, 0.0f, 0.0f, 0.0f),
 		ESlateSizeRule::Fill
 	);
 
@@ -1481,43 +1548,46 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("ACCESOS RÁPIDOS EN PARTIDO"),
 		Accent,
-		16
+		18
 	);
 	AddVerticalChild(
-		ActionsColumn,
+		ToolsColumn,
 		QuickTitle,
-		FMargin(0.0f, 2.0f, 0.0f, 7.0f)
+		FMargin(0.0f, 2.0f, 0.0f, 10.0f)
 	);
 
 	UTextBlock* QuickHelp = MakeTextBlock(
 		WidgetTree,
 		TEXT("Seleccioná un preset y asignalo a 1-4. Si pulsás otra vez el mismo slot, se libera."),
 		FLinearColor(0.66f, 0.72f, 0.78f, 1.0f),
-		13
+		15
 	);
 	QuickHelp->SetAutoWrapText(true);
 	AddVerticalChild(
-		ActionsColumn,
+		ToolsColumn,
 		QuickHelp,
-		FMargin(0.0f, 0.0f, 0.0f, 7.0f)
+		FMargin(0.0f, 0.0f, 0.0f, 10.0f)
 	);
 
 	QuickPresetSlotButtons.Empty();
 	QuickPresetSlotTexts.Empty();
 
+	USizeBox* QuickRowSize = WidgetTree->ConstructWidget<USizeBox>();
+	QuickRowSize->SetHeightOverride(42.0f);
 	UHorizontalBox* QuickRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-	AddVerticalChild(ActionsColumn, QuickRow, FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+	QuickRowSize->AddChild(QuickRow);
+	AddVerticalChild(ToolsColumn, QuickRowSize, FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 
 	for (int32 QuickSlotIndex = 0; QuickSlotIndex < 4; ++QuickSlotIndex)
 	{
 		UButton* QuickButton = WidgetTree->ConstructWidget<UButton>();
-		QuickButton->SetBackgroundColor(FLinearColor(0.08f, 0.11f, 0.15f, 1.0f));
+		QuickButton->SetBackgroundColor(FLinearColor(0.08f, 0.11f, 0.15f, 0.90f));
 
 		UTextBlock* QuickText = MakeTextBlock(
 			WidgetTree,
 			FString::Printf(TEXT("%d: VACÍO"), QuickSlotIndex + 1),
 			FLinearColor::White,
-			13
+			15
 		);
 		QuickText->SetJustification(ETextJustify::Center);
 		QuickButton->AddChild(QuickText);
@@ -1562,10 +1632,10 @@ void USoccerFormationMenuWidget::BuildPresetsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("Cada preset guarda formación, táctica colectiva e instrucciones por puesto. Los accesos 1-4 también quedan guardados. Durante el partido, Tab (teclado) o View/Back (gamepad) abre el selector rápido."),
 		FLinearColor(0.58f, 0.66f, 0.72f, 1.0f),
-		14
+		15
 	);
 	StorageHelp->SetAutoWrapText(true);
-	AddVerticalChild(ActionsColumn, StorageHelp, FMargin(2.0f, 4.0f, 2.0f, 0.0f));
+	AddVerticalChild(ToolsColumn, StorageHelp, FMargin(2.0f, 4.0f, 2.0f, 0.0f));
 }
 
 void USoccerFormationMenuWidget::BuildFormationPage(UVerticalBox* PageRoot)
@@ -1580,17 +1650,17 @@ void USoccerFormationMenuWidget::BuildFormationPage(UVerticalBox* PageRoot)
 
 	UBorder* LeftCard = MakeCard(WidgetTree);
 	USizeBox* LeftSize = WidgetTree->ConstructWidget<USizeBox>();
-	LeftSize->SetWidthOverride(380.0f);
+	LeftSize->SetWidthOverride(440.0f);
 	LeftSize->AddChild(LeftCard);
-	AddHorizontalChild(ContentRow, LeftSize, FMargin(0.0f, 0.0f, 16.0f, 0.0f));
+	AddHorizontalChild(ContentRow, LeftSize, FMargin(0.0f, 0.0f, 28.0f, 0.0f));
 
 	UVerticalBox* LeftColumn = WidgetTree->ConstructWidget<UVerticalBox>();
 	LeftCard->AddChild(LeftColumn);
 
-	UTextBlock* SectionTitle = MakeTextBlock(WidgetTree, TEXT("SISTEMA DE JUEGO"), Accent, 20);
-	AddVerticalChild(LeftColumn, SectionTitle, FMargin(0.0f, 0.0f, 0.0f, 12.0f));
+	UTextBlock* SectionTitle = MakeTextBlock(WidgetTree, TEXT("SISTEMA DE JUEGO"), Accent, 23);
+	AddVerticalChild(LeftColumn, SectionTitle, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
-	FormationSelector = BuildSelectorRow(LeftColumn, TEXT("Formación"), 105.0f, 120.0f);
+	FormationSelector = BuildSelectorRow(LeftColumn, TEXT("Formación"), 120.0f, 165.0f);
 	FormationSelector.PreviousButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleFormationPrevious);
 	FormationSelector.NextButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleFormationNext);
 
@@ -1598,45 +1668,56 @@ void USoccerFormationMenuWidget::BuildFormationPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("Tu sistema\n--"),
 		FLinearColor::White,
-		18
+		21
 	);
 	CurrentFormationText->SetAutoWrapText(true);
-	AddVerticalChild(LeftColumn, CurrentFormationText, FMargin(2.0f, 18.0f, 2.0f, 8.0f));
+	AddVerticalChild(LeftColumn, CurrentFormationText, FMargin(2.0f, 26.0f, 2.0f, 12.0f));
 
 	OpponentFormationText = MakeTextBlock(
 		WidgetTree,
 		TEXT("Sistema rival\n--"),
 		MutedText,
-		16
+		19
 	);
 	OpponentFormationText->SetAutoWrapText(true);
-	AddVerticalChild(LeftColumn, OpponentFormationText, FMargin(2.0f, 4.0f));
+	AddVerticalChild(LeftColumn, OpponentFormationText, FMargin(2.0f, 6.0f));
 
 	UTextBlock* FormationHelp = MakeTextBlock(
 		WidgetTree,
 		TEXT("La estructura cambia de forma progresiva. Los roles, la táctica y las decisiones locales siguen siendo independientes de la formación."),
 		FLinearColor(0.58f, 0.66f, 0.72f, 1.0f),
-		14
+		16
 	);
 	FormationHelp->SetAutoWrapText(true);
-	AddVerticalChild(LeftColumn, FormationHelp, FMargin(2.0f, 20.0f, 2.0f, 0.0f));
+	AddVerticalChild(LeftColumn, FormationHelp, FMargin(2.0f, 28.0f, 2.0f, 0.0f));
 
-	UBorder* PreviewCard = MakeCard(WidgetTree, FLinearColor(0.030f, 0.070f, 0.050f, 1.0f));
+	UBorder* PreviewCard = MakeCard(WidgetTree, FLinearColor(0.030f, 0.070f, 0.050f, 0.46f));
 	AddHorizontalChild(ContentRow, PreviewCard, FMargin(0.0f), ESlateSizeRule::Fill);
 
 	UVerticalBox* PreviewColumn = WidgetTree->ConstructWidget<UVerticalBox>();
 	PreviewCard->AddChild(PreviewColumn);
 
-	UTextBlock* PreviewTitle = MakeTextBlock(WidgetTree, TEXT("VISTA DE LA FORMACIÓN"), FLinearColor(0.82f, 0.92f, 0.85f, 1.0f), 17);
+	UTextBlock* PreviewTitle = MakeTextBlock(WidgetTree, TEXT("VISTA DE LA FORMACIÓN"), FLinearColor(0.82f, 0.92f, 0.85f, 1.0f), 20);
 	PreviewTitle->SetJustification(ETextJustify::Center);
-	AddVerticalChild(PreviewColumn, PreviewTitle, FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+	AddVerticalChild(PreviewColumn, PreviewTitle, FMargin(0.0f, 0.0f, 0.0f, 14.0f));
 
 	USizeBox* PreviewSizeBox = WidgetTree->ConstructWidget<USizeBox>();
 	PreviewSizeBox->SetWidthOverride(PreviewWidth);
 	PreviewSizeBox->SetHeightOverride(PreviewHeight);
 	FormationPreviewCanvas = WidgetTree->ConstructWidget<UCanvasPanel>();
 	PreviewSizeBox->AddChild(FormationPreviewCanvas);
-	AddVerticalChild(PreviewColumn, PreviewSizeBox, FMargin(0.0f), HAlign_Center);
+
+	UScaleBox* PreviewScaleBox = WidgetTree->ConstructWidget<UScaleBox>();
+	PreviewScaleBox->SetStretch(EStretch::ScaleToFit);
+	PreviewScaleBox->SetStretchDirection(EStretchDirection::DownOnly);
+	PreviewScaleBox->AddChild(PreviewSizeBox);
+	AddVerticalChild(
+		PreviewColumn,
+		PreviewScaleBox,
+		FMargin(0.0f),
+		HAlign_Fill,
+		ESlateSizeRule::Fill
+	);
 }
 
 void USoccerFormationMenuWidget::BuildTacticsPage(UVerticalBox* PageRoot)
@@ -1647,17 +1728,17 @@ void USoccerFormationMenuWidget::BuildTacticsPage(UVerticalBox* PageRoot)
 	}
 
 	UHorizontalBox* Columns = WidgetTree->ConstructWidget<UHorizontalBox>();
-	AddVerticalChild(PageRoot, Columns, FMargin(0.0f, 0.0f, 0.0f, 10.0f), HAlign_Fill, ESlateSizeRule::Fill);
+	AddVerticalChild(PageRoot, Columns, FMargin(0.0f, 0.0f, 0.0f, 22.0f), HAlign_Fill, ESlateSizeRule::Fill);
 
 	UBorder* AttackCard = MakeCard(WidgetTree);
 	UBorder* DefenseCard = MakeCard(WidgetTree);
-	AddHorizontalChild(Columns, AttackCard, FMargin(0.0f, 0.0f, 8.0f, 0.0f), ESlateSizeRule::Fill, VAlign_Fill);
-	AddHorizontalChild(Columns, DefenseCard, FMargin(8.0f, 0.0f, 0.0f, 0.0f), ESlateSizeRule::Fill, VAlign_Fill);
+	AddHorizontalChild(Columns, AttackCard, FMargin(0.0f, 0.0f, 14.0f, 0.0f), ESlateSizeRule::Fill, VAlign_Fill);
+	AddHorizontalChild(Columns, DefenseCard, FMargin(14.0f, 0.0f, 0.0f, 0.0f), ESlateSizeRule::Fill, VAlign_Fill);
 
 	UVerticalBox* AttackColumn = WidgetTree->ConstructWidget<UVerticalBox>();
 	AttackCard->AddChild(AttackColumn);
-	UTextBlock* AttackTitle = MakeTextBlock(WidgetTree, TEXT("ATAQUE"), FLinearColor(0.34f, 0.88f, 0.50f, 1.0f), 20);
-	AddVerticalChild(AttackColumn, AttackTitle, FMargin(0.0f, 0.0f, 0.0f, 9.0f));
+	UTextBlock* AttackTitle = MakeTextBlock(WidgetTree, TEXT("ATAQUE"), FLinearColor(0.34f, 0.88f, 0.50f, 1.0f), 23);
+	AddVerticalChild(AttackColumn, AttackTitle, FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
 	BuildUpSelector = BuildSelectorRow(AttackColumn, TEXT("Salida"));
 	AttackChannelSelector = BuildSelectorRow(AttackColumn, TEXT("Canal"));
@@ -1678,8 +1759,8 @@ void USoccerFormationMenuWidget::BuildTacticsPage(UVerticalBox* PageRoot)
 
 	UVerticalBox* DefenseColumn = WidgetTree->ConstructWidget<UVerticalBox>();
 	DefenseCard->AddChild(DefenseColumn);
-	UTextBlock* DefenseTitle = MakeTextBlock(WidgetTree, TEXT("DEFENSA"), FLinearColor(0.95f, 0.48f, 0.38f, 1.0f), 20);
-	AddVerticalChild(DefenseColumn, DefenseTitle, FMargin(0.0f, 0.0f, 0.0f, 9.0f));
+	UTextBlock* DefenseTitle = MakeTextBlock(WidgetTree, TEXT("DEFENSA"), FLinearColor(0.95f, 0.48f, 0.38f, 1.0f), 23);
+	AddVerticalChild(DefenseColumn, DefenseTitle, FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
 	DefensiveBlockSelector = BuildSelectorRow(DefenseColumn, TEXT("Bloque"));
 	PressingIntensitySelector = BuildSelectorRow(DefenseColumn, TEXT("Presión"));
@@ -1698,16 +1779,16 @@ void USoccerFormationMenuWidget::BuildTacticsPage(UVerticalBox* PageRoot)
 	UHorizontalBox* SummaryRow = WidgetTree->ConstructWidget<UHorizontalBox>();
 	AddVerticalChild(PageRoot, SummaryRow);
 
-	UBorder* PlayerSummaryCard = MakeCard(WidgetTree, FLinearColor(0.045f, 0.090f, 0.120f, 1.0f));
-	UBorder* RivalSummaryCard = MakeCard(WidgetTree, FLinearColor(0.070f, 0.070f, 0.078f, 1.0f));
-	AddHorizontalChild(SummaryRow, PlayerSummaryCard, FMargin(0.0f, 0.0f, 8.0f, 0.0f), ESlateSizeRule::Fill, VAlign_Fill);
-	AddHorizontalChild(SummaryRow, RivalSummaryCard, FMargin(8.0f, 0.0f, 0.0f, 0.0f), ESlateSizeRule::Fill, VAlign_Fill);
+	UBorder* PlayerSummaryCard = MakeCard(WidgetTree, FLinearColor(0.045f, 0.090f, 0.120f, 0.60f));
+	UBorder* RivalSummaryCard = MakeCard(WidgetTree, FLinearColor(0.070f, 0.070f, 0.078f, 0.60f));
+	AddHorizontalChild(SummaryRow, PlayerSummaryCard, FMargin(0.0f, 0.0f, 14.0f, 0.0f), ESlateSizeRule::Fill, VAlign_Fill);
+	AddHorizontalChild(SummaryRow, RivalSummaryCard, FMargin(14.0f, 0.0f, 0.0f, 0.0f), ESlateSizeRule::Fill, VAlign_Fill);
 
-	TacticSummaryText = MakeTextBlock(WidgetTree, TEXT("TU PLAN\n--"), FLinearColor(0.82f, 0.93f, 1.0f, 1.0f), 15);
+	TacticSummaryText = MakeTextBlock(WidgetTree, TEXT("TU PLAN\n--"), FLinearColor(0.82f, 0.93f, 1.0f, 1.0f), 17);
 	TacticSummaryText->SetAutoWrapText(true);
 	PlayerSummaryCard->AddChild(TacticSummaryText);
 
-	OpponentTacticText = MakeTextBlock(WidgetTree, TEXT("RIVAL\n--"), FLinearColor(0.72f, 0.74f, 0.78f, 1.0f), 15);
+	OpponentTacticText = MakeTextBlock(WidgetTree, TEXT("RIVAL\n--"), FLinearColor(0.72f, 0.74f, 0.78f, 1.0f), 17);
 	OpponentTacticText->SetAutoWrapText(true);
 	RivalSummaryCard->AddChild(OpponentTacticText);
 }
@@ -1724,16 +1805,16 @@ void USoccerFormationMenuWidget::BuildInstructionsPage(UVerticalBox* PageRoot)
 
 	UBorder* SlotCard = MakeCard(WidgetTree);
 	USizeBox* SlotCardSize = WidgetTree->ConstructWidget<USizeBox>();
-	SlotCardSize->SetWidthOverride(355.0f);
+	SlotCardSize->SetWidthOverride(450.0f);
 	SlotCardSize->AddChild(SlotCard);
-	AddHorizontalChild(ContentRow, SlotCardSize, FMargin(0.0f, 0.0f, 16.0f, 0.0f), ESlateSizeRule::Automatic, VAlign_Fill);
+	AddHorizontalChild(ContentRow, SlotCardSize, FMargin(0.0f, 0.0f, 28.0f, 0.0f), ESlateSizeRule::Automatic, VAlign_Fill);
 
 	UVerticalBox* SlotColumn = WidgetTree->ConstructWidget<UVerticalBox>();
 	SlotCard->AddChild(SlotColumn);
-	UTextBlock* SlotTitle = MakeTextBlock(WidgetTree, TEXT("PUESTO"), WarmAccent, 20);
-	AddVerticalChild(SlotColumn, SlotTitle, FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+	UTextBlock* SlotTitle = MakeTextBlock(WidgetTree, TEXT("PUESTO"), WarmAccent, 23);
+	AddVerticalChild(SlotColumn, SlotTitle, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
-	InstructionSlotSelector = BuildSelectorRow(SlotColumn, TEXT("Slot"), 75.0f, 135.0f);
+	InstructionSlotSelector = BuildSelectorRow(SlotColumn, TEXT("Slot"), 95.0f, 180.0f);
 	InstructionSlotSelector.PreviousButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleInstructionSlotPrevious);
 	InstructionSlotSelector.NextButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleInstructionSlotNext);
 
@@ -1741,31 +1822,31 @@ void USoccerFormationMenuWidget::BuildInstructionsPage(UVerticalBox* PageRoot)
 		WidgetTree,
 		TEXT("JUGADOR ASIGNADO\n--"),
 		FLinearColor(0.88f, 0.90f, 0.92f, 1.0f),
-		16
+		19
 	);
 	IndividualInstructionPlayerText->SetAutoWrapText(true);
-	AddVerticalChild(SlotColumn, IndividualInstructionPlayerText, FMargin(2.0f, 22.0f, 2.0f, 6.0f));
+	AddVerticalChild(SlotColumn, IndividualInstructionPlayerText, FMargin(2.0f, 28.0f, 2.0f, 10.0f));
 
 	UTextBlock* SlotHelp = MakeTextBlock(
 		WidgetTree,
 		TEXT("Las instrucciones pertenecen al puesto de la formación. Si cambia el jugador asignado, el nuevo ocupante hereda las prioridades del slot."),
 		FLinearColor(0.58f, 0.66f, 0.72f, 1.0f),
-		14
+		16
 	);
 	SlotHelp->SetAutoWrapText(true);
-	AddVerticalChild(SlotColumn, SlotHelp, FMargin(2.0f, 18.0f, 2.0f, 0.0f));
+	AddVerticalChild(SlotColumn, SlotHelp, FMargin(2.0f, 26.0f, 2.0f, 0.0f));
 
 	UBorder* InstructionCard = MakeCard(WidgetTree);
 	AddHorizontalChild(ContentRow, InstructionCard, FMargin(0.0f), ESlateSizeRule::Fill, VAlign_Fill);
 
 	UVerticalBox* InstructionColumn = WidgetTree->ConstructWidget<UVerticalBox>();
 	InstructionCard->AddChild(InstructionColumn);
-	UTextBlock* InstructionTitle = MakeTextBlock(WidgetTree, TEXT("PRIORIDADES DEL PUESTO"), Accent, 20);
-	AddVerticalChild(InstructionColumn, InstructionTitle, FMargin(0.0f, 0.0f, 0.0f, 10.0f));
+	UTextBlock* InstructionTitle = MakeTextBlock(WidgetTree, TEXT("PRIORIDADES DEL PUESTO"), Accent, 23);
+	AddVerticalChild(InstructionColumn, InstructionTitle, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
-	IndividualAttackSelector = BuildSelectorRow(InstructionColumn, TEXT("Ataque"), 165.0f, 260.0f);
-	IndividualDefenseSelector = BuildSelectorRow(InstructionColumn, TEXT("Defensa"), 165.0f, 260.0f);
-	MarkingTargetSelector = BuildSelectorRow(InstructionColumn, TEXT("Marca individual"), 165.0f, 260.0f);
+	IndividualAttackSelector = BuildSelectorRow(InstructionColumn, TEXT("Ataque"), 200.0f, 330.0f);
+	IndividualDefenseSelector = BuildSelectorRow(InstructionColumn, TEXT("Defensa"), 200.0f, 330.0f);
+	MarkingTargetSelector = BuildSelectorRow(InstructionColumn, TEXT("Marca individual"), 200.0f, 330.0f);
 
 	IndividualAttackSelector.PreviousButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleIndividualAttackPrevious);
 	IndividualAttackSelector.NextButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleIndividualAttackNext);
@@ -1774,13 +1855,13 @@ void USoccerFormationMenuWidget::BuildInstructionsPage(UVerticalBox* PageRoot)
 	MarkingTargetSelector.PreviousButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleMarkingTargetPrevious);
 	MarkingTargetSelector.NextButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleMarkingTargetNext);
 
-	UBorder* SummaryCard = MakeCard(WidgetTree, FLinearColor(0.075f, 0.070f, 0.045f, 1.0f));
-	AddVerticalChild(InstructionColumn, SummaryCard, FMargin(0.0f, 18.0f, 0.0f, 0.0f));
+	UBorder* SummaryCard = MakeCard(WidgetTree, FLinearColor(0.075f, 0.070f, 0.045f, 0.62f));
+	AddVerticalChild(InstructionColumn, SummaryCard, FMargin(0.0f, 26.0f, 0.0f, 0.0f));
 	IndividualInstructionSummaryText = MakeTextBlock(
 		WidgetTree,
 		TEXT("RESUMEN\n--"),
 		FLinearColor(0.93f, 0.86f, 0.62f, 1.0f),
-		15
+		17
 	);
 	IndividualInstructionSummaryText->SetAutoWrapText(true);
 	SummaryCard->AddChild(IndividualInstructionSummaryText);
@@ -1802,36 +1883,36 @@ USoccerFormationMenuWidget::BuildSelectorRow(
 
 	Result.Border = WidgetTree->ConstructWidget<UBorder>();
 	Result.Border->SetBrushColor(SelectorBackground);
-	Result.Border->SetPadding(FMargin(8.0f, 6.0f));
-	AddVerticalChild(Parent, Result.Border, FMargin(0.0f, 0.0f, 0.0f, 6.0f));
+	Result.Border->SetPadding(FMargin(12.0f, 9.0f));
+	AddVerticalChild(Parent, Result.Border, FMargin(0.0f, 0.0f, 0.0f, 11.0f));
 
 	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
 	Result.Border->AddChild(Row);
 
 	USizeBox* LabelSize = WidgetTree->ConstructWidget<USizeBox>();
 	LabelSize->SetWidthOverride(LabelWidth);
-	Result.LabelText = MakeTextBlock(WidgetTree, Label, FLinearColor(0.80f, 0.84f, 0.88f, 1.0f), 15);
+	Result.LabelText = MakeTextBlock(WidgetTree, Label, FLinearColor(0.80f, 0.84f, 0.88f, 1.0f), 17);
 	LabelSize->AddChild(Result.LabelText);
-	AddHorizontalChild(Row, LabelSize, FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+	AddHorizontalChild(Row, LabelSize, FMargin(0.0f, 0.0f, 12.0f, 0.0f));
 
 	USizeBox* PreviousSize = WidgetTree->ConstructWidget<USizeBox>();
-	PreviousSize->SetWidthOverride(40.0f);
-	PreviousSize->SetHeightOverride(32.0f);
-	Result.PreviousButton = MakeButton(WidgetTree, TEXT("<"), 18, Accent);
+	PreviousSize->SetWidthOverride(46.0f);
+	PreviousSize->SetHeightOverride(38.0f);
+	Result.PreviousButton = MakeButton(WidgetTree, TEXT("<"), 20, Accent);
 	PreviousSize->AddChild(Result.PreviousButton);
-	AddHorizontalChild(Row, PreviousSize, FMargin(0.0f, 0.0f, 5.0f, 0.0f));
+	AddHorizontalChild(Row, PreviousSize, FMargin(0.0f, 0.0f, 8.0f, 0.0f));
 
 	USizeBox* ValueSize = WidgetTree->ConstructWidget<USizeBox>();
 	ValueSize->SetWidthOverride(ValueWidth);
-	Result.ValueText = MakeTextBlock(WidgetTree, TEXT("--"), FLinearColor::White, 16);
+	Result.ValueText = MakeTextBlock(WidgetTree, TEXT("--"), FLinearColor::White, 18);
 	Result.ValueText->SetJustification(ETextJustify::Center);
 	ValueSize->AddChild(Result.ValueText);
-	AddHorizontalChild(Row, ValueSize, FMargin(0.0f, 0.0f, 5.0f, 0.0f), ESlateSizeRule::Fill);
+	AddHorizontalChild(Row, ValueSize, FMargin(0.0f, 0.0f, 8.0f, 0.0f), ESlateSizeRule::Fill);
 
 	USizeBox* NextSize = WidgetTree->ConstructWidget<USizeBox>();
-	NextSize->SetWidthOverride(40.0f);
-	NextSize->SetHeightOverride(32.0f);
-	Result.NextButton = MakeButton(WidgetTree, TEXT(">"), 18, Accent);
+	NextSize->SetWidthOverride(46.0f);
+	NextSize->SetHeightOverride(38.0f);
+	Result.NextButton = MakeButton(WidgetTree, TEXT(">"), 20, Accent);
 	NextSize->AddChild(Result.NextButton);
 	AddHorizontalChild(Row, NextSize);
 
@@ -2015,8 +2096,8 @@ void USoccerFormationMenuWidget::RefreshPresetsPage(
 			RefreshFormationPreviewCanvas(
 				PresetFormationPreviewCanvas,
 				SelectedPreset->FormationSystem,
-				460.0f,
-				108.0f,
+				PresetPreviewWidth,
+				PresetPreviewHeight,
 				true
 			);
 		}
@@ -2400,10 +2481,10 @@ void USoccerFormationMenuWidget::RefreshQuickPresetAssignments()
 
 		QuickButton->SetBackgroundColor(
 			bContainsSelectedPreset
-			? FLinearColor(0.16f, 0.38f, 0.52f, 1.0f)
+			? FLinearColor(0.16f, 0.38f, 0.52f, 0.96f)
 			: bContainsActivePreset
-			? FLinearColor(0.08f, 0.38f, 0.24f, 1.0f)
-			: FLinearColor(0.08f, 0.11f, 0.15f, 1.0f)
+			? FLinearColor(0.08f, 0.38f, 0.24f, 0.96f)
+			: FLinearColor(0.08f, 0.11f, 0.15f, 0.90f)
 		);
 
 		const bool bSelectedCanUseQuickSlots =
@@ -2822,7 +2903,7 @@ void USoccerFormationMenuWidget::RefreshTabVisuals()
 		PresetsTabButton->SetBackgroundColor(
 			ActiveTab == ECoachMenuTab::Presets
 			? Accent
-			: FLinearColor(0.08f, 0.11f, 0.15f, 1.0f)
+			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
 		);
 	}
 	if (FormationTabButton != nullptr)
@@ -2830,7 +2911,7 @@ void USoccerFormationMenuWidget::RefreshTabVisuals()
 		FormationTabButton->SetBackgroundColor(
 			ActiveTab == ECoachMenuTab::Formation
 			? Accent
-			: FLinearColor(0.08f, 0.11f, 0.15f, 1.0f)
+			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
 		);
 	}
 	if (TacticsTabButton != nullptr)
@@ -2838,7 +2919,7 @@ void USoccerFormationMenuWidget::RefreshTabVisuals()
 		TacticsTabButton->SetBackgroundColor(
 			ActiveTab == ECoachMenuTab::Tactics
 			? Accent
-			: FLinearColor(0.08f, 0.11f, 0.15f, 1.0f)
+			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
 		);
 	}
 	if (InstructionsTabButton != nullptr)
@@ -2846,7 +2927,7 @@ void USoccerFormationMenuWidget::RefreshTabVisuals()
 		InstructionsTabButton->SetBackgroundColor(
 			ActiveTab == ECoachMenuTab::Instructions
 			? Accent
-			: FLinearColor(0.08f, 0.11f, 0.15f, 1.0f)
+			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
 		);
 	}
 }
@@ -2901,14 +2982,14 @@ void USoccerFormationMenuWidget::RefreshFocusVisuals()
 		if (Row->PreviousButton != nullptr)
 		{
 			Row->PreviousButton->SetBackgroundColor(
-				FLinearColor(0.08f, 0.11f, 0.15f, 1.0f)
+				FLinearColor(0.08f, 0.11f, 0.15f, 0.90f)
 			);
 		}
 
 		if (Row->NextButton != nullptr)
 		{
 			Row->NextButton->SetBackgroundColor(
-				FLinearColor(0.08f, 0.11f, 0.15f, 1.0f)
+				FLinearColor(0.08f, 0.11f, 0.15f, 0.90f)
 			);
 		}
 	}

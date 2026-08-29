@@ -431,6 +431,6 @@ private:
 	float AnalogNavigationThreshold = 0.65f;
 	float AnalogNavigationRepeatSeconds = 0.20f;
 
-	float PreviewWidth = 640.0f;
-	float PreviewHeight = 330.0f;
+	float PreviewWidth = 1220.0f;
+	float PreviewHeight = 500.0f;
 };
