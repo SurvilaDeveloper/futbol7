@@ -694,10 +694,13 @@ void ASoccerAIController::Tick(float DeltaTime)
 
 		const FVector ThrowInMoveLocation =
 			MatchManager->GetActiveRestartMoveLocation(SoccerCharacter);
+		const bool bThrowInTacticalPositioning =
+			MatchManager->GetMatchPlayState() ==
+				ESoccerMatchPlayState::ThrowInSetup ||
+			MatchManager->IsThrowInDelayPositioningActive();
 
 		if (
-			MatchManager->GetMatchPlayState() ==
-			ESoccerMatchPlayState::ThrowInSetup &&
+			bThrowInTacticalPositioning &&
 			!ThrowInMoveLocation.IsNearlyZero()
 			)
 		{
@@ -720,8 +723,7 @@ void ASoccerAIController::Tick(float DeltaTime)
 
 		if (
 			MatchManager->IsThrowInTaker(SoccerCharacter) &&
-			MatchManager->GetMatchPlayState() ==
-			ESoccerMatchPlayState::ThrowInSetup
+			bThrowInTacticalPositioning
 			)
 		{
 			ASoccerBall* SoccerBall = MatchManager->GetSoccerBall();

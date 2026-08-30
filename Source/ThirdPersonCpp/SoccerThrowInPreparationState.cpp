@@ -20,11 +20,20 @@ bool FSoccerThrowInPreparationState::Enter(ASoccerMatchManager& Manager)
     Manager.PossessingCharacter = nullptr;
     Manager.PossessionTeam = ESoccerPossessionTeam::None;
 
-    Manager.BeginRestartContext(
-        ESoccerRestartType::ThrowIn,
-        Manager.ThrowInTeam,
-        Manager.ThrowInLocation
-    );
+    const bool bUseStagedRestartContext =
+        Manager.IsRestartContextActive() &&
+        Manager.ActiveRestartType == ESoccerRestartType::ThrowIn &&
+        Manager.ActiveRestartTeam == Manager.ThrowInTeam &&
+        Manager.ActiveRestartLocation.Equals(Manager.ThrowInLocation, 1.0f);
+
+    if (!bUseStagedRestartContext)
+    {
+        Manager.BeginRestartContext(
+            ESoccerRestartType::ThrowIn,
+            Manager.ThrowInTeam,
+            Manager.ThrowInLocation
+        );
+    }
 
     Manager.SoccerBall->SetActorEnableCollision(true);
     Manager.SoccerBall->StopBallKeepingPhysics();
@@ -37,7 +46,14 @@ bool FSoccerThrowInPreparationState::Enter(ASoccerMatchManager& Manager)
     );
 
     Manager.MatchPlayState = ESoccerMatchPlayState::ThrowInSetup;
-    Manager.CaptureActiveRestartAITargetLocations(false);
+
+    if (
+        !bUseStagedRestartContext ||
+        Manager.ActiveRestartAITargetLocations.Num() == 0
+    )
+    {
+        Manager.CaptureActiveRestartAITargetLocations(false);
+    }
 
     ASoccerDebugManager::Message(
         &Manager,

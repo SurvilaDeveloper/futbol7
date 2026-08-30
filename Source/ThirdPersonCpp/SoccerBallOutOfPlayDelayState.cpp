@@ -43,6 +43,23 @@ bool FSoccerBallOutOfPlayDelayState::Enter(ASoccerMatchManager& Manager)
 	Manager.MatchStateUpdateAccumulator = 0.0f;
 	Manager.MatchPlayState = ESoccerMatchPlayState::BallOutOfPlayDelay;
 
+	const bool bThrowInTacticalPositioningStarted =
+		RestartType == ESoccerRestartType::ThrowIn &&
+		Manager.StageThrowInDuringBallOutOfPlayDelay(
+			RestartTeam,
+			RestartReferenceLocation,
+			ThrowInInwardDirection
+		);
+	const bool bGoalLineTacticalPositioningStarted =
+		(RestartType == ESoccerRestartType::CornerKick ||
+		 RestartType == ESoccerRestartType::GoalKick) &&
+		Manager.StageGoalLineRestartDuringBallOutOfPlayDelay(
+			RestartType,
+			RestartTeam,
+			RestartReferenceLocation,
+			GoalLineSign
+		);
+
 	Manager.SoccerBall->SetActorEnableCollision(true);
 	Manager.SoccerBall->SetPossessed(false);
 	ElapsedSeconds = 0.0f;
@@ -64,6 +81,29 @@ bool FSoccerBallOutOfPlayDelayState::Enter(ASoccerMatchManager& Manager)
 			),
 			FColor::Yellow
 		);
+
+		if (
+			RestartType == ESoccerRestartType::ThrowIn &&
+			bThrowInTacticalPositioningStarted
+			)
+		{
+			ASoccerDebugManager::Message(
+				&Manager,
+				ESoccerDebugCategory::Restarts,
+				TEXT("LATERAL: equipos acomodandose durante el delay"),
+				FColor::Cyan
+			);
+		}
+
+		if (bGoalLineTacticalPositioningStarted)
+		{
+			ASoccerDebugManager::Message(
+				&Manager,
+				ESoccerDebugCategory::Restarts,
+				TEXT("LINEA DE FONDO: equipos acomodandose durante el delay"),
+				FColor::Cyan
+			);
+		}
 	}
 
 	return true;

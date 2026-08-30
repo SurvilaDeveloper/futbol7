@@ -7766,10 +7766,23 @@ bool ASoccerMatchManager::IsThrowInRestartActive() const
 {
 	return
 		IsThrowInMatchStateActive() ||
+		IsThrowInDelayPositioningActive() ||
 		MatchPlayState == ESoccerMatchPlayState::ThrowInSetup ||
 		MatchPlayState == ESoccerMatchPlayState::ThrowInPositioning ||
 		MatchPlayState == ESoccerMatchPlayState::ThrowInExecuting ||
 		bThrowInExecutionActive;
+}
+
+bool ASoccerMatchManager::IsThrowInDelayPositioningActive() const
+{
+	return
+		bThrowInStagedDuringBallOutOfPlayDelay &&
+		IsBallOutOfPlayDelayActive() &&
+		IsRestartContextActive() &&
+		ActiveRestartType == ESoccerRestartType::ThrowIn &&
+		ActiveRestartTeam == ThrowInTeam &&
+		IsValid(ThrowInTakerAI) &&
+		IsValid(ThrowInReceiverAI);
 }
 
 bool ASoccerMatchManager::IsThrowInTaker(
@@ -8186,6 +8199,13 @@ void ASoccerMatchManager::CompleteBallOutOfPlayDelay()
 		PendingBallOutOfPlayThrowInInwardDirection;
 	const float GoalLineSign =
 		PendingBallOutOfPlayGoalLineSign;
+	const bool bUseStagedThrowIn =
+		RestartType == ESoccerRestartType::ThrowIn &&
+		IsThrowInDelayPositioningActive();
+	const bool bUseStagedGoalLineRestart =
+		(RestartType == ESoccerRestartType::CornerKick ||
+		 RestartType == ESoccerRestartType::GoalKick) &&
+		IsGoalLineRestartDelayPositioningActive();
 
 	CancelBallOutOfPlayDelay();
 
@@ -8195,6 +8215,21 @@ void ASoccerMatchManager::CompleteBallOutOfPlayDelay()
 
 	if (RestartType == ESoccerRestartType::ThrowIn)
 	{
+		if (bUseStagedThrowIn)
+		{
+			bThrowInStagedDuringBallOutOfPlayDelay = false;
+
+			if (ActivateMatchState(
+				MakeUnique<FSoccerThrowInPreparationState>()
+			))
+			{
+				return;
+			}
+
+			// An assigned participant may have become invalid on the transition
+			// frame. Re-run the normal configuration path as a safe fallback.
+		}
+
 		StartThrowIn(
 			RestartTeam,
 			RestartReferenceLocation,
@@ -8205,12 +8240,44 @@ void ASoccerMatchManager::CompleteBallOutOfPlayDelay()
 
 	if (RestartType == ESoccerRestartType::CornerKick)
 	{
+		if (
+			bUseStagedGoalLineRestart &&
+			GoalLineRestart.GetType() ==
+				ESoccerGoalLineRestartType::CornerKick
+			)
+		{
+			bGoalLineRestartStagedDuringBallOutOfPlayDelay = false;
+
+			if (ActivateMatchState(
+				MakeUnique<FSoccerCornerPreparationState>()
+			))
+			{
+				return;
+			}
+		}
+
 		ActivateMatchState(MakeUnique<FSoccerCornerConfigurationState>(
 			RestartTeam,
 			RestartReferenceLocation,
 			GoalLineSign
 		));
 		return;
+	}
+
+	if (
+		bUseStagedGoalLineRestart &&
+		GoalLineRestart.GetType() ==
+			ESoccerGoalLineRestartType::GoalKick
+		)
+	{
+		bGoalLineRestartStagedDuringBallOutOfPlayDelay = false;
+
+		if (ActivateMatchState(
+			MakeUnique<FSoccerGoalKickPreparationState>()
+		))
+		{
+			return;
+		}
 	}
 
 	ActivateMatchState(MakeUnique<FSoccerGoalKickConfigurationState>(
@@ -8245,6 +8312,78 @@ void ASoccerMatchManager::StartThrowIn(
 		TouchlineLocation,
 		InwardDirection
 	));
+}
+
+bool ASoccerMatchManager::ConfigureThrowInRestart(
+	ESoccerTeam RestartTeam,
+	const FVector& TouchlineLocation,
+	const FVector& InwardDirection
+)
+{
+	UWorld* World = GetWorld();
+
+	if (World == nullptr || !IsValid(SoccerBall))
+	{
+		return false;
+	}
+
+	ThrowInTeam = RestartTeam;
+	ThrowInLocation = TouchlineLocation;
+	ThrowInInwardDirection = InwardDirection.GetSafeNormal();
+
+	if (ThrowInInwardDirection.IsNearlyZero())
+	{
+		return false;
+	}
+
+	ThrowInSetupStartTime = World->GetTimeSeconds();
+	ThrowInTakerAI =
+		FindBestThrowInTakerForTeam(RestartTeam, TouchlineLocation);
+	ThrowInReceiverAI =
+		FindBestThrowInReceiverForTeam(
+			RestartTeam,
+			ThrowInTakerAI,
+			TouchlineLocation
+		);
+
+	if (!IsValid(ThrowInTakerAI) || !IsValid(ThrowInReceiverAI))
+	{
+		ThrowInTakerAI = nullptr;
+		ThrowInReceiverAI = nullptr;
+		return false;
+	}
+
+	RecalculateThrowInGeometry();
+	return true;
+}
+
+bool ASoccerMatchManager::StageThrowInDuringBallOutOfPlayDelay(
+	ESoccerTeam RestartTeam,
+	const FVector& TouchlineLocation,
+	const FVector& InwardDirection
+)
+{
+	if (
+		!IsBallOutOfPlayDelayActive() ||
+		!ConfigureThrowInRestart(
+			RestartTeam,
+			TouchlineLocation,
+			InwardDirection
+		)
+		)
+	{
+		return false;
+	}
+
+	BeginRestartContext(
+		ESoccerRestartType::ThrowIn,
+		RestartTeam,
+		TouchlineLocation
+	);
+
+	bThrowInStagedDuringBallOutOfPlayDelay = true;
+	CaptureActiveRestartAITargetLocations(false);
+	return true;
 }
 
 ASoccerAICharacter* ASoccerMatchManager::FindBestThrowInTakerForTeam(
@@ -8573,7 +8712,9 @@ FVector ASoccerMatchManager::GetThrowInMoveLocation(
 
 	if (SoccerAICharacter == ThrowInTakerAI)
 	{
-		return MatchPlayState == ESoccerMatchPlayState::ThrowInSetup
+		return
+			(MatchPlayState == ESoccerMatchPlayState::ThrowInSetup ||
+			 IsThrowInDelayPositioningActive())
 			? ThrowInStagingLocation
 			: ThrowInOutsideStartLocation;
 	}
@@ -8834,6 +8975,7 @@ void ASoccerMatchManager::FinishThrowInExecution()
 	bThrowInExecutionActive = false;
 	bThrowInReturningToField = false;
 	bThrowInCurveMotionInitialized = false;
+	bThrowInStagedDuringBallOutOfPlayDelay = false;
 
 	if (MatchPlayState == ESoccerMatchPlayState::ThrowInExecuting)
 	{
@@ -8846,6 +8988,8 @@ void ASoccerMatchManager::FinishThrowInExecution()
 
 void ASoccerMatchManager::CancelThrowInRestart()
 {
+	bThrowInStagedDuringBallOutOfPlayDelay = false;
+
 	if (ActiveRestartType == ESoccerRestartType::ThrowIn)
 	{
 		EndRestartContext();
@@ -8898,14 +9042,58 @@ void ASoccerMatchManager::CancelThrowInRestart()
 
 bool ASoccerMatchManager::IsGoalLineRestartActive() const
 {
-	return GoalLineRestart.IsActive(*this);
+	return
+		GoalLineRestart.IsActive(*this) ||
+		IsGoalLineRestartDelayPositioningActive();
 }
 
 bool ASoccerMatchManager::IsGoalLineRestartTaker(
 	const ASoccerAICharacter* SoccerAICharacter
 ) const
 {
-	return GoalLineRestart.IsTaker(*this, SoccerAICharacter);
+	return
+		IsGoalLineRestartActive() &&
+		IsValid(SoccerAICharacter) &&
+		SoccerAICharacter == GoalLineRestart.TakerAI;
+}
+
+bool ASoccerMatchManager::IsGoalLineRestartDelayPositioningActive() const
+{
+	if (
+		!bGoalLineRestartStagedDuringBallOutOfPlayDelay ||
+		!IsBallOutOfPlayDelayActive() ||
+		!IsRestartContextActive() ||
+		ActiveRestartTeam != GoalLineRestart.GetRestartTeam()
+		)
+	{
+		return false;
+	}
+
+	if (
+		GoalLineRestart.GetType() ==
+			ESoccerGoalLineRestartType::CornerKick
+		)
+	{
+		return
+			PendingBallOutOfPlayRestartType ==
+				ESoccerRestartType::CornerKick &&
+			ActiveRestartType == ESoccerRestartType::CornerKick &&
+			GoalLineRestart.IsCornerConfigured();
+	}
+
+	if (
+		GoalLineRestart.GetType() ==
+			ESoccerGoalLineRestartType::GoalKick
+		)
+	{
+		return
+			PendingBallOutOfPlayRestartType ==
+				ESoccerRestartType::GoalKick &&
+			ActiveRestartType == ESoccerRestartType::GoalKick &&
+			GoalLineRestart.IsGoalKickConfigured();
+	}
+
+	return false;
 }
 
 bool ASoccerMatchManager::IsGoalLineRestartTakerMovementLocked(
@@ -8953,6 +9141,140 @@ ESoccerGoalLineRestartType
 ASoccerMatchManager::GetGoalLineRestartType() const
 {
 	return GoalLineRestart.GetType();
+}
+
+bool ASoccerMatchManager::ConfigureGoalLineRestart(
+	ESoccerGoalLineRestartType RestartType,
+	ESoccerTeam RestartTeam,
+	const FVector& CrossingLocation,
+	float GoalLineSign
+)
+{
+	UWorld* World = GetWorld();
+
+	if (
+		World == nullptr ||
+		!IsValid(SoccerBall) ||
+		RestartType == ESoccerGoalLineRestartType::None
+		)
+	{
+		return false;
+	}
+
+	const float NormalizedGoalLineSign =
+		GoalLineSign >= 0.0f ? 1.0f : -1.0f;
+	const FVector BallLocation =
+		RestartType == ESoccerGoalLineRestartType::CornerKick
+		? BuildCornerKickBallLocation(
+			CrossingLocation,
+			NormalizedGoalLineSign
+		)
+		: BuildGoalKickBallLocation(
+			CrossingLocation,
+			NormalizedGoalLineSign
+		);
+
+	if (RestartType == ESoccerGoalLineRestartType::CornerKick)
+	{
+		GoalLineRestart.ConfigureCorner(
+			RestartTeam,
+			GetOppositeTeam(RestartTeam),
+			NormalizedGoalLineSign,
+			CrossingLocation,
+			BallLocation,
+			World->GetTimeSeconds()
+		);
+	}
+	else
+	{
+		GoalLineRestart.ConfigureGoalKick(
+			RestartTeam,
+			NormalizedGoalLineSign,
+			CrossingLocation,
+			BallLocation,
+			World->GetTimeSeconds()
+		);
+	}
+
+	ASoccerAICharacter* TakerAI =
+		FindBestGoalLineRestartTakerForTeam(
+			RestartTeam,
+			RestartType,
+			BallLocation
+		);
+	ASoccerAICharacter* ReceiverAI =
+		FindBestGoalLineRestartReceiverForTeam(
+			RestartTeam,
+			RestartType,
+			TakerAI,
+			BallLocation
+		);
+
+	if (RestartType == ESoccerGoalLineRestartType::CornerKick)
+	{
+		GoalLineRestart.SetCornerParticipants(TakerAI, ReceiverAI);
+	}
+	else
+	{
+		GoalLineRestart.SetGoalKickParticipants(TakerAI, ReceiverAI);
+	}
+
+	const bool bConfigured =
+		RestartType == ESoccerGoalLineRestartType::CornerKick
+		? GoalLineRestart.IsCornerConfigured()
+		: GoalLineRestart.IsGoalKickConfigured();
+
+	if (!bConfigured)
+	{
+		GoalLineRestart.ResetRuntime();
+		return false;
+	}
+
+	RecalculateGoalLineRestartGeometry();
+	return true;
+}
+
+bool ASoccerMatchManager::StageGoalLineRestartDuringBallOutOfPlayDelay(
+	ESoccerRestartType RestartType,
+	ESoccerTeam RestartTeam,
+	const FVector& CrossingLocation,
+	float GoalLineSign
+)
+{
+	const bool bCornerKick =
+		RestartType == ESoccerRestartType::CornerKick;
+	const bool bGoalKick =
+		RestartType == ESoccerRestartType::GoalKick;
+
+	if (!IsBallOutOfPlayDelayActive() || (!bCornerKick && !bGoalKick))
+	{
+		return false;
+	}
+
+	const ESoccerGoalLineRestartType GoalLineRestartType =
+		bCornerKick
+		? ESoccerGoalLineRestartType::CornerKick
+		: ESoccerGoalLineRestartType::GoalKick;
+
+	if (!ConfigureGoalLineRestart(
+		GoalLineRestartType,
+		RestartTeam,
+		CrossingLocation,
+		GoalLineSign
+	))
+	{
+		return false;
+	}
+
+	BeginRestartContext(
+		RestartType,
+		RestartTeam,
+		GoalLineRestart.GetBallLocation()
+	);
+
+	bGoalLineRestartStagedDuringBallOutOfPlayDelay = true;
+	CaptureActiveRestartAITargetLocations(false);
+	return true;
 }
 
 FVector ASoccerMatchManager::BuildGoalKickBallLocation(
@@ -9755,6 +10077,7 @@ void ASoccerMatchManager::CompleteGoalLineRestart()
 void ASoccerMatchManager::CancelGoalLineRestart()
 {
 	const bool bWasActive = IsGoalLineRestartActive();
+	bGoalLineRestartStagedDuringBallOutOfPlayDelay = false;
 
 	if (
 		ActiveRestartType == ESoccerRestartType::CornerKick ||
@@ -12143,6 +12466,18 @@ void ASoccerMatchManager::EndRestartContext()
 	FreeKickRestart.ResetRuntime(*this);
 	GoalLineRestart.ResetGoalKickFinalRunRuntime(*this);
 	GoalLineRestart.ResetCornerFinalRunRuntime(*this);
+
+	if (ActiveRestartType == ESoccerRestartType::ThrowIn)
+	{
+		bThrowInStagedDuringBallOutOfPlayDelay = false;
+	}
+	else if (
+		ActiveRestartType == ESoccerRestartType::CornerKick ||
+		ActiveRestartType == ESoccerRestartType::GoalKick
+		)
+	{
+		bGoalLineRestartStagedDuringBallOutOfPlayDelay = false;
+	}
 
 	bRestartContextActive = false;
 	ActiveRestartType = ESoccerRestartType::None;

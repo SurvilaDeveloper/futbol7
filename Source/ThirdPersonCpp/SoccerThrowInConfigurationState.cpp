@@ -8,8 +8,7 @@
 
 bool FSoccerThrowInConfigurationState::Enter(ASoccerMatchManager& Manager)
 {
-    UWorld* World = Manager.GetWorld();
-    if (World == nullptr || !IsValid(Manager.SoccerBall))
+    if (Manager.GetWorld() == nullptr || !IsValid(Manager.SoccerBall))
     {
         return false;
     }
@@ -27,32 +26,15 @@ bool FSoccerThrowInConfigurationState::Enter(ASoccerMatchManager& Manager)
     Manager.ReleaseAllAIBallPossessions();
     Manager.ReleaseAllHumanBallPossessions();
 
-    Manager.ThrowInTeam = RestartTeam;
-    Manager.ThrowInLocation = TouchlineLocation;
-    Manager.ThrowInInwardDirection = InwardDirection.GetSafeNormal();
-    if (Manager.ThrowInInwardDirection.IsNearlyZero())
+    if (!Manager.ConfigureThrowInRestart(
+        RestartTeam,
+        TouchlineLocation,
+        InwardDirection
+    ))
     {
         return false;
     }
-    Manager.ThrowInSetupStartTime = World->GetTimeSeconds();
 
-    Manager.ThrowInTakerAI =
-        Manager.FindBestThrowInTakerForTeam(RestartTeam, TouchlineLocation);
-    Manager.ThrowInReceiverAI =
-        Manager.FindBestThrowInReceiverForTeam(
-            RestartTeam,
-            Manager.ThrowInTakerAI,
-            TouchlineLocation
-        );
-
-    if (!IsValid(Manager.ThrowInTakerAI) || !IsValid(Manager.ThrowInReceiverAI))
-    {
-        Manager.ThrowInTakerAI = nullptr;
-        Manager.ThrowInReceiverAI = nullptr;
-        return false;
-    }
-
-    Manager.RecalculateThrowInGeometry();
     bConfigured = true;
 
     ASoccerDebugManager::Message(

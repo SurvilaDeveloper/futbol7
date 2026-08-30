@@ -9,8 +9,7 @@
 
 bool FSoccerGoalKickConfigurationState::Enter(ASoccerMatchManager& Manager)
 {
-	UWorld* World = Manager.GetWorld();
-	if (World == nullptr || !IsValid(Manager.SoccerBall))
+	if (Manager.GetWorld() == nullptr || !IsValid(Manager.SoccerBall))
 	{
 		return false;
 	}
@@ -28,41 +27,16 @@ bool FSoccerGoalKickConfigurationState::Enter(ASoccerMatchManager& Manager)
 	Manager.ReleaseAllAIBallPossessions();
 	Manager.ReleaseAllHumanBallPossessions();
 
-	const float NormalizedGoalLineSign = GoalLineSign >= 0.0f ? 1.0f : -1.0f;
-	const FVector GoalKickBallLocation = Manager.BuildGoalKickBallLocation(
-		CrossingLocation,
-		NormalizedGoalLineSign
-	);
-
-	Manager.GoalLineRestart.ConfigureGoalKick(
-		RestartTeam,
-		NormalizedGoalLineSign,
-		CrossingLocation,
-		GoalKickBallLocation,
-		World->GetTimeSeconds()
-	);
-
-	ASoccerAICharacter* GoalKickTakerAI = Manager.FindBestGoalLineRestartTakerForTeam(
-		RestartTeam,
+	if (!Manager.ConfigureGoalLineRestart(
 		ESoccerGoalLineRestartType::GoalKick,
-		GoalKickBallLocation
-	);
-	ASoccerAICharacter* GoalKickReceiverAI = Manager.FindBestGoalLineRestartReceiverForTeam(
 		RestartTeam,
-		ESoccerGoalLineRestartType::GoalKick,
-		GoalKickTakerAI,
-		GoalKickBallLocation
-	);
-
-	Manager.GoalLineRestart.SetGoalKickParticipants(GoalKickTakerAI, GoalKickReceiverAI);
-
-	if (!Manager.GoalLineRestart.IsGoalKickConfigured())
+		CrossingLocation,
+		GoalLineSign
+	))
 	{
-		Manager.GoalLineRestart.ResetRuntime();
 		return false;
 	}
 
-	Manager.RecalculateGoalLineRestartGeometry();
 	bConfigured = true;
 
 	ASoccerDebugManager::Message(

@@ -9,8 +9,7 @@
 
 bool FSoccerCornerConfigurationState::Enter(ASoccerMatchManager& Manager)
 {
-    UWorld* World = Manager.GetWorld();
-    if (World == nullptr || !IsValid(Manager.SoccerBall))
+    if (Manager.GetWorld() == nullptr || !IsValid(Manager.SoccerBall))
     {
         return false;
     }
@@ -28,42 +27,16 @@ bool FSoccerCornerConfigurationState::Enter(ASoccerMatchManager& Manager)
     Manager.ReleaseAllAIBallPossessions();
     Manager.ReleaseAllHumanBallPossessions();
 
-    const float NormalizedGoalLineSign = GoalLineSign >= 0.0f ? 1.0f : -1.0f;
-    const FVector CornerBallLocation = Manager.BuildCornerKickBallLocation(
-        CrossingLocation,
-        NormalizedGoalLineSign
-    );
-
-    Manager.GoalLineRestart.ConfigureCorner(
-        RestartTeam,
-        Manager.GetOppositeTeam(RestartTeam),
-        NormalizedGoalLineSign,
-        CrossingLocation,
-        CornerBallLocation,
-        World->GetTimeSeconds()
-    );
-
-    ASoccerAICharacter* CornerTakerAI = Manager.FindBestGoalLineRestartTakerForTeam(
-        RestartTeam,
+    if (!Manager.ConfigureGoalLineRestart(
         ESoccerGoalLineRestartType::CornerKick,
-        CornerBallLocation
-    );
-    ASoccerAICharacter* CornerReceiverAI = Manager.FindBestGoalLineRestartReceiverForTeam(
         RestartTeam,
-        ESoccerGoalLineRestartType::CornerKick,
-        CornerTakerAI,
-        CornerBallLocation
-    );
-
-    Manager.GoalLineRestart.SetCornerParticipants(CornerTakerAI, CornerReceiverAI);
-
-    if (!Manager.GoalLineRestart.IsCornerConfigured())
+        CrossingLocation,
+        GoalLineSign
+    ))
     {
-        Manager.GoalLineRestart.ResetRuntime();
         return false;
     }
 
-    Manager.RecalculateGoalLineRestartGeometry();
     bConfigured = true;
 
     ASoccerDebugManager::Message(

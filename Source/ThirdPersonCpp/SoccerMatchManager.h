@@ -536,6 +536,10 @@ public:
 
 	bool IsThrowInRestartActive() const;
 
+	// During the out-of-play continuation the ball remains physically outside,
+	// but the AI may already move to the fixed throw-in tactical targets.
+	bool IsThrowInDelayPositioningActive() const;
+
 	bool IsThrowInTaker(
 		const ASoccerAICharacter* SoccerAICharacter
 	) const;
@@ -1541,6 +1545,18 @@ bool IsPenaltyMatchStateActive() const;
 		const FVector& InwardDirection
 	);
 
+	bool ConfigureThrowInRestart(
+		ESoccerTeam RestartTeam,
+		const FVector& TouchlineLocation,
+		const FVector& InwardDirection
+	);
+
+	bool StageThrowInDuringBallOutOfPlayDelay(
+		ESoccerTeam RestartTeam,
+		const FVector& TouchlineLocation,
+		const FVector& InwardDirection
+	);
+
 
 
 
@@ -1603,6 +1619,22 @@ bool IsPenaltyMatchStateActive() const;
 	void CompleteGoalLineRestart();
 
 	void CancelGoalLineRestart();
+
+	bool IsGoalLineRestartDelayPositioningActive() const;
+
+	bool ConfigureGoalLineRestart(
+		ESoccerGoalLineRestartType RestartType,
+		ESoccerTeam RestartTeam,
+		const FVector& CrossingLocation,
+		float GoalLineSign
+	);
+
+	bool StageGoalLineRestartDuringBallOutOfPlayDelay(
+		ESoccerRestartType RestartType,
+		ESoccerTeam RestartTeam,
+		const FVector& CrossingLocation,
+		float GoalLineSign
+	);
 
 	void RecalculateGoalLineRestartGeometry();
 
@@ -1753,6 +1785,7 @@ bool IsPenaltyMatchStateActive() const;
 	FSoccerPenaltyKickRestart PenaltyKickRestart;
 	FSoccerFreeKickRestart FreeKickRestart;
 	FSoccerGoalLineRestart GoalLineRestart;
+	bool bGoalLineRestartStagedDuringBallOutOfPlayDelay = false;
 
 	// ============================================================
 	// FORMATION - structural preset + stable assignment + open-play structure (Stage 3)
@@ -3418,6 +3451,7 @@ bool IsPenaltyMatchStateActive() const;
 	FVector ThrowInOutsideStartLocation = FVector::ZeroVector;
 	FVector ThrowInReceiverMoveLocation = FVector::ZeroVector;
 	float ThrowInSetupStartTime = -1000.0f;
+	bool bThrowInStagedDuringBallOutOfPlayDelay = false;
 
 	bool bThrowInExecutionActive = false;
 	bool bThrowInBallReleased = false;
