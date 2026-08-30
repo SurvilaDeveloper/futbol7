@@ -42,7 +42,7 @@ void ASoccerInstantReplayManager::EndPlay(
 {
     if (bReplayPlaying)
     {
-        FinishManualReplay(false);
+        FinishReplay(false);
     }
 
     Super::EndPlay(EndPlayReason);
@@ -366,7 +366,13 @@ void ASoccerInstantReplayManager::HandleManualReplayInput()
 {
     if (bReplayPlaying)
     {
-        StopManualReplay();
+        // Stage 3 keeps automatic event replays non-skippable. A dedicated
+        // replay-skip input belongs to the later presentation/polish stage.
+        if (ActivePlaybackReason == ESoccerInstantReplayPlaybackReason::Manual)
+        {
+            StopManualReplay();
+        }
+
         return;
     }
 
@@ -384,7 +390,7 @@ void ASoccerInstantReplayManager::Tick(float DeltaTime)
 
     if (bReplayPlaying)
     {
-        TickManualReplay();
+        TickReplayPlayback();
         return;
     }
 
@@ -588,6 +594,44 @@ void ASoccerInstantReplayManager::CaptureFrame()
 
 bool ASoccerInstantReplayManager::StartManualReplay(float RequestedSeconds)
 {
+    const float RequestedClipSeconds =
+        RequestedSeconds > 0.0f
+            ? RequestedSeconds
+            : ManualReplaySeconds;
+
+    return StartReplayInternal(
+        RequestedClipSeconds,
+        ESoccerInstantReplayPlaybackReason::Manual,
+        true
+    );
+}
+
+bool ASoccerInstantReplayManager::StartEventReplay(
+    ESoccerInstantReplayPlaybackReason PlaybackReason,
+    float RequestedSeconds
+)
+{
+    if (
+        PlaybackReason == ESoccerInstantReplayPlaybackReason::None ||
+        PlaybackReason == ESoccerInstantReplayPlaybackReason::Manual
+    )
+    {
+        return false;
+    }
+
+    return StartReplayInternal(
+        RequestedSeconds,
+        PlaybackReason,
+        true
+    );
+}
+
+bool ASoccerInstantReplayManager::StartReplayInternal(
+    float RequestedSeconds,
+    ESoccerInstantReplayPlaybackReason PlaybackReason,
+    bool bAppendImmediateEndpoint
+)
+{
     if (bReplayPlaying)
     {
         return false;
@@ -605,24 +649,30 @@ bool ASoccerInstantReplayManager::StartManualReplay(float RequestedSeconds)
         UE_LOG(
             LogTemp,
             Warning,
-            TEXT("[InstantReplay] Manual replay ignored because the world is already paused by another system.")
+            TEXT("[InstantReplay] Replay ignored because the world is already paused by another system.")
         );
         return false;
     }
 
-    const float RequestedClipSeconds =
-        RequestedSeconds > 0.0f
-            ? FMath::Clamp(RequestedSeconds, 1.0f, HistorySeconds)
-            : FMath::Clamp(ManualReplaySeconds, 1.0f, HistorySeconds);
+    const float RequestedClipSeconds = FMath::Clamp(
+        RequestedSeconds > 0.0f ? RequestedSeconds : ManualReplaySeconds,
+        1.0f,
+        HistorySeconds
+    );
 
     CopyRecentFrames(RequestedClipSeconds, PlaybackFrames);
+
+    if (bAppendImmediateEndpoint)
+    {
+        AppendImmediatePlaybackEndpoint();
+    }
 
     if (PlaybackFrames.Num() < 2)
     {
         UE_LOG(
             LogTemp,
             Warning,
-            TEXT("[InstantReplay] Not enough recorded frames for manual playback yet.")
+            TEXT("[InstantReplay] Not enough recorded frames for playback yet.")
         );
         PlaybackFrames.Reset();
         return false;
@@ -674,6 +724,7 @@ bool ASoccerInstantReplayManager::StartManualReplay(float RequestedSeconds)
     PlayerController->SetIgnoreLookInput(true);
     bAppliedLookInputIgnore = true;
 
+    ActivePlaybackReason = PlaybackReason;
     bReplayPlaying = true;
     PlaybackFrameCursor = 0;
     PlaybackElapsedSeconds = 0.0;
@@ -681,7 +732,7 @@ bool ASoccerInstantReplayManager::StartManualReplay(float RequestedSeconds)
 
     if (!UGameplayStatics::SetGamePaused(World, true))
     {
-        FinishManualReplay(false);
+        FinishReplay(false);
         return false;
     }
 
@@ -694,10 +745,31 @@ bool ASoccerInstantReplayManager::StartManualReplay(float RequestedSeconds)
         0.0f
     );
 
+    const TCHAR* ReplayReasonText = TEXT("Event");
+
+    switch (ActivePlaybackReason)
+    {
+    case ESoccerInstantReplayPlaybackReason::Manual:
+        ReplayReasonText = TEXT("Manual");
+        break;
+    case ESoccerInstantReplayPlaybackReason::Goal:
+        ReplayReasonText = TEXT("Goal");
+        break;
+    case ESoccerInstantReplayPlaybackReason::Foul:
+        ReplayReasonText = TEXT("Foul");
+        break;
+    case ESoccerInstantReplayPlaybackReason::Offside:
+        ReplayReasonText = TEXT("Offside");
+        break;
+    default:
+        break;
+    }
+
     UE_LOG(
         LogTemp,
         Log,
-        TEXT("[InstantReplay] Manual replay started: %.2f s, %d frames. NumPad 8 stops it early."),
+        TEXT("[InstantReplay] %s replay started: %.2f s, %d frames."),
+        ReplayReasonText,
         PlaybackClipEndTimeSeconds - PlaybackClipStartTimeSeconds,
         PlaybackFrames.Num()
     );
@@ -705,17 +777,48 @@ bool ASoccerInstantReplayManager::StartManualReplay(float RequestedSeconds)
     return true;
 }
 
+void ASoccerInstantReplayManager::AppendImmediatePlaybackEndpoint()
+{
+    ResolveTrackedBallIfNeeded();
+    RefreshTrackedCharacters();
+
+    FSoccerReplayFrame ImmediateFrame;
+    CaptureCurrentWorldFrame(ImmediateFrame);
+
+    if (PlaybackFrames.Num() > 0)
+    {
+        const double PreviousTime =
+            PlaybackFrames.Last().RecordingTimeSeconds;
+
+        if (ImmediateFrame.RecordingTimeSeconds <= PreviousTime + KINDA_SMALL_NUMBER)
+        {
+            const double SafeSampleInterval =
+                1.0 / static_cast<double>(
+                    FMath::Clamp(SamplesPerSecond, 5.0f, 60.0f)
+                );
+
+            ImmediateFrame.RecordingTimeSeconds =
+                PreviousTime + SafeSampleInterval;
+        }
+    }
+
+    PlaybackFrames.Add(MoveTemp(ImmediateFrame));
+}
+
 void ASoccerInstantReplayManager::StopManualReplay()
 {
-    if (!bReplayPlaying)
+    if (
+        !bReplayPlaying ||
+        ActivePlaybackReason != ESoccerInstantReplayPlaybackReason::Manual
+    )
     {
         return;
     }
 
-    FinishManualReplay(true);
+    FinishReplay(true);
 }
 
-void ASoccerInstantReplayManager::TickManualReplay()
+void ASoccerInstantReplayManager::TickReplayPlayback()
 {
     if (!bReplayPlaying || PlaybackFrames.Num() < 2)
     {
@@ -741,7 +844,7 @@ void ASoccerInstantReplayManager::TickManualReplay()
             PlaybackClipEndTimeSeconds,
             static_cast<float>(SafeRealDelta)
         );
-        FinishManualReplay(true);
+        FinishReplay(true);
         return;
     }
 
@@ -1317,7 +1420,7 @@ void ASoccerInstantReplayManager::RestoreLiveStateAfterReplay()
     );
 }
 
-void ASoccerInstantReplayManager::FinishManualReplay(bool bRestoreLiveState)
+void ASoccerInstantReplayManager::FinishReplay(bool bRestoreLiveState)
 {
     if (!bReplayPlaying)
     {
@@ -1361,7 +1464,11 @@ void ASoccerInstantReplayManager::FinishManualReplay(bool bRestoreLiveState)
         ReplayCamera.Reset();
     }
 
+    const ESoccerInstantReplayPlaybackReason FinishedPlaybackReason =
+        ActivePlaybackReason;
+
     bReplayPlaying = false;
+    ActivePlaybackReason = ESoccerInstantReplayPlaybackReason::None;
 
     if (World != nullptr && UGameplayStatics::IsGamePaused(World))
     {
@@ -1383,6 +1490,11 @@ void ASoccerInstantReplayManager::FinishManualReplay(bool bRestoreLiveState)
     UE_LOG(
         LogTemp,
         Log,
-        TEXT("[InstantReplay] Manual replay finished. Live match state restored.")
+        TEXT("[InstantReplay] %s replay finished. Live match state restored."),
+        FinishedPlaybackReason == ESoccerInstantReplayPlaybackReason::Goal
+            ? TEXT("Goal")
+            : (FinishedPlaybackReason == ESoccerInstantReplayPlaybackReason::Manual
+                ? TEXT("Manual")
+                : TEXT("Event"))
     );
 }

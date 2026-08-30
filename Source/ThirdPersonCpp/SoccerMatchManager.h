@@ -661,6 +661,7 @@ bool IsPenaltyMatchStateActive() const;
 	void FindSoccerBall();
 	void InitializeInstantReplayRecorder();
 	void ShutdownInstantReplayRecorder();
+	void TryStartGoalInstantReplay();
 	void FindSoccerField();
 	void InitializeTeamFieldSides();
 	void CaptureInitialHumanFieldReferences();
@@ -2428,6 +2429,13 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Manual Playback", meta = (ClampMin = "1.0", ClampMax = "10.0", UIMin = "1.0", UIMax = "10.0"))
 		float InstantReplayManualPlaybackSeconds = 5.0f;
+
+	// Stage 3: first automatic consumer of the generic instant-replay system.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback")
+		bool bEnableInstantReplayAfterGoal = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback", meta = (ClampMin = "1.0", ClampMax = "10.0", UIMin = "1.0", UIMax = "10.0"))
+		float InstantReplayGoalPlaybackSeconds = 5.0f;
 
 	UPROPERTY()
 		ASoccerInstantReplayManager* InstantReplayManager = nullptr;

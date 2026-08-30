@@ -68,6 +68,15 @@ struct FSoccerReplayFrame
     FSoccerReplayBallSample Ball;
 };
 
+enum class ESoccerInstantReplayPlaybackReason : uint8
+{
+    None,
+    Manual,
+    Goal,
+    Foul,
+    Offside
+};
+
 UCLASS()
 class THIRDPERSONCPP_API ASoccerInstantReplayManager : public AActor
 {
@@ -106,6 +115,16 @@ public:
     /* Stage 2 manual playback. NumPad 8 toggles this during PIE. */
     bool StartManualReplay(float RequestedSeconds = -1.0f);
     void StopManualReplay();
+
+    /*
+     * Generic event-triggered playback entry point. Goal is the first automatic
+     * consumer; Foul and Offside are reserved for the later replay stages.
+     */
+    bool StartEventReplay(
+        ESoccerInstantReplayPlaybackReason PlaybackReason,
+        float RequestedSeconds
+    );
+
     bool IsReplayPlaying() const;
 
 protected:
@@ -130,8 +149,14 @@ private:
     void TryBindManualReplayInput();
     void HandleManualReplayInput();
 
-    void TickManualReplay();
-    void FinishManualReplay(bool bRestoreLiveState);
+    bool StartReplayInternal(
+        float RequestedSeconds,
+        ESoccerInstantReplayPlaybackReason PlaybackReason,
+        bool bAppendImmediateEndpoint
+    );
+    void AppendImmediatePlaybackEndpoint();
+    void TickReplayPlayback();
+    void FinishReplay(bool bRestoreLiveState);
     void PrepareActorsForReplay();
     void RestoreLiveStateAfterReplay();
 
@@ -204,6 +229,8 @@ private:
 
     bool bManualReplayInputBound = false;
     bool bReplayPlaying = false;
+    ESoccerInstantReplayPlaybackReason ActivePlaybackReason =
+        ESoccerInstantReplayPlaybackReason::None;
     bool bRecordingWasEnabledBeforeReplay = false;
     bool bAppliedMoveInputIgnore = false;
     bool bAppliedLookInputIgnore = false;

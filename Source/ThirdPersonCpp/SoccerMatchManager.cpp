@@ -10975,6 +10975,36 @@ void ASoccerMatchManager::ShutdownInstantReplayRecorder()
 	bOwnsInstantReplayManager = false;
 }
 
+void ASoccerMatchManager::TryStartGoalInstantReplay()
+{
+    if (
+        !bEnableInstantReplayAfterGoal ||
+        !IsValid(InstantReplayManager)
+    )
+    {
+        return;
+    }
+
+    const float RequestedSeconds = FMath::Clamp(
+        InstantReplayGoalPlaybackSeconds,
+        1.0f,
+        FMath::Max(1.0f, InstantReplayHistorySeconds)
+    );
+
+    if (!InstantReplayManager->StartEventReplay(
+        ESoccerInstantReplayPlaybackReason::Goal,
+        RequestedSeconds
+    ))
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("[InstantReplay] Goal replay could not start; normal goal flow continues.")
+        );
+    }
+}
+
+
 void ASoccerMatchManager::FindSoccerBall()
 {
 	SoccerBall = nullptr;
@@ -16201,6 +16231,14 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 	{
 		ResetAfterGoal();
 	}
+
+	/*
+	 * Stage 3: the normal GoalReset timer is already armed. The replay pauses
+	 * the world, so that timer naturally waits and resumes only after playback.
+	 * If replay cannot start (for example very early in the match), nothing
+	 * special is required: the existing goal flow simply continues.
+	 */
+	TryStartGoalInstantReplay();
 }
 
 void ASoccerMatchManager::ResetAfterGoal()
