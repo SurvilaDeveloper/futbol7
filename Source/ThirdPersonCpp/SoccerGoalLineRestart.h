@@ -51,6 +51,8 @@ public:
 	const FVector& GetCornerOutsideStartLocation() const { return CornerOutsideStartLocation; }
 	const FVector& GetKickDirection() const { return KickDirection; }
 	bool IsCornerReturnToFieldActive() const { return bCornerReturnToFieldActive; }
+	bool IsAIKickMontageStarted() const { return bAIKickMontageStarted; }
+	const FVector& GetPendingAIKickTargetLocation() const { return PendingAIKickTargetLocation; }
 
 	// Controlled API used by the explicit GoalKick state family.
 	void ConfigureGoalKick(
@@ -97,6 +99,10 @@ private:
 
 	float GoalLineSign = 1.0f;
 	float SetupStartTime = -1000.0f;
+
+	// Shared asynchronous kick-montage runtime for goal kicks and corners.
+	bool bAIKickMontageStarted = false;
+	FVector PendingAIKickTargetLocation = FVector::ZeroVector;
 
 	// Goal kick runtime.
 	bool bGoalKickFinalRunActive = false;

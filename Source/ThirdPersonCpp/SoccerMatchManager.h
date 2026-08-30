@@ -2847,6 +2847,8 @@ bool IsPenaltyMatchStateActive() const;
 		ASoccerAICharacter* KickoffReceiverAI = nullptr;
 
 	bool bKickoffFinalRunActive = false;
+	bool bKickoffAIKickMontageStarted = false;
+	FVector KickoffPendingAIKickTargetLocation = FVector::ZeroVector;
 
 	FVector KickoffKickDirection = FVector::ForwardVector;
 

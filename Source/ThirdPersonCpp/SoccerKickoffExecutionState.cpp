@@ -62,6 +62,13 @@ void FSoccerKickoffExecutionState::Tick(
 		!IsValid(Manager.KickoffReceiverAI)
 	)
 	{
+		if (IsValid(Manager.KickoffTakerAI))
+		{
+			Manager.KickoffTakerAI->CancelAIKickMontageBeforeImpact();
+		}
+
+		Manager.bKickoffAIKickMontageStarted = false;
+		Manager.KickoffPendingAIKickTargetLocation = FVector::ZeroVector;
 		Manager.EndRestartContext();
 		Manager.RequestMatchStateTransition(
 			ESoccerMatchStateTransition::Playing
@@ -78,7 +85,13 @@ void FSoccerKickoffExecutionState::Tick(
 		return;
 	}
 
-	Manager.SoccerBall->StopBallKeepingPhysics();
+	if (
+		!Manager.bKickoffAIKickMontageStarted ||
+		!Manager.KickoffTakerAI->HasAIKickMontageImpactedBall()
+		)
+	{
+		Manager.SoccerBall->StopBallKeepingPhysics();
+	}
 
 	if (Manager.bActiveNonFreeKickHumanExecutionAuthorized)
 	{
@@ -99,6 +112,63 @@ void FSoccerKickoffExecutionState::Tick(
 		Manager.ReleaseNonFreeKickHumanTakerClaim();
 		Manager.RecalculateKickoffRunUpGeometry();
 		Manager.MatchPlayState = ESoccerMatchPlayState::KickoffSetup;
+		Manager.CaptureActiveRestartAITargetLocations(
+			Manager.AreKickoffPlayersInLegalPositions()
+		);
+		Manager.RequestMatchStateTransition(
+			ESoccerMatchStateTransition::KickoffPreparation
+		);
+		return;
+	}
+
+	if (Manager.bKickoffAIKickMontageStarted)
+	{
+		if (Manager.KickoffTakerAI->HasAIKickMontageImpactedBall())
+		{
+			const FVector PassTargetLocation =
+				Manager.KickoffPendingAIKickTargetLocation;
+
+			Manager.RegisterIntentionalBallTouch(Manager.KickoffTakerAI);
+
+			ASoccerAICharacter* CompletedTaker = Manager.KickoffTakerAI;
+			ASoccerCharacterBase* CompletedExecutionReceiver =
+				Manager.GetActiveRestartExecutionReceiver();
+			const bool bPassWasIntendedForHuman =
+				Manager.IsActiveRestartExecutionReceiverHuman();
+
+			Manager.EndRestartContext();
+			Manager.StartNoRetouchRestriction(CompletedTaker);
+			Manager.StartAttackRunReleaseForTeam(CompletedTaker->GetTeam());
+			Manager.MatchPlayState = ESoccerMatchPlayState::Playing;
+			Manager.ClearAssignedAI();
+			Manager.bKickoffAIKickMontageStarted = false;
+			Manager.KickoffPendingAIKickTargetLocation = FVector::ZeroVector;
+
+			if (bPassWasIntendedForHuman && IsValid(CompletedExecutionReceiver))
+			{
+				Manager.RegisterOpenPlayPassIntent(
+					CompletedTaker,
+					CompletedExecutionReceiver,
+					PassTargetLocation
+				);
+			}
+
+			Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+			return;
+		}
+
+		if (Manager.KickoffTakerAI->IsAIKickMontageActive())
+		{
+			return;
+		}
+
+		// Interrupted before impact: restore the normal run-up instead of
+		// leaving the kickoff with no active executor.
+		Manager.bKickoffAIKickMontageStarted = false;
+		Manager.KickoffPendingAIKickTargetLocation = FVector::ZeroVector;
+		Manager.bKickoffFinalRunActive = false;
+		Manager.ResetRestartKickContactTracking(Manager.KickoffKickContactTracker);
+		Manager.RecalculateKickoffRunUpGeometry();
 		Manager.CaptureActiveRestartAITargetLocations(
 			Manager.AreKickoffPlayersInLegalPositions()
 		);
@@ -207,8 +277,26 @@ void FSoccerKickoffExecutionState::Tick(
 	PassTargetLocation.Z =
 		Manager.SoccerBall->GetActorLocation().Z;
 
-	Manager.KickoffTakerAI->PlayAIKickAnimationForRestart();
+	if (Manager.KickoffTakerAI->StartAIKickMontageForRestart(
+		Manager.SoccerBall,
+		PassTargetLocation,
+		Manager.KickoffPassHorizontalSpeed,
+		Manager.KickoffPassMinTravelTime,
+		Manager.KickoffPassMaxTravelTime,
+		false
+	))
+	{
+		Manager.bKickoffAIKickMontageStarted = true;
+		Manager.KickoffPendingAIKickTargetLocation =
+			Manager.KickoffTakerAI->GetPendingAIKickTarget();
+		Manager.bKickoffFinalRunActive = false;
+		Manager.ResetRestartKickContactTracking(Manager.KickoffKickContactTracker);
+		return;
+	}
 
+	// Safe fallback: if the selected montage is unassigned or cannot play,
+	// preserve the previous immediate kickoff behavior.
+	Manager.KickoffTakerAI->PlayAIKickAnimationForRestart();
 	Manager.SoccerBall->KickToTarget(
 		PassTargetLocation,
 		Manager.KickoffPassHorizontalSpeed,
@@ -216,25 +304,17 @@ void FSoccerKickoffExecutionState::Tick(
 		Manager.KickoffPassMaxTravelTime
 	);
 
-	Manager.RegisterIntentionalBallTouch(
-		Manager.KickoffTakerAI
-	);
+	Manager.RegisterIntentionalBallTouch(Manager.KickoffTakerAI);
 
-	ASoccerAICharacter* CompletedTaker =
-		Manager.KickoffTakerAI;
+	ASoccerAICharacter* CompletedTaker = Manager.KickoffTakerAI;
 	ASoccerCharacterBase* CompletedExecutionReceiver =
 		Manager.GetActiveRestartExecutionReceiver();
 	const bool bPassWasIntendedForHuman =
 		Manager.IsActiveRestartExecutionReceiverHuman();
 
 	Manager.EndRestartContext();
-
-	// The taker may not touch the ball again until another player touches it.
 	Manager.StartNoRetouchRestriction(CompletedTaker);
-	Manager.StartAttackRunReleaseForTeam(
-		CompletedTaker->GetTeam()
-	);
-
+	Manager.StartAttackRunReleaseForTeam(CompletedTaker->GetTeam());
 	Manager.MatchPlayState = ESoccerMatchPlayState::Playing;
 	Manager.ClearAssignedAI();
 

@@ -35,7 +35,10 @@ void FSoccerOffsideExecutionState::Tick(ASoccerMatchManager& Manager, float Delt
 	// Keep the restart spot authoritative until the designated taker registers
 	// the real first touch. This is especially important for a human taker:
 	// simply walking into the stationary ball must not move it before the kick.
-	if (IsValid(Manager.SoccerBall))
+	if (
+		IsValid(Manager.SoccerBall) &&
+		Manager.FreeKickRestart.ShouldKeepBallFixedDuringExecution()
+		)
 	{
 		Manager.SoccerBall->StopBallKeepingPhysics();
 		Manager.SoccerBall->SetActorLocation(

@@ -344,6 +344,20 @@ bool FSoccerFreeKickRestart::EnterExecution(ASoccerMatchManager& Manager)
 	return bFinalRunActive;
 }
 
+bool FSoccerFreeKickRestart::ShouldKeepBallFixedDuringExecution() const
+{
+	if (
+		bAIKickMontageStarted &&
+		IsValid(TakerAI) &&
+		TakerAI->HasAIKickMontageImpactedBall()
+		)
+	{
+		return false;
+	}
+
+	return true;
+}
+
 bool FSoccerFreeKickRestart::TickExecutionAndCompleteIfNeeded(ASoccerMatchManager& Manager)
 {
 	if (!IsRuntimeValid())
@@ -355,13 +369,9 @@ bool FSoccerFreeKickRestart::TickExecutionAndCompleteIfNeeded(ASoccerMatchManage
 	{
 		if (ShouldHumanKeepExecutionClaim(Manager))
 		{
-			// The human owns the live restart. Completion is triggered by the
-			// intentional first touch registered from the human kick path.
 			return false;
 		}
 
-		// The human walked away after the whistle. Hand the restart back to the
-		// preselected AI, recapture its run-up target, and wait until it settles.
 		bHumanTakerClaimed = false;
 		bHumanExecutionAuthorized = false;
 		RecalculateRunUpGeometry(Manager);
@@ -375,6 +385,30 @@ bool FSoccerFreeKickRestart::TickExecutionAndCompleteIfNeeded(ASoccerMatchManage
 			TEXT("TIRO LIBRE: humano se alejo, ejecutor bot reasignado"),
 			FColor::Yellow
 		);
+	}
+
+	// Once the authored restart montage has started, contact geometry no longer
+	// owns the kick. Wait for the timed foot impact, then complete the match-state
+	// bookkeeping without launching the ball a second time.
+	if (bAIKickMontageStarted)
+	{
+		if (IsValid(TakerAI) && TakerAI->HasAIKickMontageImpactedBall())
+		{
+			Complete(Manager);
+			return !IsRuntimeValid();
+		}
+
+		if (IsValid(TakerAI) && TakerAI->IsAIKickMontageActive())
+		{
+			return false;
+		}
+
+		// The montage was interrupted before impact. Return to the normal run-up
+		// recovery instead of leaving the restart permanently inactive.
+		bAIKickMontageStarted = false;
+		PendingAIKickTargetLocation = FVector::ZeroVector;
+		RecoverFinalRunAfterMiss(Manager);
+		return false;
 	}
 
 	if (!bFinalRunActive)
@@ -392,7 +426,7 @@ bool FSoccerFreeKickRestart::TickExecutionAndCompleteIfNeeded(ASoccerMatchManage
 	}
 
 	Complete(Manager);
-	return true;
+	return !IsRuntimeValid();
 }
 
 void FSoccerFreeKickRestart::Complete(ASoccerMatchManager& Manager)
@@ -408,9 +442,57 @@ void FSoccerFreeKickRestart::Complete(ASoccerMatchManager& Manager)
 		return;
 	}
 
+	ASoccerAICharacter* CompletedTaker = TakerAI;
+	ASoccerAICharacter* CompletedReceiver = ReceiverAI;
+
+	FVector PassTargetLocation =
+		bAIKickMontageStarted
+		? PendingAIKickTargetLocation
+		: Manager.GetActiveRestartExecutionTargetLocation(
+			CompletedReceiver->GetActorLocation()
+		);
+	PassTargetLocation.Z = Manager.SoccerBall->GetActorLocation().Z;
+
+	// First contact with the stationary ball now starts the authored montage.
+	// The restart remains active until the montage's timed impact actually moves
+	// the ball. Missing/unplayable montages keep the old immediate fallback.
+	if (!bAIKickMontageStarted)
+	{
+		if (CompletedTaker->StartAIKickMontageForRestart(
+			Manager.SoccerBall,
+			PassTargetLocation,
+			Manager.OffsideRestartPassHorizontalSpeed,
+			Manager.OffsideRestartPassMinTravelTime,
+			Manager.OffsideRestartPassMaxTravelTime,
+			false
+		))
+		{
+			bAIKickMontageStarted = true;
+			PendingAIKickTargetLocation = CompletedTaker->GetPendingAIKickTarget();
+			bFinalRunActive = false;
+			Manager.ResetRestartKickContactTracking(ContactTracker);
+			return;
+		}
+	}
+
+	const bool bMontageImpactAlreadyLaunchedBall =
+		bAIKickMontageStarted &&
+		CompletedTaker->HasAIKickMontageImpactedBall();
+
+	if (bAIKickMontageStarted && !bMontageImpactAlreadyLaunchedBall)
+	{
+		return;
+	}
+
+	const ESoccerRestartType CompletedRestartType = RestartType;
+	ASoccerCharacterBase* CompletedExecutionReceiver =
+		Manager.GetActiveRestartExecutionReceiver();
+	const bool bPassWasIntendedForHuman =
+		Manager.IsActiveRestartExecutionReceiverHuman();
+
 	Manager.MatchPlayState = ESoccerMatchPlayState::Playing;
 
-	if (!Manager.TryRegisterIntentionalBallTouch(TakerAI))
+	if (!Manager.TryRegisterIntentionalBallTouch(CompletedTaker))
 	{
 		ResetRuntime(Manager);
 		Manager.EndRestartContext();
@@ -418,31 +500,20 @@ void FSoccerFreeKickRestart::Complete(ASoccerMatchManager& Manager)
 		return;
 	}
 
-	const ESoccerRestartType CompletedRestartType = RestartType;
-	ASoccerAICharacter* CompletedTaker = TakerAI;
-	ASoccerAICharacter* CompletedReceiver = ReceiverAI;
-	ASoccerCharacterBase* CompletedExecutionReceiver =
-		Manager.GetActiveRestartExecutionReceiver();
-	const bool bPassWasIntendedForHuman =
-		Manager.IsActiveRestartExecutionReceiverHuman();
-
-	FVector PassTargetLocation =
-		Manager.GetActiveRestartExecutionTargetLocation(
-			CompletedReceiver->GetActorLocation()
-		);
-	PassTargetLocation.Z = Manager.SoccerBall->GetActorLocation().Z;
-
 	Manager.EndRestartContext();
 	Manager.StartNoRetouchRestriction(CompletedTaker);
 	Manager.StartAttackRunReleaseForTeam(CompletedTaker->GetTeam());
 
-	CompletedTaker->PlayAIKickAnimationForRestart();
-	Manager.SoccerBall->KickToTarget(
-		PassTargetLocation,
-		Manager.OffsideRestartPassHorizontalSpeed,
-		Manager.OffsideRestartPassMinTravelTime,
-		Manager.OffsideRestartPassMaxTravelTime
-	);
+	if (!bMontageImpactAlreadyLaunchedBall)
+	{
+		CompletedTaker->PlayAIKickAnimationForRestart();
+		Manager.SoccerBall->KickToTarget(
+			PassTargetLocation,
+			Manager.OffsideRestartPassHorizontalSpeed,
+			Manager.OffsideRestartPassMinTravelTime,
+			Manager.OffsideRestartPassMaxTravelTime
+		);
+	}
 
 	ResetRuntime(Manager);
 	Manager.ClearAssignedAI();
@@ -1394,7 +1465,14 @@ void FSoccerFreeKickRestart::RecoverFinalRunAfterMiss(ASoccerMatchManager& Manag
 
 void FSoccerFreeKickRestart::ResetRuntime(ASoccerMatchManager& Manager)
 {
+	if (bAIKickMontageStarted && IsValid(TakerAI))
+	{
+		TakerAI->CancelAIKickMontageBeforeImpact();
+	}
+
 	bFinalRunActive = false;
+	bAIKickMontageStarted = false;
+	PendingAIKickTargetLocation = FVector::ZeroVector;
 	RestartType = ESoccerRestartType::None;
 	RestartTeam = ESoccerTeam::PlayerTeam;
 	RestartLocation = FVector::ZeroVector;

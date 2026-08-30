@@ -138,6 +138,18 @@ void FSoccerGoalKickExecutionState::Tick(
 		return;
 	}
 
+	if (Manager.GoalLineRestart.IsAIKickMontageStarted())
+	{
+		Taker->ClearScriptedLocomotionVelocity();
+		Manager.CompleteGoalLineRestart();
+
+		if (Manager.GoalLineRestart.GetType() == ESoccerGoalLineRestartType::None)
+		{
+			Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+		}
+		return;
+	}
+
 	if (!Manager.GoalLineRestart.IsGoalKickFinalRunActive())
 	{
 		Manager.RequestMatchStateTransition(
@@ -186,12 +198,6 @@ void FSoccerGoalKickExecutionState::Tick(
 	if (ContactResult != ERestartKickContactResult::Contact)
 	{
 		return;
-	}
-
-	if (UCharacterMovementComponent* Movement = Taker->GetCharacterMovement())
-	{
-		Movement->StopMovementImmediately();
-		Movement->Velocity = FVector::ZeroVector;
 	}
 
 	Taker->SetActorRotation(

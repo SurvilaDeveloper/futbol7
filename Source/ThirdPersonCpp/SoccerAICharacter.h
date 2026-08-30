@@ -175,13 +175,38 @@ public:
 		float MaxTravelTime
 	);
 
-	// Reproduce la animacion generica de patada cuando la pelota
-	// esta quieta y administrada por una reanudacion del MatchManager.
+	// Legacy generic restart kick animation. Kept as fallback when no authored
+	// montage is assigned or a montage cannot be started.
 	void PlayAIKickAnimationForRestart();
 
-	// True while an AI pass/shot montage owns the kick until its timed impact.
-	// The controller uses this to avoid issuing another tactical action mid-kick.
+	// Starts one of the AI-owned pass/strike montages for a stationary restart
+	// ball without giving the character normal dribble possession. The ball is
+	// frozen until the authored impact delay and then launched by the montage.
+	bool StartAIKickMontageForRestart(
+		ASoccerBall* BallToKick,
+		const FVector& TargetLocation,
+		float HorizontalSpeed,
+		float MinTravelTime,
+		float MaxTravelTime,
+		bool bUseAirTarget
+	);
+
+	// True while an AI pass/shot/restart montage is still active.
 	bool IsAIKickMontageActive() const;
+
+	// Restart state machines use this to complete the restart only after the
+	// actual timed foot impact has launched the ball.
+	bool HasAIKickMontageImpactedBall() const;
+
+	// For normal kicks the controller remains locked through montage blend-out.
+	// For an autopass it may resume the chase immediately after ball impact.
+	bool ShouldAIKickMontageLockController() const;
+
+	FVector GetPendingAIKickTarget() const;
+
+	// Cancels only a montage that has not reached foot contact yet. Used by
+	// restart cancellation paths so an obsolete timer cannot kick the ball later.
+	void CancelAIKickMontageBeforeImpact();
 
 	void StartAIAutoPassToLocation(
 		const FVector& TargetLocation,
@@ -500,6 +525,9 @@ private:
 	bool bAIKickMontageActive = false;
 	bool bPendingAIKickUsesAirTarget = false;
 	bool bPendingAIKickHasImpactedBall = false;
+	bool bLastAIKickMontageEndedAfterImpact = false;
+	bool bPendingAIKickIsAutoPass = false;
+	bool bPendingAIKickIsRestart = false;
 
 	FTimerHandle AIKickImpactTimerHandle;
 	FTimerHandle AIKickFinishTimerHandle;
@@ -511,13 +539,33 @@ private:
 		float& OutHorizontalSpeed
 	) const;
 
+	UAnimMontage* SelectAIKickMontageForBallLocation(
+		const FVector& BallLocation,
+		const FVector& TargetLocation,
+		float& OutHorizontalSpeed
+	) const;
+
 	bool StartAIKickMontage(
 		UAnimMontage* KickMontage,
 		const FVector& TargetLocation,
 		float HorizontalSpeed,
 		float MinTravelTime,
 		float MaxTravelTime,
-		bool bUseAirTarget
+		bool bUseAirTarget,
+		bool bTreatAsAutoPass = false
+	);
+
+	bool StartAIKickMontageWithBall(
+		ASoccerBall* BallToKick,
+		UAnimMontage* KickMontage,
+		const FVector& TargetLocation,
+		float HorizontalSpeed,
+		float MinTravelTime,
+		float MaxTravelTime,
+		bool bUseAirTarget,
+		bool bReleaseCurrentAIPossession,
+		bool bTreatAsAutoPass,
+		bool bTreatAsRestart
 	);
 
 	float GetAIKickImpactDelayForMontage(

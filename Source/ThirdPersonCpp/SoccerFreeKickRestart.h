@@ -45,6 +45,7 @@ public:
 	ESoccerTeam GetRestartTeam() const { return RestartTeam; }
 	const FVector& GetRestartLocation() const { return RestartLocation; }
 	bool IsFinalRunActive() const { return bFinalRunActive; }
+	bool ShouldKeepBallFixedDuringExecution() const;
 
 	FVector GetMoveLocation(const ASoccerMatchManager& Manager, const ASoccerAICharacter* SoccerAICharacter) const;
 	FVector BuildReceiverMoveLocation(const ASoccerMatchManager& Manager) const;
@@ -136,6 +137,8 @@ private:
 	TSet<const ASoccerAICharacter*> OpponentsThatUsedLegalReposition;
 
 	bool bFinalRunActive = false;
+	bool bAIKickMontageStarted = false;
+	FVector PendingAIKickTargetLocation = FVector::ZeroVector;
 	FVector KickDirection = FVector::ForwardVector;
 	FVector RunDirection = FVector::ForwardVector;
 	FVector RunUpStartLocation = FVector::ZeroVector;

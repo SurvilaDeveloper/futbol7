@@ -148,6 +148,18 @@ void FSoccerCornerExecutionState::Tick(
 		return;
 	}
 
+	if (Manager.GoalLineRestart.IsAIKickMontageStarted())
+	{
+		Taker->ClearScriptedLocomotionVelocity();
+		Manager.CompleteGoalLineRestart();
+
+		if (Manager.GoalLineRestart.GetType() == ESoccerGoalLineRestartType::None)
+		{
+			Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+		}
+		return;
+	}
+
 	if (!Manager.GoalLineRestart.IsCornerFinalRunActive())
 	{
 		Manager.RequestMatchStateTransition(
@@ -219,7 +231,6 @@ void FSoccerCornerExecutionState::Tick(
 		return;
 	}
 
-	Taker->ClearScriptedLocomotionVelocity();
 	Taker->SetActorRotation(
 		Manager.GoalLineRestart.GetKickDirection().Rotation()
 	);

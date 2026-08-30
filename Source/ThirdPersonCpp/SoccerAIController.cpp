@@ -269,7 +269,7 @@ void ASoccerAIController::Tick(float DeltaTime)
 	// A pass/shot montage owns the character until its timed foot impact and
 	// blend-out finish. Do not let the tactical loop start a second action or
 	// overwrite movement while the kick is still being authored.
-	if (SoccerCharacter->IsAIKickMontageActive())
+	if (SoccerCharacter->ShouldAIKickMontageLockController())
 	{
 		StopMovement();
 		ClearAerialBallInterceptionMovement();

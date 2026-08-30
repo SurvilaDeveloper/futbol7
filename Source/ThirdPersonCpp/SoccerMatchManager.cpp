@@ -10009,6 +10009,13 @@ void ASoccerMatchManager::UpdateCornerKickReturnToField(
 		return;
 	}
 
+	// Let the authored kick montage finish before the special outside-to-field
+	// return movement takes ownership of the corner taker.
+	if (GoalLineRestart.CornerReturningTakerAI->IsAIKickMontageActive())
+	{
+		return;
+	}
+
 	const FVector CurrentLocation =
 		GoalLineRestart.CornerReturningTakerAI->GetActorLocation();
 	const FVector NewLocation = FMath::VInterpConstantTo(
@@ -10073,65 +10080,41 @@ void ASoccerMatchManager::CompleteGoalLineRestart()
 		return;
 	}
 
-	// Defensa final: ninguna reanudacion con el pie por linea de fondo
-	// libera la pelota antes del contacto real del ejecutor.
 	if (
-		GoalLineRestart.RestartType ==
-			ESoccerGoalLineRestartType::GoalKick &&
-		!GoalLineRestart.HasGoalKickContactConfirmed()
+		GoalLineRestart.RestartType == ESoccerGoalLineRestartType::GoalKick &&
+		!GoalLineRestart.HasGoalKickContactConfirmed() &&
+		!GoalLineRestart.bAIKickMontageStarted
 		)
 	{
 		return;
 	}
 
 	if (
-		GoalLineRestart.RestartType ==
-			ESoccerGoalLineRestartType::CornerKick &&
-		!GoalLineRestart.HasCornerKickContactConfirmed()
+		GoalLineRestart.RestartType == ESoccerGoalLineRestartType::CornerKick &&
+		!GoalLineRestart.HasCornerKickContactConfirmed() &&
+		!GoalLineRestart.bAIKickMontageStarted
 		)
 	{
 		return;
 	}
 
-	const ESoccerGoalLineRestartType CompletedType =
-		GoalLineRestart.RestartType;
+	const ESoccerGoalLineRestartType CompletedType = GoalLineRestart.RestartType;
 	ASoccerAICharacter* CompletedTaker = GoalLineRestart.TakerAI;
 	ASoccerAICharacter* CompletedReceiver = GoalLineRestart.ReceiverAI;
-	ASoccerCharacterBase* CompletedExecutionReceiver =
-		GetActiveRestartExecutionReceiver();
-	const bool bPassWasIntendedForHuman =
-		IsActiveRestartExecutionReceiverHuman();
+
+	const bool bUseStoredMontageTarget =
+		GoalLineRestart.bAIKickMontageStarted;
 
 	FVector TargetLocation =
-		GetActiveRestartExecutionTargetLocation(
+		bUseStoredMontageTarget
+		? GoalLineRestart.PendingAIKickTargetLocation
+		: GetActiveRestartExecutionTargetLocation(
 			CompletedReceiver->GetActorLocation()
 		);
-	TargetLocation.Z = SoccerBall->GetActorLocation().Z;
 
-	MatchPlayState = ESoccerMatchPlayState::Playing;
-
-	ClearPendingOffsideSnapshot();
-
-	if (!TryRegisterIntentionalBallTouch(CompletedTaker))
+	if (!bUseStoredMontageTarget)
 	{
-		CancelGoalLineRestart();
-		return;
-	}
-
-	EndRestartContext();
-
-	// No existe offside al recibir directamente de un saque de arco
-	// ni de un corner.
-	ClearPendingOffsideSnapshot();
-	StartNoRetouchRestriction(CompletedTaker);
-	StartAttackRunReleaseForTeam(GoalLineRestart.RestartTeam);
-
-	FVector FacingDirection = TargetLocation - CompletedTaker->GetActorLocation();
-	FacingDirection.Z = 0.0f;
-
-	if (FacingDirection.Normalize())
-	{
-		CompletedTaker->SetActorRotation(FacingDirection.Rotation());
+		TargetLocation.Z = SoccerBall->GetActorLocation().Z;
 	}
 
 	const float HorizontalSpeed =
@@ -10147,15 +10130,83 @@ void ASoccerMatchManager::CompleteGoalLineRestart()
 		? CornerKickPassMaxTravelTime
 		: GoalKickPassMaxTravelTime;
 
-	CompletedTaker->ClearScriptedLocomotionVelocity();
-	CompletedTaker->PlayAIKickAnimationForRestart();
+	if (!GoalLineRestart.bAIKickMontageStarted)
+	{
+		FVector FacingDirection = TargetLocation - CompletedTaker->GetActorLocation();
+		FacingDirection.Z = 0.0f;
 
-	SoccerBall->KickToAirTarget(
-		TargetLocation,
-		HorizontalSpeed,
-		MinTravelTime,
-		MaxTravelTime
-	);
+		if (FacingDirection.Normalize())
+		{
+			CompletedTaker->SetActorRotation(FacingDirection.Rotation());
+		}
+
+		if (CompletedTaker->StartAIKickMontageForRestart(
+			SoccerBall,
+			TargetLocation,
+			HorizontalSpeed,
+			MinTravelTime,
+			MaxTravelTime,
+			true
+		))
+		{
+			GoalLineRestart.bAIKickMontageStarted = true;
+			GoalLineRestart.PendingAIKickTargetLocation =
+				CompletedTaker->GetPendingAIKickTarget();
+			return;
+		}
+
+		// Fallback path only: the authored montage did not start, so restore
+		// the old behavior of stopping the run immediately before the kick.
+		CompletedTaker->ClearScriptedLocomotionVelocity();
+	}
+
+	const bool bMontageImpactAlreadyLaunchedBall =
+		GoalLineRestart.bAIKickMontageStarted &&
+		CompletedTaker->HasAIKickMontageImpactedBall();
+
+	if (GoalLineRestart.bAIKickMontageStarted && !bMontageImpactAlreadyLaunchedBall)
+	{
+		if (CompletedTaker->IsAIKickMontageActive())
+		{
+			return;
+		}
+
+		// Interrupted before impact. Clear only the montage runtime so the
+		// execution state can re-evaluate contact and try again.
+		GoalLineRestart.bAIKickMontageStarted = false;
+		GoalLineRestart.PendingAIKickTargetLocation = FVector::ZeroVector;
+		return;
+	}
+
+	ASoccerCharacterBase* CompletedExecutionReceiver =
+		GetActiveRestartExecutionReceiver();
+	const bool bPassWasIntendedForHuman =
+		IsActiveRestartExecutionReceiverHuman();
+
+	MatchPlayState = ESoccerMatchPlayState::Playing;
+	ClearPendingOffsideSnapshot();
+
+	if (!TryRegisterIntentionalBallTouch(CompletedTaker))
+	{
+		CancelGoalLineRestart();
+		return;
+	}
+
+	EndRestartContext();
+	ClearPendingOffsideSnapshot();
+	StartNoRetouchRestriction(CompletedTaker);
+	StartAttackRunReleaseForTeam(GoalLineRestart.RestartTeam);
+
+	if (!bMontageImpactAlreadyLaunchedBall)
+	{
+		CompletedTaker->PlayAIKickAnimationForRestart();
+		SoccerBall->KickToAirTarget(
+			TargetLocation,
+			HorizontalSpeed,
+			MinTravelTime,
+			MaxTravelTime
+		);
+	}
 
 	PossessingCharacter = nullptr;
 	PossessionTeam = ESoccerPossessionTeam::None;
@@ -10178,6 +10229,8 @@ void ASoccerMatchManager::CompleteGoalLineRestart()
 		GoalLineRestart.ResetCornerFinalRunRuntime(*this);
 	}
 
+	GoalLineRestart.bAIKickMontageStarted = false;
+	GoalLineRestart.PendingAIKickTargetLocation = FVector::ZeroVector;
 	GoalLineRestart.RestartType = ESoccerGoalLineRestartType::None;
 	GoalLineRestart.TakerAI = nullptr;
 	GoalLineRestart.ReceiverAI = nullptr;
@@ -10225,6 +10278,11 @@ void ASoccerMatchManager::CancelGoalLineRestart()
 
 	if (IsValid(GoalLineRestart.TakerAI))
 	{
+		if (GoalLineRestart.bAIKickMontageStarted)
+		{
+			GoalLineRestart.TakerAI->CancelAIKickMontageBeforeImpact();
+		}
+
 		GoalLineRestart.TakerAI->ClearScriptedLocomotionVelocity();
 	}
 
@@ -17846,6 +17904,8 @@ void ASoccerMatchManager::RecalculateKickoffRunUpGeometry()
 void ASoccerMatchManager::ResetKickoffRunUpState()
 {
 	bKickoffFinalRunActive = false;
+	bKickoffAIKickMontageStarted = false;
+	KickoffPendingAIKickTargetLocation = FVector::ZeroVector;
 	KickoffKickDirection = FVector::ForwardVector;
 	KickoffRunDirection = FVector::ForwardVector;
 	KickoffRunUpStartLocation = FVector::ZeroVector;

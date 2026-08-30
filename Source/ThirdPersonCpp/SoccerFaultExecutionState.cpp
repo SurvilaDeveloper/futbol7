@@ -35,7 +35,10 @@ void FSoccerFaultExecutionState::Tick(ASoccerMatchManager& Manager, float DeltaT
 	// The execution state keeps ownership of the stationary ball until the
 	// designated taker reaches the real contact point. Only Complete() is allowed
 	// to release it back to open-play physics.
-	if (IsValid(Manager.SoccerBall))
+	if (
+		IsValid(Manager.SoccerBall) &&
+		Manager.FreeKickRestart.ShouldKeepBallFixedDuringExecution()
+		)
 	{
 		Manager.SoccerBall->StopBallKeepingPhysics();
 		Manager.SoccerBall->SetActorLocation(

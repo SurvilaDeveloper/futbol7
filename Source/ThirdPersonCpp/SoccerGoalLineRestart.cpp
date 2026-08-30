@@ -40,6 +40,8 @@ void FSoccerGoalLineRestart::ConfigureCorner(
 	SetupStartTime = InSetupStartTime;
 	TakerAI = nullptr;
 	ReceiverAI = nullptr;
+	bAIKickMontageStarted = false;
+	PendingAIKickTargetLocation = FVector::ZeroVector;
 }
 
 void FSoccerGoalLineRestart::SetCornerParticipants(
@@ -77,6 +79,8 @@ void FSoccerGoalLineRestart::ConfigureGoalKick(
 	SetupStartTime = InSetupStartTime;
 	TakerAI = nullptr;
 	ReceiverAI = nullptr;
+	bAIKickMontageStarted = false;
+	PendingAIKickTargetLocation = FVector::ZeroVector;
 }
 
 void FSoccerGoalLineRestart::SetGoalKickParticipants(
@@ -206,6 +210,8 @@ void FSoccerGoalLineRestart::ResetRuntime()
 	KickDirection = FVector::ForwardVector;
 	GoalLineSign = 1.0f;
 	SetupStartTime = -1000.0f;
+	bAIKickMontageStarted = false;
+	PendingAIKickTargetLocation = FVector::ZeroVector;
 
 	bGoalKickFinalRunActive = false;
 	GoalKickRunDirection = FVector::ForwardVector;
