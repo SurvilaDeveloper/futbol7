@@ -266,6 +266,19 @@ void ASoccerAIController::Tick(float DeltaTime)
 		return;
 	}
 
+	// A pass/shot montage owns the character until its timed foot impact and
+	// blend-out finish. Do not let the tactical loop start a second action or
+	// overwrite movement while the kick is still being authored.
+	if (SoccerCharacter->IsAIKickMontageActive())
+	{
+		StopMovement();
+		ClearAerialBallInterceptionMovement();
+		ClearPredictiveBallChaseMovement(SoccerCharacter);
+		ClearFocus(EAIFocusPriority::Gameplay);
+		SoccerCharacter->SetAIChasingBall(false);
+		return;
+	}
+
 	if (bAerialDebugIsolationEnabled)
 	{
 		ASoccerBall* DebugBall = AerialDebugIsolationBall.Get();

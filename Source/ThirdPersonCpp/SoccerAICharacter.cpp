@@ -211,6 +211,11 @@ void ASoccerAICharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	if (bAIKickMontageActive && ShouldCancelPendingAIKickAnimation())
+	{
+		CancelPendingAIKickAnimation(true);
+	}
+
 	if (IsAerialActionLocked() || IsAerialActionWaitingToStart())
 	{
 		StopGoalkeeperRetreatBackpedalAnimation();
@@ -569,6 +574,13 @@ void ASoccerAICharacter::PossessAIBall(ASoccerBall* NewControlledBall)
 		return;
 	}
 
+	// A new possession invalidates a kick that was still waiting for impact.
+	// This prevents an old timer from kicking a ball after control changed.
+	if (bAIKickMontageActive)
+	{
+		CancelPendingAIKickAnimation(true);
+	}
+
 	// Toda posesi�n nueva comienza como posesi�n normal.
 	// HoldGoalkeeperBallInHands() la marcar� despu�s
 	// expl�citamente como pelota sostenida.
@@ -601,6 +613,14 @@ void ASoccerAICharacter::PossessAIBall(ASoccerBall* NewControlledBall)
 
 void ASoccerAICharacter::ReleaseAIBall()
 {
+	// External possession cleanup (restart, reset, etc.) must also erase a
+	// delayed kick. The normal montage-start path calls ReleaseAIBall before
+	// bAIKickMontageActive is set, so it does not enter this branch.
+	if (bAIKickMontageActive)
+	{
+		CancelPendingAIKickAnimation(true);
+	}
+
 	const bool bHadPossession =
 		bAIIsPossessingBall;
 
@@ -1396,11 +1416,39 @@ void ASoccerAICharacter::KickAIBallToTarget(
 	float MaxTravelTime
 )
 {
-	if (!bAIIsPossessingBall || !IsValid(ControlledBall))
+	if (
+		bAIKickMontageActive ||
+		!bAIIsPossessingBall ||
+		!IsValid(ControlledBall)
+		)
 	{
 		return;
 	}
 
+	float HorizontalSpeedToUse = HorizontalSpeed;
+
+	UAnimMontage* KickMontage = SelectAIKickMontageForTarget(
+		TargetLocation,
+		HorizontalSpeedToUse
+	);
+
+	if (
+		KickMontage != nullptr &&
+		StartAIKickMontage(
+			KickMontage,
+			TargetLocation,
+			HorizontalSpeedToUse,
+			MinTravelTime,
+			MaxTravelTime,
+			false
+		)
+		)
+	{
+		return;
+	}
+
+	// Short kick, unassigned montage, or montage playback failure: preserve
+	// the previous immediate AI behavior as a safe fallback.
 	StartAIKickAnimation();
 
 	ASoccerBall* BallToKick = ControlledBall;
@@ -1422,7 +1470,33 @@ void ASoccerAICharacter::KickAIBallToAirTarget(
 	float MaxTravelTime
 )
 {
-	if (!bAIIsPossessingBall || !IsValid(ControlledBall))
+	if (
+		bAIKickMontageActive ||
+		!bAIIsPossessingBall ||
+		!IsValid(ControlledBall)
+		)
+	{
+		return;
+	}
+
+	float HorizontalSpeedToUse = HorizontalSpeed;
+
+	UAnimMontage* KickMontage = SelectAIKickMontageForTarget(
+		TargetLocation,
+		HorizontalSpeedToUse
+	);
+
+	if (
+		KickMontage != nullptr &&
+		StartAIKickMontage(
+			KickMontage,
+			TargetLocation,
+			HorizontalSpeedToUse,
+			MinTravelTime,
+			MaxTravelTime,
+			true
+		)
+		)
 	{
 		return;
 	}
@@ -1444,6 +1518,11 @@ void ASoccerAICharacter::KickAIBallToAirTarget(
 void ASoccerAICharacter::PlayAIKickAnimationForRestart()
 {
 	StartAIKickAnimation();
+}
+
+bool ASoccerAICharacter::IsAIKickMontageActive() const
+{
+	return bAIKickMontageActive;
 }
 
 float ASoccerAICharacter::GetTimeSinceAIPossessionStarted() const
@@ -1634,6 +1713,466 @@ bool ASoccerAICharacter::TryCollectAIAutoPassIfClose(float CollectDistance)
 }
 
 ////////////
+
+UAnimMontage* ASoccerAICharacter::SelectAIKickMontageForTarget(
+	const FVector& TargetLocation,
+	float& OutHorizontalSpeed
+) const
+{
+	if (!IsValid(ControlledBall))
+	{
+		return nullptr;
+	}
+
+	const FVector BallLocation = ControlledBall->GetActorLocation();
+
+	const float Distance2D = FVector::Dist2D(
+		BallLocation,
+		TargetLocation
+	);
+
+	// Keep the same initial thresholds as the human, but in AI-owned
+	// properties so future AI tuning does not affect player controls.
+	if (Distance2D <= AIShortKickMaxDistance)
+	{
+		return nullptr;
+	}
+
+	FVector PlayerForward = GetActorForwardVector();
+	PlayerForward.Z = 0.0f;
+	PlayerForward = PlayerForward.GetSafeNormal();
+
+	FVector BallToTarget = TargetLocation - BallLocation;
+	BallToTarget.Z = 0.0f;
+	BallToTarget = BallToTarget.GetSafeNormal();
+
+	if (PlayerForward.IsNearlyZero() || BallToTarget.IsNearlyZero())
+	{
+		return nullptr;
+	}
+
+	const float Dot = FMath::Clamp(
+		FVector::DotProduct(PlayerForward, BallToTarget),
+		-1.0f,
+		1.0f
+	);
+
+	const float AngleDegrees = FMath::RadiansToDegrees(
+		FMath::Acos(Dot)
+	);
+
+	const float CrossZ = FVector::CrossProduct(
+		PlayerForward,
+		BallToTarget
+	).Z;
+
+	// Same leg convention used by the human selection logic.
+	const bool bUseRightLeg = CrossZ < 0.0f;
+
+	const bool bSideKick =
+		AngleDegrees > AISideKickMinAngleDegrees;
+
+	const bool bPlayerIsMoving =
+		GetVelocity().Size2D() >= AIRunningKickMinSpeed;
+
+	const bool bLongDistance =
+		Distance2D >= AILongKickMinDistance;
+
+	const bool bCanUseStrike =
+		bLongDistance && !bSideKick;
+
+	if (bCanUseStrike)
+	{
+		return bUseRightLeg
+			? StrikeRightLegForwardJogMontage
+			: StrikeLeftLegForwardJogMontage;
+	}
+
+	if (bLongDistance && bSideKick)
+	{
+		OutHorizontalSpeed = AIForcedLongAnglePassSpeed;
+	}
+
+	if (bPlayerIsMoving)
+	{
+		if (bSideKick)
+		{
+			return bUseRightLeg
+				? RunningRightLegSidePassMontage
+				: RunningLeftLegSidePassMontage;
+		}
+
+		return bUseRightLeg
+			? RunningRightLegPassMontage
+			: RunningLeftLegPassMontage;
+	}
+
+	if (bSideKick)
+	{
+		return bUseRightLeg
+			? StandRightLegSidePassMontage
+			: StandLeftLegSidePassMontage;
+	}
+
+	return bUseRightLeg
+		? StandRightLegPassMontage
+		: StandLeftLegPassMontage;
+}
+
+bool ASoccerAICharacter::StartAIKickMontage(
+	UAnimMontage* KickMontage,
+	const FVector& TargetLocation,
+	float HorizontalSpeed,
+	float MinTravelTime,
+	float MaxTravelTime,
+	bool bUseAirTarget
+)
+{
+	if (
+		KickMontage == nullptr ||
+		bAIKickMontageActive ||
+		!bAIIsPossessingBall ||
+		!IsValid(ControlledBall)
+		)
+	{
+		return false;
+	}
+
+	// Play first. If the montage cannot start, possession remains untouched and
+	// the caller can execute the old immediate fallback safely.
+	const float MontageDuration = PlayAnimMontage(KickMontage);
+
+	if (MontageDuration <= 0.0f)
+	{
+		return false;
+	}
+
+	ASoccerBall* BallToKick = ControlledBall;
+
+	// From the tactical point of view the decision has already been made, just
+	// as in the old immediate path. We release character possession now, then
+	// freeze this specific ball until the authored foot-contact moment.
+	ReleaseAIBall();
+
+	if (!IsValid(BallToKick))
+	{
+		StopAnimMontage(KickMontage);
+		return false;
+	}
+
+	BallToKick->SetPossessed(true);
+	BallToKick->StopBallKeepingPhysics();
+
+	PendingAIKickBall = BallToKick;
+	ActiveAIKickMontage = KickMontage;
+	PendingAIKickTarget = TargetLocation;
+	PendingAIKickStartBallLocation = BallToKick->GetActorLocation();
+	PendingAIKickHorizontalSpeed = HorizontalSpeed;
+	PendingAIKickMinTravelTime = MinTravelTime;
+	PendingAIKickMaxTravelTime = MaxTravelTime;
+	bPendingAIKickUsesAirTarget = bUseAirTarget;
+	bPendingAIKickHasImpactedBall = false;
+	bAIKickMontageActive = true;
+
+	SetAIChasingBall(false);
+	ClearScriptedLocomotionVelocity();
+
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+	}
+
+	StartAIKickAnimation();
+
+	if (UWorld* World = GetWorld())
+	{
+		AIKickingAnimationEndTime =
+			World->GetTimeSeconds() +
+			MontageDuration +
+			FMath::Max(0.0f, AIKickAnimationFinishExtraDelay);
+	}
+
+	const float ImpactDelay = GetAIKickImpactDelayForMontage(
+		KickMontage,
+		MontageDuration
+	);
+
+	GetWorldTimerManager().ClearTimer(AIKickImpactTimerHandle);
+	GetWorldTimerManager().ClearTimer(AIKickFinishTimerHandle);
+
+	GetWorldTimerManager().SetTimer(
+		AIKickImpactTimerHandle,
+		this,
+		&ASoccerAICharacter::PerformPendingAIKickImpact,
+		ImpactDelay,
+		false
+	);
+
+	GetWorldTimerManager().SetTimer(
+		AIKickFinishTimerHandle,
+		this,
+		&ASoccerAICharacter::FinishPendingAIKickAnimation,
+		MontageDuration + FMath::Max(0.0f, AIKickAnimationFinishExtraDelay),
+		false
+	);
+
+	return true;
+}
+
+float ASoccerAICharacter::GetAIKickImpactDelayForMontage(
+	UAnimMontage* KickMontage,
+	float MontageDuration
+) const
+{
+	float DesiredDelay = AIPassKickImpactDelay;
+
+	if (
+		KickMontage == StrikeLeftLegForwardJogMontage ||
+		KickMontage == StrikeRightLegForwardJogMontage
+		)
+	{
+		DesiredDelay = AIStrikeKickImpactDelay;
+	}
+
+	const float MaxSafeDelay = FMath::Max(
+		0.05f,
+		MontageDuration - 0.05f
+	);
+
+	return FMath::Clamp(
+		DesiredDelay,
+		0.05f,
+		MaxSafeDelay
+	);
+}
+
+void ASoccerAICharacter::PerformPendingAIKickImpact()
+{
+	if (!bAIKickMontageActive || bPendingAIKickHasImpactedBall)
+	{
+		return;
+	}
+
+	if (ShouldCancelPendingAIKickAnimation())
+	{
+		CancelPendingAIKickAnimation(true);
+		return;
+	}
+
+	ASoccerBall* BallToKick = PendingAIKickBall;
+
+	if (!IsValid(BallToKick))
+	{
+		CancelPendingAIKickAnimation(false);
+		return;
+	}
+
+	bPendingAIKickHasImpactedBall = true;
+
+	if (bPendingAIKickUsesAirTarget)
+	{
+		BallToKick->KickToAirTarget(
+			PendingAIKickTarget,
+			PendingAIKickHorizontalSpeed,
+			PendingAIKickMinTravelTime,
+			PendingAIKickMaxTravelTime
+		);
+	}
+	else
+	{
+		BallToKick->KickToTarget(
+			PendingAIKickTarget,
+			PendingAIKickHorizontalSpeed,
+			PendingAIKickMinTravelTime,
+			PendingAIKickMaxTravelTime
+		);
+	}
+}
+
+void ASoccerAICharacter::FinishPendingAIKickAnimation()
+{
+	if (!bAIKickMontageActive)
+	{
+		return;
+	}
+
+	if (!bPendingAIKickHasImpactedBall)
+	{
+		PerformPendingAIKickImpact();
+	}
+
+	if (!bAIKickMontageActive)
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(AIKickImpactTimerHandle);
+	GetWorldTimerManager().ClearTimer(AIKickFinishTimerHandle);
+
+	PendingAIKickBall = nullptr;
+	ActiveAIKickMontage = nullptr;
+	PendingAIKickTarget = FVector::ZeroVector;
+	PendingAIKickStartBallLocation = FVector::ZeroVector;
+	PendingAIKickHorizontalSpeed = 0.0f;
+	PendingAIKickMinTravelTime = 0.0f;
+	PendingAIKickMaxTravelTime = 0.0f;
+	bPendingAIKickUsesAirTarget = false;
+	bPendingAIKickHasImpactedBall = false;
+	bAIKickMontageActive = false;
+	bAIIsKickingForAnimation = false;
+	AIKickingAnimationEndTime = -1000.0f;
+
+	RequestAIMovementReevaluation();
+}
+
+void ASoccerAICharacter::CancelPendingAIKickAnimation(
+	bool bReleaseFrozenBall
+)
+{
+	if (!bAIKickMontageActive)
+	{
+		return;
+	}
+
+	ASoccerBall* BallToRelease = PendingAIKickBall;
+	UAnimMontage* MontageToStop = ActiveAIKickMontage;
+	const bool bBallAlreadyKicked = bPendingAIKickHasImpactedBall;
+
+	bool bBallClaimedByAnotherCharacter = false;
+
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ASoccerMatchManager> It(World); It; ++It)
+		{
+			ASoccerMatchManager* MatchManager = *It;
+
+			if (!IsValid(MatchManager))
+			{
+				continue;
+			}
+
+			ASoccerCharacterBase* PossessingCharacter =
+				MatchManager->GetPossessingCharacter();
+
+			bBallClaimedByAnotherCharacter =
+				IsValid(PossessingCharacter) &&
+				PossessingCharacter != this;
+
+			break;
+		}
+	}
+
+	GetWorldTimerManager().ClearTimer(AIKickImpactTimerHandle);
+	GetWorldTimerManager().ClearTimer(AIKickFinishTimerHandle);
+
+	PendingAIKickBall = nullptr;
+	ActiveAIKickMontage = nullptr;
+	PendingAIKickTarget = FVector::ZeroVector;
+	PendingAIKickStartBallLocation = FVector::ZeroVector;
+	PendingAIKickHorizontalSpeed = 0.0f;
+	PendingAIKickMinTravelTime = 0.0f;
+	PendingAIKickMaxTravelTime = 0.0f;
+	bPendingAIKickUsesAirTarget = false;
+	bPendingAIKickHasImpactedBall = false;
+	bAIKickMontageActive = false;
+	bAIIsKickingForAnimation = false;
+	AIKickingAnimationEndTime = -1000.0f;
+
+	if (
+		MontageToStop != nullptr &&
+		GetMesh() != nullptr
+		)
+	{
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.08f, MontageToStop);
+		}
+	}
+
+	if (
+		bReleaseFrozenBall &&
+		!bBallAlreadyKicked &&
+		IsValid(BallToRelease) &&
+		!bBallClaimedByAnotherCharacter &&
+		BallToRelease->GetAttachParentActor() == nullptr
+		)
+	{
+		BallToRelease->SetPossessed(false);
+		BallToRelease->StopBallKeepingPhysics();
+	}
+
+	RequestAIMovementReevaluation();
+}
+
+bool ASoccerAICharacter::ShouldCancelPendingAIKickAnimation() const
+{
+	if (!bAIKickMontageActive)
+	{
+		return true;
+	}
+
+	if (
+		IsTackleFallReactionActive() ||
+		IsTackleActive() ||
+		IsTackleEvasionActive() ||
+		IsAerialActionLocked() ||
+		IsAerialActionWaitingToStart()
+		)
+	{
+		return true;
+	}
+
+	// After the authored foot contact the ball is expected to leave this spot
+	// and may immediately become another player's possession. Keep only the
+	// animation lock until blend-out; ball-validity checks below are pre-impact.
+	if (bPendingAIKickHasImpactedBall)
+	{
+		return false;
+	}
+
+	if (!IsValid(PendingAIKickBall))
+	{
+		return true;
+	}
+
+	if (
+		FVector::Dist2D(
+			PendingAIKickBall->GetActorLocation(),
+			PendingAIKickStartBallLocation
+		) > FMath::Max(10.0f, AIPendingKickMaxBallDriftDistance)
+		)
+	{
+		return true;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ASoccerMatchManager> It(World); It; ++It)
+		{
+			ASoccerMatchManager* MatchManager = *It;
+
+			if (!IsValid(MatchManager))
+			{
+				continue;
+			}
+
+			ASoccerCharacterBase* PossessingCharacter =
+				MatchManager->GetPossessingCharacter();
+
+			if (
+				IsValid(PossessingCharacter) &&
+				PossessingCharacter != this
+				)
+			{
+				return true;
+			}
+
+			break;
+		}
+	}
+
+	return false;
+}
 
 void ASoccerAICharacter::StartAIKickAnimation()
 {

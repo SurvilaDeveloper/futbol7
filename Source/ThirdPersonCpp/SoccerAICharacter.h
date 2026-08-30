@@ -179,6 +179,10 @@ public:
 	// esta quieta y administrada por una reanudacion del MatchManager.
 	void PlayAIKickAnimationForRestart();
 
+	// True while an AI pass/shot montage owns the kick until its timed impact.
+	// The controller uses this to avoid issuing another tactical action mid-kick.
+	bool IsAIKickMontageActive() const;
+
 	void StartAIAutoPassToLocation(
 		const FVector& TargetLocation,
 		float HorizontalSpeed,
@@ -420,7 +424,111 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Animation")
 		float AIKickAnimationDuration = 0.45f;
 
+	// AI-only kick montage set. These intentionally remain separate from the
+	// human character configuration so both systems can evolve independently.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* RunningLeftLegPassMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* RunningLeftLegSidePassMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* RunningRightLegPassMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* RunningRightLegSidePassMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* StandLeftLegPassMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* StandLeftLegSidePassMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* StandRightLegPassMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* StandRightLegSidePassMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* StrikeLeftLegForwardJogMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations")
+		UAnimMontage* StrikeRightLegForwardJogMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Selection")
+		float AIShortKickMaxDistance = 2000.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Selection")
+		float AILongKickMinDistance = 6000.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Selection")
+		float AISideKickMinAngleDegrees = 45.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Selection")
+		float AIRunningKickMinSpeed = 120.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Selection")
+		float AIForcedLongAnglePassSpeed = 1300.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
+		float AIPassKickImpactDelay = 0.25f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
+		float AIStrikeKickImpactDelay = 0.35f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
+		float AIKickAnimationFinishExtraDelay = 0.05f;
+
+	// If another possession or animation moves the frozen ball this far before
+	// impact, the pending kick is cancelled instead of kicking a stolen ball.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
+		float AIPendingKickMaxBallDriftDistance = 80.0f;
+
+	UPROPERTY()
+		ASoccerBall* PendingAIKickBall = nullptr;
+
+	UAnimMontage* ActiveAIKickMontage = nullptr;
+
+	FVector PendingAIKickTarget = FVector::ZeroVector;
+	FVector PendingAIKickStartBallLocation = FVector::ZeroVector;
+
+	float PendingAIKickHorizontalSpeed = 0.0f;
+	float PendingAIKickMinTravelTime = 0.0f;
+	float PendingAIKickMaxTravelTime = 0.0f;
+
+	bool bAIKickMontageActive = false;
+	bool bPendingAIKickUsesAirTarget = false;
+	bool bPendingAIKickHasImpactedBall = false;
+
+	FTimerHandle AIKickImpactTimerHandle;
+	FTimerHandle AIKickFinishTimerHandle;
+
 	void StartAIKickAnimation();
+
+	UAnimMontage* SelectAIKickMontageForTarget(
+		const FVector& TargetLocation,
+		float& OutHorizontalSpeed
+	) const;
+
+	bool StartAIKickMontage(
+		UAnimMontage* KickMontage,
+		const FVector& TargetLocation,
+		float HorizontalSpeed,
+		float MinTravelTime,
+		float MaxTravelTime,
+		bool bUseAirTarget
+	);
+
+	float GetAIKickImpactDelayForMontage(
+		UAnimMontage* KickMontage,
+		float MontageDuration
+	) const;
+
+	void PerformPendingAIKickImpact();
+	void FinishPendingAIKickAnimation();
+	void CancelPendingAIKickAnimation(bool bReleaseFrozenBall);
+	bool ShouldCancelPendingAIKickAnimation() const;
 
 	bool TryStartAIDribbleTurnAutoPassToLocation(
 		const FVector& TargetLocation,
