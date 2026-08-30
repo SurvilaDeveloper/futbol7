@@ -9587,8 +9587,13 @@ void ASoccerMatchManager::RecalculateGoalLineRestartGeometry()
 	GoalLineRestart.ReceiverMoveLocation =
 		BuildGoalLineRestartReceiverMoveLocation();
 
+	const FVector ExecutionReceiverLocation =
+		GetActiveRestartExecutionTargetLocation(
+			GoalLineRestart.ReceiverMoveLocation
+		);
+
 	GoalLineRestart.KickDirection =
-		GoalLineRestart.ReceiverMoveLocation -
+		ExecutionReceiverLocation -
 		GoalLineRestart.BallLocation;
 	GoalLineRestart.KickDirection.Z = 0.0f;
 
@@ -10019,6 +10024,16 @@ void ASoccerMatchManager::CompleteGoalLineRestart()
 		GoalLineRestart.RestartType;
 	ASoccerAICharacter* CompletedTaker = GoalLineRestart.TakerAI;
 	ASoccerAICharacter* CompletedReceiver = GoalLineRestart.ReceiverAI;
+	ASoccerCharacterBase* CompletedExecutionReceiver =
+		GetActiveRestartExecutionReceiver();
+	const bool bPassWasIntendedForHuman =
+		IsActiveRestartExecutionReceiverHuman();
+
+	FVector TargetLocation =
+		GetActiveRestartExecutionTargetLocation(
+			CompletedReceiver->GetActorLocation()
+		);
+	TargetLocation.Z = SoccerBall->GetActorLocation().Z;
 
 	MatchPlayState = ESoccerMatchPlayState::Playing;
 
@@ -10037,9 +10052,6 @@ void ASoccerMatchManager::CompleteGoalLineRestart()
 	ClearPendingOffsideSnapshot();
 	StartNoRetouchRestriction(CompletedTaker);
 	StartAttackRunReleaseForTeam(GoalLineRestart.RestartTeam);
-
-	FVector TargetLocation = CompletedReceiver->GetActorLocation();
-	TargetLocation.Z = SoccerBall->GetActorLocation().Z;
 
 	FVector FacingDirection = TargetLocation - CompletedTaker->GetActorLocation();
 	FacingDirection.Z = 0.0f;
@@ -10075,6 +10087,15 @@ void ASoccerMatchManager::CompleteGoalLineRestart()
 	PossessingCharacter = nullptr;
 	PossessionTeam = ESoccerPossessionTeam::None;
 	ClearAssignedAI();
+
+	if (bPassWasIntendedForHuman && IsValid(CompletedExecutionReceiver))
+	{
+		RegisterOpenPlayPassIntent(
+			CompletedTaker,
+			CompletedExecutionReceiver,
+			TargetLocation
+		);
+	}
 
 	if (CompletedType == ESoccerGoalLineRestartType::CornerKick)
 	{
@@ -12468,6 +12489,7 @@ void ASoccerMatchManager::BeginRestartContext(
 {
 	DestroyActiveRestartHumanRestrictionIndicator();
 	ResetActiveRestartRestrictionRecovery();
+	ClearActiveRestartExecutionReceiver();
 
 	bRestartContextActive = RestartType != ESoccerRestartType::None;
 	ActiveRestartType = RestartType;
@@ -12486,6 +12508,7 @@ void ASoccerMatchManager::EndRestartContext()
 {
 	DestroyActiveRestartHumanRestrictionIndicator();
 	ResetActiveRestartRestrictionRecovery();
+	ClearActiveRestartExecutionReceiver();
 	ResetKickoffRunUpState();
 	FreeKickRestart.ResetRuntime(*this);
 	GoalLineRestart.ResetGoalKickFinalRunRuntime(*this);
@@ -19551,6 +19574,247 @@ float ASoccerMatchManager::ScoreAttackPassOption(
 	}
 
 	return Score;
+}
+
+float ASoccerMatchManager::ScoreRestartPassReceiverCandidate(
+	ESoccerTeam RestartTeam,
+	const ASoccerAICharacter* TakerAI,
+	const ASoccerCharacterBase* Receiver,
+	const FVector& TargetLocation,
+	bool bAerialPass
+) const
+{
+	if (
+		!IsValid(TakerAI) ||
+		!IsValid(Receiver) ||
+		Receiver == TakerAI ||
+		Receiver->GetTeam() != RestartTeam ||
+		Receiver->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper ||
+		!CanCharacterBePassReceiverNow(TakerAI, Receiver)
+	)
+	{
+		return -TNumericLimits<float>::Max();
+	}
+
+	const FVector PassStartLocation = IsValid(SoccerBall)
+		? SoccerBall->GetActorLocation()
+		: TakerAI->GetActorLocation();
+
+	const float PassDistance = FVector::Dist2D(
+		PassStartLocation,
+		TargetLocation
+	);
+
+	const float MinimumDistance =
+		FMath::Max(0.0f, RestartReceiverMinimumPassDistance);
+	const float MaximumDistance =
+		FMath::Max(MinimumDistance + 1.0f, RestartReceiverMaximumPassDistance);
+
+	if (PassDistance < MinimumDistance || PassDistance > MaximumDistance)
+	{
+		return -TNumericLimits<float>::Max();
+	}
+
+	const int32 CriticalOpponents = CountOpponentsAroundLocation(
+		RestartTeam,
+		TargetLocation,
+		FMath::Max(0.0f, RestartReceiverCriticalOpponentRadius)
+	);
+
+	if (CriticalOpponents > 0)
+	{
+		return -TNumericLimits<float>::Max();
+	}
+
+	const int32 OpponentsNearReceiver = CountOpponentsAroundLocation(
+		RestartTeam,
+		TargetLocation,
+		FMath::Max(0.0f, RestartReceiverOpponentPressureRadius)
+	);
+
+	const float LaneHalfWidth = bAerialPass
+		? RestartReceiverAerialLaneHalfWidth
+		: RestartReceiverGroundLaneHalfWidth;
+
+	const bool bLaneBlocked = IsOpponentBlockingLaneBetweenLocations(
+		RestartTeam,
+		PassStartLocation,
+		TargetLocation,
+		FMath::Max(0.0f, LaneHalfWidth)
+	);
+
+	// A clearly occupied ground lane is not an acceptable autonomous restart
+	// pass. Aerial restarts can clear a narrow blocker, but still pay a penalty.
+	if (bLaneBlocked && !bAerialPass)
+	{
+		return -TNumericLimits<float>::Max();
+	}
+
+	const float DistanceAlpha = FMath::Clamp(
+		(PassDistance - MinimumDistance) /
+		FMath::Max(1.0f, MaximumDistance - MinimumDistance),
+		0.0f,
+		1.0f
+	);
+
+	const float StartDepthAlpha = GetAttackDepthAlphaForLocation(
+		PassStartLocation,
+		RestartTeam
+	);
+	const float TargetDepthAlpha = GetAttackDepthAlphaForLocation(
+		TargetLocation,
+		RestartTeam
+	);
+	const float ProgressAlpha = TargetDepthAlpha - StartDepthAlpha;
+
+	float Score = 1000.0f;
+	Score += ProgressAlpha * 350.0f;
+	Score -= DistanceAlpha * 180.0f;
+	Score -= OpponentsNearReceiver * 240.0f;
+
+	if (bLaneBlocked)
+	{
+		Score -= 140.0f;
+	}
+
+	const int32 NearbyTeammates = CountTeammatesAroundLocation(
+		RestartTeam,
+		TargetLocation,
+		520.0f,
+		TakerAI,
+		Receiver
+	);
+	Score -= NearbyTeammates * 55.0f;
+
+	switch (Receiver->GetPlayerRole())
+	{
+	case ESoccerPlayerRole::Forward:
+		Score += 70.0f;
+		break;
+	case ESoccerPlayerRole::Midfielder:
+		Score += 50.0f;
+		break;
+	case ESoccerPlayerRole::Defender:
+		Score += 20.0f;
+		break;
+	default:
+		break;
+	}
+
+	return Score;
+}
+
+void ASoccerMatchManager::SelectActiveRestartExecutionReceiver(
+	ESoccerTeam RestartTeam,
+	ASoccerAICharacter* TakerAI,
+	ASoccerAICharacter* PlannedReceiverAI,
+	bool bAerialPass
+)
+{
+	// The decision is frozen for the whole execution, including a missed run-up
+	// retry. A new restart clears this runtime selection in BeginRestartContext.
+	if (IsValid(ActiveRestartExecutionReceiver))
+	{
+		return;
+	}
+
+	ActiveRestartExecutionReceiver = PlannedReceiverAI;
+	bActiveRestartExecutionReceiverIsHuman = false;
+
+	if (
+		!bEnableRestartHumanReceiverSelection ||
+		!IsValid(TakerAI) ||
+		!IsValid(PlannedReceiverAI)
+	)
+	{
+		return;
+	}
+
+	AThirdPersonCppCharacter* HumanReceiver =
+		FindHumanCharacterForTeam(RestartTeam);
+
+	if (
+		!IsValid(HumanReceiver) ||
+		HumanReceiver->GetTeam() != RestartTeam ||
+		HumanReceiver->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper ||
+		!CanCharacterBePassReceiverNow(TakerAI, HumanReceiver)
+	)
+	{
+		return;
+	}
+
+	const FVector PlannedTargetLocation = PlannedReceiverAI->GetActorLocation();
+	const FVector HumanTargetLocation = HumanReceiver->GetActorLocation();
+
+	const float PlannedScore = ScoreRestartPassReceiverCandidate(
+		RestartTeam,
+		TakerAI,
+		PlannedReceiverAI,
+		PlannedTargetLocation,
+		bAerialPass
+	);
+	const float HumanScore = ScoreRestartPassReceiverCandidate(
+		RestartTeam,
+		TakerAI,
+		HumanReceiver,
+		HumanTargetLocation,
+		bAerialPass
+	);
+
+	const float MinimumCandidateScore = RestartReceiverMinimumCandidateScore;
+	if (!FMath::IsFinite(HumanScore) || HumanScore < MinimumCandidateScore)
+	{
+		return;
+	}
+
+	const float HumanAdjustedScore =
+		HumanScore + FMath::Max(0.0f, RestartHumanReceiverPreferenceBonus);
+
+	if (FMath::IsFinite(PlannedScore) && HumanAdjustedScore < PlannedScore)
+	{
+		return;
+	}
+
+	const float SelectionChance = FMath::Clamp(
+		RestartHumanReceiverSelectionChance,
+		0.0f,
+		1.0f
+	);
+
+	if (FMath::FRand() > SelectionChance)
+	{
+		return;
+	}
+
+	ActiveRestartExecutionReceiver = HumanReceiver;
+	bActiveRestartExecutionReceiverIsHuman = true;
+
+	ASoccerDebugManager::Message(
+		this,
+		ESoccerDebugCategory::Restarts,
+		TEXT("RESTART: humano elegido como receptor"),
+		FColor::Cyan
+	);
+}
+
+FVector ASoccerMatchManager::GetActiveRestartExecutionTargetLocation(
+	const FVector& FallbackLocation
+) const
+{
+	if (!IsValid(ActiveRestartExecutionReceiver))
+	{
+		return FallbackLocation;
+	}
+
+	FVector TargetLocation = ActiveRestartExecutionReceiver->GetActorLocation();
+	TargetLocation.Z = FallbackLocation.Z;
+	return TargetLocation;
+}
+
+void ASoccerMatchManager::ClearActiveRestartExecutionReceiver()
+{
+	ActiveRestartExecutionReceiver = nullptr;
+	bActiveRestartExecutionReceiverIsHuman = false;
 }
 
 bool ASoccerMatchManager::FindBestAttackPassOption(

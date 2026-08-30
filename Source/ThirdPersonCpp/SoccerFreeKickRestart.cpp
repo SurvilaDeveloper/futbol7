@@ -421,13 +421,20 @@ void FSoccerFreeKickRestart::Complete(ASoccerMatchManager& Manager)
 	const ESoccerRestartType CompletedRestartType = RestartType;
 	ASoccerAICharacter* CompletedTaker = TakerAI;
 	ASoccerAICharacter* CompletedReceiver = ReceiverAI;
+	ASoccerCharacterBase* CompletedExecutionReceiver =
+		Manager.GetActiveRestartExecutionReceiver();
+	const bool bPassWasIntendedForHuman =
+		Manager.IsActiveRestartExecutionReceiverHuman();
+
+	FVector PassTargetLocation =
+		Manager.GetActiveRestartExecutionTargetLocation(
+			CompletedReceiver->GetActorLocation()
+		);
+	PassTargetLocation.Z = Manager.SoccerBall->GetActorLocation().Z;
 
 	Manager.EndRestartContext();
 	Manager.StartNoRetouchRestriction(CompletedTaker);
 	Manager.StartAttackRunReleaseForTeam(CompletedTaker->GetTeam());
-
-	FVector PassTargetLocation = CompletedReceiver->GetActorLocation();
-	PassTargetLocation.Z = Manager.SoccerBall->GetActorLocation().Z;
 
 	CompletedTaker->PlayAIKickAnimationForRestart();
 	Manager.SoccerBall->KickToTarget(
@@ -439,6 +446,15 @@ void FSoccerFreeKickRestart::Complete(ASoccerMatchManager& Manager)
 
 	ResetRuntime(Manager);
 	Manager.ClearAssignedAI();
+
+	if (bPassWasIntendedForHuman && IsValid(CompletedExecutionReceiver))
+	{
+		Manager.RegisterOpenPlayPassIntent(
+			CompletedTaker,
+			CompletedExecutionReceiver,
+			PassTargetLocation
+		);
+	}
 
 	ASoccerDebugManager::Message(
 		&Manager,
@@ -1301,8 +1317,18 @@ void FSoccerFreeKickRestart::BeginFinalRun(ASoccerMatchManager& Manager)
 	bHumanTakerClaimed = false;
 	bHumanExecutionAuthorized = false;
 
+	Manager.SelectActiveRestartExecutionReceiver(
+		RestartTeam,
+		TakerAI,
+		ReceiverAI,
+		false
+	);
+
 	const FVector BallLocation = Manager.SoccerBall->GetActorLocation();
-	const FVector ReceiverTargetLocation = BuildReceiverMoveLocation(Manager);
+	const FVector ReceiverTargetLocation =
+		Manager.GetActiveRestartExecutionTargetLocation(
+			BuildReceiverMoveLocation(Manager)
+		);
 	KickDirection = ReceiverTargetLocation - BallLocation;
 	KickDirection.Z = 0.0f;
 

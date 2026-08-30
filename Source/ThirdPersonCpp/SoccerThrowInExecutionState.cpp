@@ -2,6 +2,7 @@
 
 #include "SoccerMatchManager.h"
 #include "SoccerAICharacter.h"
+#include "SoccerCharacterBase.h"
 #include "SoccerBall.h"
 #include "SoccerDebugManager.h"
 #include "Engine/Engine.h"
@@ -36,6 +37,13 @@ bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 	Manager.PossessionTeam =
 		Manager.ConvertTeamToPossessionTeam(Manager.ThrowInTeam);
 
+	Manager.SelectActiveRestartExecutionReceiver(
+		Manager.ThrowInTeam,
+		Manager.ThrowInTakerAI,
+		Manager.ThrowInReceiverAI,
+		true
+	);
+
 	Manager.bThrowInExecutionActive = true;
 	Manager.bThrowInBallReleased = false;
 	Manager.bThrowInReturningToField = false;
@@ -59,12 +67,12 @@ bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 	{
 		// No montage: release immediately using the same rules as the normal
 		// release frame, then let Playing own the accessory return-to-field.
-		FVector TargetLocation = Manager.ThrowInReceiverMoveLocation;
-
-		if (IsValid(Manager.ThrowInReceiverAI))
-		{
-			TargetLocation = Manager.ThrowInReceiverAI->GetActorLocation();
-		}
+		FVector TargetLocation =
+			Manager.GetActiveRestartExecutionTargetLocation(
+				IsValid(Manager.ThrowInReceiverAI)
+				? Manager.ThrowInReceiverAI->GetActorLocation()
+				: Manager.ThrowInReceiverMoveLocation
+			);
 
 		TargetLocation.Z = Manager.SoccerBall->GetActorLocation().Z;
 
@@ -75,6 +83,11 @@ bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 			Manager.CancelThrowInRestart();
 			return false;
 		}
+
+		ASoccerCharacterBase* CompletedExecutionReceiver =
+			Manager.GetActiveRestartExecutionReceiver();
+		const bool bPassWasIntendedForHuman =
+			Manager.IsActiveRestartExecutionReceiverHuman();
 
 		Manager.EndRestartContext();
 		Manager.ClearPendingOffsideSnapshot();
@@ -100,6 +113,16 @@ bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 		Manager.PossessionTeam = ESoccerPossessionTeam::None;
 		Manager.MatchPlayState = ESoccerMatchPlayState::Playing;
 		Manager.ClearAssignedAI();
+
+		if (bPassWasIntendedForHuman && IsValid(CompletedExecutionReceiver))
+		{
+			Manager.RegisterOpenPlayPassIntent(
+				Manager.ThrowInTakerAI,
+				CompletedExecutionReceiver,
+				TargetLocation
+			);
+		}
+
 		// Playing may resume immediately, but the throw-in montage is allowed to
 		// finish before return-to-field locomotion begins. Keep curve motion alive
 		// so the remaining in-place animation displacement is still reproduced.
@@ -181,12 +204,12 @@ void FSoccerThrowInExecutionState::Tick(
 		return;
 	}
 
-	FVector TargetLocation = Manager.ThrowInReceiverMoveLocation;
-
-	if (IsValid(Manager.ThrowInReceiverAI))
-	{
-		TargetLocation = Manager.ThrowInReceiverAI->GetActorLocation();
-	}
+	FVector TargetLocation =
+		Manager.GetActiveRestartExecutionTargetLocation(
+			IsValid(Manager.ThrowInReceiverAI)
+			? Manager.ThrowInReceiverAI->GetActorLocation()
+			: Manager.ThrowInReceiverMoveLocation
+		);
 
 	TargetLocation.Z = Manager.SoccerBall->GetActorLocation().Z;
 
@@ -196,6 +219,11 @@ void FSoccerThrowInExecutionState::Tick(
 	{
 		return;
 	}
+
+	ASoccerCharacterBase* CompletedExecutionReceiver =
+		Manager.GetActiveRestartExecutionReceiver();
+	const bool bPassWasIntendedForHuman =
+		Manager.IsActiveRestartExecutionReceiverHuman();
 
 	Manager.EndRestartContext();
 
@@ -222,6 +250,16 @@ void FSoccerThrowInExecutionState::Tick(
 	Manager.PossessionTeam = ESoccerPossessionTeam::None;
 	Manager.MatchPlayState = ESoccerMatchPlayState::Playing;
 	Manager.ClearAssignedAI();
+
+	if (bPassWasIntendedForHuman && IsValid(CompletedExecutionReceiver))
+	{
+		Manager.RegisterOpenPlayPassIntent(
+			Manager.ThrowInTakerAI,
+			CompletedExecutionReceiver,
+			TargetLocation
+		);
+	}
+
 	// Do not start Jog locomotion while throw_in_in_place is still playing.
 	// The Playing-state accessory updater finishes montage curve motion first.
 	Manager.bThrowInReturningToField = true;

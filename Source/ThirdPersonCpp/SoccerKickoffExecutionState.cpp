@@ -2,6 +2,7 @@
 
 #include "SoccerMatchManager.h"
 #include "SoccerAICharacter.h"
+#include "SoccerCharacterBase.h"
 #include "SoccerBall.h"
 #include "SoccerDebugManager.h"
 #include "Engine/Engine.h"
@@ -62,10 +63,22 @@ void FSoccerKickoffExecutionState::Tick(
 		const FVector BallLocation =
 			Manager.SoccerBall->GetActorLocation();
 
+		Manager.SelectActiveRestartExecutionReceiver(
+			Manager.PendingKickoffTeam,
+			Manager.KickoffTakerAI,
+			Manager.KickoffReceiverAI,
+			false
+		);
+
+		const FVector ExecutionReceiverLocation =
+			Manager.GetActiveRestartExecutionTargetLocation(
+				Manager.KickoffReceiverAI->GetActorLocation()
+			);
+
 		// Pass direction and run geometry remain separate: the taker can run
 		// through the ball while the pass is aimed at the selected receiver.
 		Manager.KickoffKickDirection =
-			Manager.KickoffReceiverAI->GetActorLocation() - BallLocation;
+			ExecutionReceiverLocation - BallLocation;
 		Manager.KickoffKickDirection.Z = 0.0f;
 
 		if (!Manager.KickoffKickDirection.Normalize())
@@ -133,7 +146,9 @@ void FSoccerKickoffExecutionState::Tick(
 	}
 
 	FVector PassTargetLocation =
-		Manager.KickoffReceiverAI->GetActorLocation();
+		Manager.GetActiveRestartExecutionTargetLocation(
+			Manager.KickoffReceiverAI->GetActorLocation()
+		);
 	PassTargetLocation.Z =
 		Manager.SoccerBall->GetActorLocation().Z;
 
@@ -152,6 +167,10 @@ void FSoccerKickoffExecutionState::Tick(
 
 	ASoccerAICharacter* CompletedTaker =
 		Manager.KickoffTakerAI;
+	ASoccerCharacterBase* CompletedExecutionReceiver =
+		Manager.GetActiveRestartExecutionReceiver();
+	const bool bPassWasIntendedForHuman =
+		Manager.IsActiveRestartExecutionReceiverHuman();
 
 	Manager.EndRestartContext();
 
@@ -163,6 +182,15 @@ void FSoccerKickoffExecutionState::Tick(
 
 	Manager.MatchPlayState = ESoccerMatchPlayState::Playing;
 	Manager.ClearAssignedAI();
+
+	if (bPassWasIntendedForHuman && IsValid(CompletedExecutionReceiver))
+	{
+		Manager.RegisterOpenPlayPassIntent(
+			CompletedTaker,
+			CompletedExecutionReceiver,
+			PassTargetLocation
+		);
+	}
 
 	if (GEngine)
 	{

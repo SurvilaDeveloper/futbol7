@@ -21,6 +21,17 @@ bool FSoccerGoalKickExecutionState::Enter(ASoccerMatchManager& Manager)
 		return false;
 	}
 
+	Manager.SelectActiveRestartExecutionReceiver(
+		Manager.GoalLineRestart.GetRestartTeam(),
+		Taker,
+		Manager.GoalLineRestart.GetReceiver(),
+		true
+	);
+
+	// Preparation keeps using the tactical ReceiverAI. Recalculate only the
+	// execution-facing geometry so the kick can now point at the human.
+	Manager.RecalculateGoalLineRestartGeometry();
+
 	FVector RunDirection = FVector::ForwardVector;
 	FVector RunThroughLocation = FVector::ZeroVector;
 

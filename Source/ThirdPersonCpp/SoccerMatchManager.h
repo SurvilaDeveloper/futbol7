@@ -1171,6 +1171,40 @@ bool IsPenaltyMatchStateActive() const;
 		bool bPassToSpace
 	) const;
 
+	// Stage 3: the tactical ReceiverAI remains responsible for preparation.
+	// At execution time a bot may instead choose the human as the real pass
+	// receiver when that option is safe and competitive with the planned bot.
+	float ScoreRestartPassReceiverCandidate(
+		ESoccerTeam RestartTeam,
+		const ASoccerAICharacter* TakerAI,
+		const ASoccerCharacterBase* Receiver,
+		const FVector& TargetLocation,
+		bool bAerialPass
+	) const;
+
+	void SelectActiveRestartExecutionReceiver(
+		ESoccerTeam RestartTeam,
+		ASoccerAICharacter* TakerAI,
+		ASoccerAICharacter* PlannedReceiverAI,
+		bool bAerialPass
+	);
+
+	FVector GetActiveRestartExecutionTargetLocation(
+		const FVector& FallbackLocation
+	) const;
+
+	ASoccerCharacterBase* GetActiveRestartExecutionReceiver() const
+	{
+		return ActiveRestartExecutionReceiver;
+	}
+
+	bool IsActiveRestartExecutionReceiverHuman() const
+	{
+		return bActiveRestartExecutionReceiverIsHuman;
+	}
+
+	void ClearActiveRestartExecutionReceiver();
+
 	FVector BuildHumanRequestedPassTargetLocation(
 		const ASoccerAICharacter* Passer,
 		const AThirdPersonCppCharacter* RequestingHuman,
@@ -2098,6 +2132,43 @@ bool IsPenaltyMatchStateActive() const;
 		TSubclassOf<ASoccerRestartRadiusActor>
 			RestartHumanRestrictionIndicatorActorClass;
 
+	// ============================================================
+	// RESTART RECEIVER SELECTION - STAGE 3
+	// ============================================================
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection")
+		bool bEnableRestartHumanReceiverSelection = true;
+
+	// A good human option is not forced every time. This probability is rolled
+	// once when the bot commits to the restart execution.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float RestartHumanReceiverSelectionChance = 0.40f;
+
+	// Small preference that lets the human win close comparisons without
+	// overriding a clearly safer/better planned AI receiver.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection", meta = (ClampMin = "0.0"))
+		float RestartHumanReceiverPreferenceBonus = 90.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection", meta = (ClampMin = "0.0"))
+		float RestartReceiverMinimumPassDistance = 220.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection", meta = (ClampMin = "1.0"))
+		float RestartReceiverMaximumPassDistance = 4200.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection", meta = (ClampMin = "0.0"))
+		float RestartReceiverCriticalOpponentRadius = 145.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection", meta = (ClampMin = "0.0"))
+		float RestartReceiverOpponentPressureRadius = 360.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection", meta = (ClampMin = "0.0"))
+		float RestartReceiverGroundLaneHalfWidth = 245.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection", meta = (ClampMin = "0.0"))
+		float RestartReceiverAerialLaneHalfWidth = 140.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection")
+		float RestartReceiverMinimumCandidateScore = 420.0f;
 
 	bool bRestartContextActive = false;
 	ESoccerRestartType ActiveRestartType = ESoccerRestartType::None;
@@ -2112,6 +2183,13 @@ bool IsPenaltyMatchStateActive() const;
 	TMap<ASoccerAICharacter*, FVector>
 		ActiveRestartEmergencyTargetLocations;
 	TSet<ASoccerAICharacter*> ActiveRestartEmergencyAssistedBots;
+
+	// Real receiver chosen for the execution only. ReceiverAI fields elsewhere
+	// remain untouched so bot preparation/positioning keeps its existing plan.
+	UPROPERTY()
+		ASoccerCharacterBase* ActiveRestartExecutionReceiver = nullptr;
+
+	bool bActiveRestartExecutionReceiverIsHuman = false;
 
 	UPROPERTY()
 		ASoccerRestartRadiusActor* ActiveRestartHumanRestrictionActor = nullptr;
