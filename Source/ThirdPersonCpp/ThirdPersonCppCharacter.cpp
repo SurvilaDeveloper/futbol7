@@ -2256,8 +2256,20 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 		SoccerControlState = ESoccerPlayerControlState::Manual;
 	}
 
-	if (bWasKickOrDribbleTurn)
+	if (bWasKickOrDribbleTurn && !IsTackleFallReactionActive())
 	{
+		/*
+		 * Restart cleanup may run synchronously in the same frame in which a
+		 * tackle victim starts its fall reaction. StopAnimMontage() without a
+		 * montage argument stops every montage on the human, including the fall
+		 * montage that ASoccerCharacterBase has just started. Bots do not pass
+		 * through this human-only cleanup, which made the symptom look as if the
+		 * human never received the fall reaction.
+		 *
+		 * The kick/dribble timers and gameplay state have already been cleared
+		 * above, so while a tackle fall owns the character we deliberately leave
+		 * montage playback alone and let UpdateTackleFallReaction() finish it.
+		 */
 		StopAnimMontage();
 	}
 

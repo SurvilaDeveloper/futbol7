@@ -1697,14 +1697,21 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Navigation Recovery")
 		float NavigationRecoveryOnMeshTolerance = 10.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|AI Navigation Recovery")
+	// Cuando el personaje quedo fuera de las lineas, no alcanza con volver al
+	// borde del NavMesh: el objetivo se coloca esta distancia dentro del campo.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Navigation Recovery", meta = (ClampMin = "0.0"))
+		float NavigationRecoveryFieldReentryInset = 120.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Navigation Recovery", meta = (ClampMin = "1.0"))
 		float NavigationRecoveryManualMoveSpeed = 500.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|AI Navigation Recovery")
-		float NavigationRecoveryEmergencyTeleportDelay = 1.50f;
+	// Ultimo recurso. La reincorporacion normal siempre intenta entrar
+	// caminando/corriendo; solo despues de varios segundos se permite teleport.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Navigation Recovery", meta = (ClampMin = "0.0"))
+		float NavigationRecoveryEmergencyTeleportDelay = 3.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|AI Navigation Recovery")
-		float NavigationRecoveryEmergencyTeleportMaxDistance = 650.0f;
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Navigation Recovery", meta = (ClampMin = "0.0"))
+		float NavigationRecoveryEmergencyTeleportMaxDistance = 1500.0f;
 
 
 	bool bNavigationRecoveryActive = false;

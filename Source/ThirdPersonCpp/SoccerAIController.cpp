@@ -1718,9 +1718,27 @@ bool ASoccerAIController::TryRecoverPawnToNavigation(
 		)
 		: BIG_NUMBER;
 
+	const ASoccerField* SoccerField =
+		IsValid(MatchManager)
+		? MatchManager->GetSoccerField()
+		: nullptr;
+
+	const bool bOutsidePitch =
+		IsValid(SoccerField) &&
+		!SoccerField->IsWorldLocationInsidePitch(CurrentLocation);
+
+	/*
+	 * Estar a pocos centimetros de un poligono no significa necesariamente
+	 * que la capsula ya tenga un inicio valido para path following. Esto era
+	 * especialmente fragil en la linea lateral: la proyeccion caia sobre el
+	 * borde, la recuperacion terminaba y el MoveTo siguiente podia volver a
+	 * fallar. Si el jugador sigue geometricamente fuera de la cancha, nunca
+	 * damos por finalizada la reincorporacion solo por esa tolerancia.
+	 */
 	if (
 		bProjectedCurrentLocation &&
-		DistanceToCurrentNavMesh <= NavigationRecoveryOnMeshTolerance
+		DistanceToCurrentNavMesh <= NavigationRecoveryOnMeshTolerance &&
+		!bOutsidePitch
 		)
 	{
 		ClearNavigationRecoveryState();
@@ -1732,7 +1750,51 @@ bool ASoccerAIController::TryRecoverPawnToNavigation(
 		FVector NewRecoveryTarget = FVector::ZeroVector;
 		bool bHasNewRecoveryTarget = false;
 
-		if (bProjectedCurrentLocation)
+		/*
+		 * Si la accion fisica/animacion termino fuera de las lineas, preferimos
+		 * un punto claramente INTERIOR al terreno y no el poligono mas cercano.
+		 * ClampWorldLocationInsidePitch conserva, en lo posible, la coordenada
+		 * paralela a la linea por la que salio: un jugador que cae por un lateral
+		 * vuelve a entrar practicamente por el mismo lugar.
+		 */
+		if (bOutsidePitch && IsValid(SoccerField))
+		{
+			const float SafeReentryInset = FMath::Max(
+				NavigationRecoveryFieldReentryInset,
+				NavigationRecoveryOnMeshTolerance * 2.0f
+			);
+
+			FVector FieldReentryTarget =
+				SoccerField->ClampWorldLocationInsidePitch(
+					CurrentLocation,
+					SafeReentryInset
+				);
+			FieldReentryTarget.Z = CurrentLocation.Z;
+
+			FNavLocation ProjectedFieldReentryTarget;
+			if (
+				NavigationSystem->ProjectPointToNavigation(
+					FieldReentryTarget,
+					ProjectedFieldReentryTarget,
+					ProjectionExtent
+				)
+				)
+			{
+				NewRecoveryTarget =
+					ProjectedFieldReentryTarget.Location;
+				NewRecoveryTarget.Z = CurrentLocation.Z;
+				bHasNewRecoveryTarget = true;
+			}
+			else
+			{
+				// El clamp ya esta dentro de la geometria reglamentaria. Mantenerlo
+				// como destino manual permite que el failsafe siga teniendo un punto
+				// seguro incluso si Recast tarda un frame en devolver la proyeccion.
+				NewRecoveryTarget = FieldReentryTarget;
+				bHasNewRecoveryTarget = true;
+			}
+		}
+		else if (bProjectedCurrentLocation)
 		{
 			NewRecoveryTarget = ProjectedCurrentLocation.Location;
 			bHasNewRecoveryTarget = true;
@@ -1772,7 +1834,9 @@ bool ASoccerAIController::TryRecoverPawnToNavigation(
 				-1,
 				1.5f,
 				FColor::Yellow,
-				TEXT("AI fuera del NavMesh: iniciando reincorporacion")
+				bOutsidePitch
+				? TEXT("AI fuera del campo: reincorporacion controlada")
+				: TEXT("AI fuera del NavMesh: iniciando reincorporacion")
 			);
 		}
 	}
@@ -1835,7 +1899,7 @@ bool ASoccerAIController::TryRecoverPawnToNavigation(
 				-1,
 				1.5f,
 				FColor::Orange,
-				TEXT("AI reincorporada al NavMesh mediante recuperacion de emergencia")
+				TEXT("AI reincorporada al campo mediante recuperacion de emergencia")
 			);
 		}
 
@@ -1854,17 +1918,39 @@ bool ASoccerAIController::TryRecoverPawnToNavigation(
 
 	NavigationRecoveryLastUpdateTime = CurrentTime;
 
+	const float RecoverySpeed =
+		FMath::Max(1.0f, NavigationRecoveryManualMoveSpeed);
+
 	const float RecoveryStep = FMath::Min(
 		DistanceToRecoveryTarget,
-		FMath::Max(1.0f, NavigationRecoveryManualMoveSpeed) *
-			RecoveryDeltaTime
+		RecoverySpeed * RecoveryDeltaTime
 	);
+
+	const FVector PreviousLocation = CurrentLocation;
 
 	SoccerCharacter->SetActorLocation(
 		CurrentLocation + RecoveryDirection * RecoveryStep,
 		true,
 		nullptr,
 		ETeleportType::None
+	);
+
+	const FVector ActualLocation = SoccerCharacter->GetActorLocation();
+	FVector ActualScriptedVelocity =
+		RecoveryDeltaTime > KINDA_SMALL_NUMBER
+		? (ActualLocation - PreviousLocation) / RecoveryDeltaTime
+		: FVector::ZeroVector;
+	ActualScriptedVelocity.Z = 0.0f;
+
+	/*
+	 * SetActorLocation no alimenta CharacterMovement::Velocity. Publicar la
+	 * velocidad real de esta fase evita que el Animation Blueprint muestre
+	 * idle mientras el jugador esta volviendo a la cancha.
+	 */
+	SoccerCharacter->SetScriptedLocomotionVelocity(
+		ActualScriptedVelocity,
+		ESoccerAIMovementMode::Jog,
+		ESoccerAIMovementReason::NearbyReposition
 	);
 
 	if (!RecoveryDirection.IsNearlyZero())
@@ -1889,10 +1975,21 @@ bool ASoccerAIController::TryRecoverPawnToNavigation(
 
 void ASoccerAIController::ClearNavigationRecoveryState()
 {
+	const bool bWasRecoveryActive = bNavigationRecoveryActive;
+
 	bNavigationRecoveryActive = false;
 	NavigationRecoveryTarget = FVector::ZeroVector;
 	NavigationRecoveryStartTime = -1000.0f;
 	NavigationRecoveryLastUpdateTime = -1000.0f;
+
+	if (bWasRecoveryActive)
+	{
+		if (ASoccerAICharacter* SoccerCharacter =
+			Cast<ASoccerAICharacter>(GetPawn()))
+		{
+			SoccerCharacter->ClearScriptedLocomotionVelocity();
+		}
+	}
 }
 
 void ASoccerAIController::ReturnToHomePosition()
