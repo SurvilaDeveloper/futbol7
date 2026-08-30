@@ -3287,6 +3287,23 @@ float ASoccerCharacterBase::GetSoccerForcedDribbleTurnLocomotionSpeed() const
 	return SoccerForcedDribbleTurnLocomotionSpeed;
 }
 
+void ASoccerCharacterBase::ApplyInstantReplayVisualState(
+	bool bInPossessingBall,
+	bool bInChasingBall,
+	bool bInKicking,
+	bool bInForceDribbleTurnLocomotion,
+	float InForcedDribbleTurnLocomotionSpeed
+)
+{
+	bSoccerIsPossessingBall = bInPossessingBall;
+	bSoccerIsChasingBall = bInChasingBall;
+	bSoccerIsKicking = bInKicking;
+	bSoccerShouldForceDribbleTurnLocomotion =
+		bInForceDribbleTurnLocomotion;
+	SoccerForcedDribbleTurnLocomotionSpeed =
+		FMath::Max(0.0f, InForcedDribbleTurnLocomotionSpeed);
+}
+
 bool ASoccerCharacterBase::FindBestAerialInterceptionPlan(
     ASoccerBall* SoccerBall,
     ESoccerAerialActionIntent Intent,

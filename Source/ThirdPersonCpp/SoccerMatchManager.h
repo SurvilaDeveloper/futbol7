@@ -78,7 +78,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match")
 		ASoccerBall* GetSoccerBall() const;
 
-	/* Stage 1 instant-replay recorder. Playback is added in later stages. */
+	/* Instant-replay recorder/playback manager. */
 	ASoccerInstantReplayManager* GetInstantReplayManager() const;
 
 	// Stage 10C geometry authority. Gameplay resolves goals and restarts from
@@ -2425,6 +2425,9 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording", meta = (ClampMin = "5.0", ClampMax = "60.0", UIMin = "5.0", UIMax = "60.0"))
 		float InstantReplaySamplesPerSecond = 30.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Manual Playback", meta = (ClampMin = "1.0", ClampMax = "10.0", UIMin = "1.0", UIMax = "10.0"))
+		float InstantReplayManualPlaybackSeconds = 5.0f;
 
 	UPROPERTY()
 		ASoccerInstantReplayManager* InstantReplayManager = nullptr;

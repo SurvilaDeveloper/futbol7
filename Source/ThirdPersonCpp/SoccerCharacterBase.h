@@ -55,6 +55,19 @@ public:
 		float GetSoccerForcedDribbleTurnLocomotionSpeed() const;
 
 	/*
+	 * Instant replay writes only the visual animation flags that are already
+	 * sampled by the recorder. The live values are restored from the resume
+	 * frame before gameplay is unpaused.
+	 */
+	void ApplyInstantReplayVisualState(
+		bool bInPossessingBall,
+		bool bInChasingBall,
+		bool bInKicking,
+		bool bInForceDribbleTurnLocomotion,
+		float InForcedDribbleTurnLocomotionSpeed
+	);
+
+	/*
 	 * Calcula el tiempo aproximado que necesita este jugador para alcanzar
 	 * una ubicacion horizontal. Considera distancia, alcance, velocidad actual,
 	 * aceleracion, velocidad maxima y una penalizacion por giro.

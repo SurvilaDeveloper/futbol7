@@ -2,22 +2,27 @@
 
 #include "SoccerBall.h"
 #include "SoccerCharacterBase.h"
+#include "SoccerField.h"
 #include "SoccerMatchManager.h"
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
+#include "Components/InputComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
+#include "HAL/PlatformTime.h"
+#include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 
 ASoccerInstantReplayManager::ASoccerInstantReplayManager()
 {
     PrimaryActorTick.bCanEverTick = true;
-
-    /* Stage 2 will need the replay manager to keep ticking while gameplay is paused. */
     PrimaryActorTick.bTickEvenWhenPaused = true;
 }
 
@@ -28,13 +33,27 @@ void ASoccerInstantReplayManager::BeginPlay()
     RebuildRingBuffer();
     ResolveTrackedBallIfNeeded();
     RefreshTrackedCharacters();
+    TryBindManualReplayInput();
+}
+
+void ASoccerInstantReplayManager::EndPlay(
+    const EEndPlayReason::Type EndPlayReason
+)
+{
+    if (bReplayPlaying)
+    {
+        FinishManualReplay(false);
+    }
+
+    Super::EndPlay(EndPlayReason);
 }
 
 void ASoccerInstantReplayManager::InitializeRecorder(
     ASoccerMatchManager* InMatchManager,
     ASoccerBall* InSoccerBall,
     float InHistorySeconds,
-    float InSamplesPerSecond
+    float InSamplesPerSecond,
+    float InManualReplaySeconds
 )
 {
     MatchManager = InMatchManager;
@@ -42,11 +61,13 @@ void ASoccerInstantReplayManager::InitializeRecorder(
 
     ApplyRecorderConfiguration(
         InHistorySeconds,
-        InSamplesPerSecond
+        InSamplesPerSecond,
+        InManualReplaySeconds
     );
 
     ResolveTrackedBallIfNeeded();
     RefreshTrackedCharacters();
+    TryBindManualReplayInput();
 
     UE_LOG(
         LogTemp,
@@ -57,15 +78,24 @@ void ASoccerInstantReplayManager::InitializeRecorder(
         RingFrames.Num(),
         TrackedCharacters.Num()
     );
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("[InstantReplay] Manual replay: NumPad 8 plays the most recent %.1f seconds (press again to stop)."),
+        ManualReplaySeconds
+    );
 }
 
 void ASoccerInstantReplayManager::ApplyRecorderConfiguration(
     float InHistorySeconds,
-    float InSamplesPerSecond
+    float InSamplesPerSecond,
+    float InManualReplaySeconds
 )
 {
     HistorySeconds = FMath::Max(2.0f, InHistorySeconds);
     SamplesPerSecond = FMath::Clamp(InSamplesPerSecond, 5.0f, 60.0f);
+    ManualReplaySeconds = FMath::Clamp(InManualReplaySeconds, 1.0f, 10.0f);
 
     RebuildRingBuffer();
 }
@@ -166,7 +196,8 @@ void ASoccerInstantReplayManager::CopyRecentFrames(
     }
 
     const double NewestTime = RingFrames[NewestIndex].RecordingTimeSeconds;
-    const double EarliestRequestedTime = NewestTime - FMath::Max(0.0f, RequestedSeconds);
+    const double EarliestRequestedTime =
+        NewestTime - FMath::Max(0.0f, RequestedSeconds);
     const int32 Capacity = RingFrames.Num();
     const int32 OldestIndex = GetOldestFrameIndex();
 
@@ -177,14 +208,21 @@ void ASoccerInstantReplayManager::CopyRecentFrames(
 
     OutFrames.Reserve(ValidFrameCount);
 
-    for (int32 ChronologicalOffset = 0; ChronologicalOffset < ValidFrameCount; ++ChronologicalOffset)
+    for (
+        int32 ChronologicalOffset = 0;
+        ChronologicalOffset < ValidFrameCount;
+        ++ChronologicalOffset
+    )
     {
         const int32 FrameIndex =
             (OldestIndex + ChronologicalOffset) % Capacity;
 
         const FSoccerReplayFrame& Frame = RingFrames[FrameIndex];
 
-        if (Frame.RecordingTimeSeconds + KINDA_SMALL_NUMBER < EarliestRequestedTime)
+        if (
+            Frame.RecordingTimeSeconds + KINDA_SMALL_NUMBER <
+            EarliestRequestedTime
+        )
         {
             continue;
         }
@@ -196,6 +234,11 @@ void ASoccerInstantReplayManager::CopyRecentFrames(
 ASoccerBall* ASoccerInstantReplayManager::GetTrackedBall() const
 {
     return SoccerBall.Get();
+}
+
+bool ASoccerInstantReplayManager::IsReplayPlaying() const
+{
+    return bReplayPlaying;
 }
 
 int32 ASoccerInstantReplayManager::GetOldestFrameIndex() const
@@ -285,9 +328,65 @@ void ASoccerInstantReplayManager::RefreshTrackedCharacters()
     }
 }
 
+void ASoccerInstantReplayManager::TryBindManualReplayInput()
+{
+    if (bManualReplayInputBound)
+    {
+        return;
+    }
+
+    APlayerController* PlayerController =
+        UGameplayStatics::GetPlayerController(this, 0);
+
+    if (!IsValid(PlayerController))
+    {
+        return;
+    }
+
+    EnableInput(PlayerController);
+
+    if (InputComponent == nullptr)
+    {
+        return;
+    }
+
+    FInputKeyBinding& ReplayBinding = InputComponent->BindKey(
+        EKeys::NumPadEight,
+        IE_Pressed,
+        this,
+        &ASoccerInstantReplayManager::HandleManualReplayInput
+    );
+
+    ReplayBinding.bExecuteWhenPaused = true;
+    ReplayBinding.bConsumeInput = true;
+    bManualReplayInputBound = true;
+}
+
+void ASoccerInstantReplayManager::HandleManualReplayInput()
+{
+    if (bReplayPlaying)
+    {
+        StopManualReplay();
+        return;
+    }
+
+    StartManualReplay(ManualReplaySeconds);
+}
+
 void ASoccerInstantReplayManager::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
+
+    if (!bManualReplayInputBound)
+    {
+        TryBindManualReplayInput();
+    }
+
+    if (bReplayPlaying)
+    {
+        TickManualReplay();
+        return;
+    }
 
     if (!bRecordingEnabled || DeltaTime <= 0.0f)
     {
@@ -336,31 +435,18 @@ void ASoccerInstantReplayManager::Tick(float DeltaTime)
     CaptureFrame();
 }
 
-void ASoccerInstantReplayManager::CaptureFrame()
+void ASoccerInstantReplayManager::CaptureCurrentWorldFrame(
+    FSoccerReplayFrame& OutFrame
+) const
 {
-    if (RingFrames.Num() <= 0)
-    {
-        RebuildRingBuffer();
-    }
+    OutFrame.RecordingTimeSeconds = RecordingClockSeconds;
+    OutFrame.Characters.Reset(TrackedCharacters.Num());
+    OutFrame.Ball = FSoccerReplayBallSample();
 
-    if (RingFrames.Num() <= 0)
-    {
-        return;
-    }
-
-    ResolveTrackedBallIfNeeded();
-
-    /*
-     * Reuse the TArray storage owned by this ring slot. After the first
-     * history window fills, recording no longer needs to allocate a fresh
-     * character array on every sample.
-     */
-    FSoccerReplayFrame& Frame = RingFrames[NextWriteIndex];
-    Frame.RecordingTimeSeconds = RecordingClockSeconds;
-    Frame.Characters.Reset(TrackedCharacters.Num());
-    Frame.Ball = FSoccerReplayBallSample();
-
-    for (const TWeakObjectPtr<ASoccerCharacterBase>& CharacterPtr : TrackedCharacters)
+    for (
+        const TWeakObjectPtr<ASoccerCharacterBase>& CharacterPtr :
+        TrackedCharacters
+    )
     {
         ASoccerCharacterBase* Character = CharacterPtr.Get();
 
@@ -373,10 +459,13 @@ void ASoccerInstantReplayManager::CaptureFrame()
         Sample.Character = Character;
         Sample.ActorTransform = Character->GetActorTransform();
         Sample.Velocity = Character->GetVelocity();
+        Sample.bActorCollisionEnabled = Character->GetActorEnableCollision();
 
-        if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+        if (UCharacterMovementComponent* Movement =
+            Character->GetCharacterMovement())
         {
-            Sample.MovementMode = static_cast<uint8>(Movement->MovementMode);
+            Sample.MovementMode =
+                static_cast<uint8>(Movement->MovementMode);
             Sample.CustomMovementMode = Movement->CustomMovementMode;
         }
 
@@ -412,42 +501,65 @@ void ASoccerInstantReplayManager::CaptureFrame()
             }
         }
 
-        Frame.Characters.Add(MoveTemp(Sample));
+        OutFrame.Characters.Add(MoveTemp(Sample));
     }
 
     ASoccerBall* Ball = SoccerBall.Get();
 
-    if (IsValid(Ball))
+    if (!IsValid(Ball))
     {
-        Frame.Ball.Ball = Ball;
-        Frame.Ball.ActorTransform = Ball->GetActorTransform();
-        Frame.Ball.AttachedParentActor = Ball->GetAttachParentActor();
-
-        USceneComponent* BallRootComponent = Ball->GetRootComponent();
-
-        if (BallRootComponent != nullptr)
-        {
-            Frame.Ball.AttachedSocketName =
-                BallRootComponent->GetAttachSocketName();
-        }
-
-        UPrimitiveComponent* PrimitiveRoot =
-            Cast<UPrimitiveComponent>(BallRootComponent);
-
-        if (PrimitiveRoot != nullptr)
-        {
-            Frame.Ball.bSimulatingPhysics =
-                PrimitiveRoot->IsSimulatingPhysics();
-            Frame.Ball.LinearVelocity =
-                PrimitiveRoot->GetPhysicsLinearVelocity();
-            Frame.Ball.AngularVelocityDegrees =
-                PrimitiveRoot->GetPhysicsAngularVelocityInDegrees();
-        }
-        else
-        {
-            Frame.Ball.LinearVelocity = Ball->GetVelocity();
-        }
+        return;
     }
+
+    OutFrame.Ball.Ball = Ball;
+    OutFrame.Ball.ActorTransform = Ball->GetActorTransform();
+    OutFrame.Ball.bActorCollisionEnabled = Ball->GetActorEnableCollision();
+    OutFrame.Ball.AttachedParentActor = Ball->GetAttachParentActor();
+
+    USceneComponent* BallRootComponent = Ball->GetRootComponent();
+
+    if (BallRootComponent != nullptr)
+    {
+        OutFrame.Ball.AttachedParentComponent =
+            BallRootComponent->GetAttachParent();
+        OutFrame.Ball.AttachedSocketName =
+            BallRootComponent->GetAttachSocketName();
+    }
+
+    UPrimitiveComponent* PrimitiveRoot =
+        Cast<UPrimitiveComponent>(BallRootComponent);
+
+    if (PrimitiveRoot != nullptr)
+    {
+        OutFrame.Ball.bSimulatingPhysics =
+            PrimitiveRoot->IsSimulatingPhysics();
+        OutFrame.Ball.LinearVelocity =
+            PrimitiveRoot->GetPhysicsLinearVelocity();
+        OutFrame.Ball.AngularVelocityDegrees =
+            PrimitiveRoot->GetPhysicsAngularVelocityInDegrees();
+    }
+    else
+    {
+        OutFrame.Ball.LinearVelocity = Ball->GetVelocity();
+    }
+}
+
+void ASoccerInstantReplayManager::CaptureFrame()
+{
+    if (RingFrames.Num() <= 0)
+    {
+        RebuildRingBuffer();
+    }
+
+    if (RingFrames.Num() <= 0)
+    {
+        return;
+    }
+
+    ResolveTrackedBallIfNeeded();
+
+    FSoccerReplayFrame& Frame = RingFrames[NextWriteIndex];
+    CaptureCurrentWorldFrame(Frame);
 
     NextWriteIndex =
         (NextWriteIndex + 1) % RingFrames.Num();
@@ -472,4 +584,805 @@ void ASoccerInstantReplayManager::CaptureFrame()
             GetRecordedDurationSeconds()
         );
     }
+}
+
+bool ASoccerInstantReplayManager::StartManualReplay(float RequestedSeconds)
+{
+    if (bReplayPlaying)
+    {
+        return false;
+    }
+
+    UWorld* World = GetWorld();
+
+    if (World == nullptr)
+    {
+        return false;
+    }
+
+    if (UGameplayStatics::IsGamePaused(World))
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("[InstantReplay] Manual replay ignored because the world is already paused by another system.")
+        );
+        return false;
+    }
+
+    const float RequestedClipSeconds =
+        RequestedSeconds > 0.0f
+            ? FMath::Clamp(RequestedSeconds, 1.0f, HistorySeconds)
+            : FMath::Clamp(ManualReplaySeconds, 1.0f, HistorySeconds);
+
+    CopyRecentFrames(RequestedClipSeconds, PlaybackFrames);
+
+    if (PlaybackFrames.Num() < 2)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("[InstantReplay] Not enough recorded frames for manual playback yet.")
+        );
+        PlaybackFrames.Reset();
+        return false;
+    }
+
+    RefreshTrackedCharacters();
+    ResolveTrackedBallIfNeeded();
+    CaptureCurrentWorldFrame(LiveResumeFrame);
+
+    PlaybackClipStartTimeSeconds =
+        PlaybackFrames[0].RecordingTimeSeconds;
+    PlaybackClipEndTimeSeconds =
+        PlaybackFrames.Last().RecordingTimeSeconds;
+
+    if (
+        PlaybackClipEndTimeSeconds - PlaybackClipStartTimeSeconds <=
+        KINDA_SMALL_NUMBER
+    )
+    {
+        PlaybackFrames.Reset();
+        return false;
+    }
+
+    APlayerController* PlayerController =
+        UGameplayStatics::GetPlayerController(this, 0);
+
+    if (!IsValid(PlayerController))
+    {
+        PlaybackFrames.Reset();
+        return false;
+    }
+
+    ReplayPlayerController = PlayerController;
+    PreviousViewTarget = PlayerController->GetViewTarget();
+
+    if (!BuildFixedReplayCamera())
+    {
+        PlaybackFrames.Reset();
+        ReplayPlayerController.Reset();
+        PreviousViewTarget.Reset();
+        return false;
+    }
+
+    bRecordingWasEnabledBeforeReplay = bRecordingEnabled;
+    SetRecordingEnabled(false);
+
+    PlayerController->SetIgnoreMoveInput(true);
+    bAppliedMoveInputIgnore = true;
+    PlayerController->SetIgnoreLookInput(true);
+    bAppliedLookInputIgnore = true;
+
+    bReplayPlaying = true;
+    PlaybackFrameCursor = 0;
+    PlaybackElapsedSeconds = 0.0;
+    LastPlaybackRealTimeSeconds = FPlatformTime::Seconds();
+
+    if (!UGameplayStatics::SetGamePaused(World, true))
+    {
+        FinishManualReplay(false);
+        return false;
+    }
+
+    PrepareActorsForReplay();
+
+    PlayerController->SetViewTarget(ReplayCamera.Get());
+
+    ApplyPlaybackTime(
+        PlaybackClipStartTimeSeconds,
+        0.0f
+    );
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("[InstantReplay] Manual replay started: %.2f s, %d frames. NumPad 8 stops it early."),
+        PlaybackClipEndTimeSeconds - PlaybackClipStartTimeSeconds,
+        PlaybackFrames.Num()
+    );
+
+    return true;
+}
+
+void ASoccerInstantReplayManager::StopManualReplay()
+{
+    if (!bReplayPlaying)
+    {
+        return;
+    }
+
+    FinishManualReplay(true);
+}
+
+void ASoccerInstantReplayManager::TickManualReplay()
+{
+    if (!bReplayPlaying || PlaybackFrames.Num() < 2)
+    {
+        return;
+    }
+
+    const double CurrentRealTimeSeconds = FPlatformTime::Seconds();
+    const double RawRealDelta =
+        CurrentRealTimeSeconds - LastPlaybackRealTimeSeconds;
+    LastPlaybackRealTimeSeconds = CurrentRealTimeSeconds;
+
+    const double SafeRealDelta =
+        FMath::Clamp(RawRealDelta, 0.0, 0.1);
+
+    PlaybackElapsedSeconds += SafeRealDelta;
+
+    const double TargetRecordingTime =
+        PlaybackClipStartTimeSeconds + PlaybackElapsedSeconds;
+
+    if (TargetRecordingTime >= PlaybackClipEndTimeSeconds)
+    {
+        ApplyPlaybackTime(
+            PlaybackClipEndTimeSeconds,
+            static_cast<float>(SafeRealDelta)
+        );
+        FinishManualReplay(true);
+        return;
+    }
+
+    ApplyPlaybackTime(
+        TargetRecordingTime,
+        static_cast<float>(SafeRealDelta)
+    );
+}
+
+void ASoccerInstantReplayManager::PrepareActorsForReplay()
+{
+    for (const FSoccerReplayCharacterSample& Sample : LiveResumeFrame.Characters)
+    {
+        ASoccerCharacterBase* Character = Sample.Character.Get();
+
+        if (IsValid(Character))
+        {
+            Character->SetActorEnableCollision(false);
+        }
+    }
+
+    ASoccerBall* Ball = LiveResumeFrame.Ball.Ball.Get();
+
+    if (!IsValid(Ball))
+    {
+        return;
+    }
+
+    Ball->SetActorEnableCollision(false);
+
+    USceneComponent* BallRootComponent = Ball->GetRootComponent();
+    UPrimitiveComponent* PrimitiveRoot =
+        Cast<UPrimitiveComponent>(BallRootComponent);
+
+    if (PrimitiveRoot != nullptr)
+    {
+        PrimitiveRoot->SetSimulatePhysics(false);
+        PrimitiveRoot->SetPhysicsLinearVelocity(FVector::ZeroVector);
+        PrimitiveRoot->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+    }
+
+    Ball->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+}
+
+void ASoccerInstantReplayManager::ApplyPlaybackTime(
+    double TargetRecordingTimeSeconds,
+    float VisualDeltaSeconds
+)
+{
+    if (PlaybackFrames.Num() <= 0)
+    {
+        return;
+    }
+
+    while (
+        PlaybackFrameCursor + 1 < PlaybackFrames.Num() - 1 &&
+        PlaybackFrames[PlaybackFrameCursor + 1].RecordingTimeSeconds <
+            TargetRecordingTimeSeconds
+    )
+    {
+        ++PlaybackFrameCursor;
+    }
+
+    const int32 IndexA = FMath::Clamp(
+        PlaybackFrameCursor,
+        0,
+        PlaybackFrames.Num() - 1
+    );
+    const int32 IndexB = FMath::Min(
+        IndexA + 1,
+        PlaybackFrames.Num() - 1
+    );
+
+    const FSoccerReplayFrame& FrameA = PlaybackFrames[IndexA];
+    const FSoccerReplayFrame& FrameB = PlaybackFrames[IndexB];
+
+    const double Interval =
+        FrameB.RecordingTimeSeconds - FrameA.RecordingTimeSeconds;
+
+    const float Alpha =
+        Interval > KINDA_SMALL_NUMBER
+            ? FMath::Clamp(
+                static_cast<float>(
+                    (TargetRecordingTimeSeconds -
+                        FrameA.RecordingTimeSeconds) /
+                    Interval
+                ),
+                0.0f,
+                1.0f
+            )
+            : 0.0f;
+
+    for (const FSoccerReplayCharacterSample& SampleA : FrameA.Characters)
+    {
+        ASoccerCharacterBase* Character = SampleA.Character.Get();
+
+        if (!IsValid(Character))
+        {
+            continue;
+        }
+
+        const FSoccerReplayCharacterSample* SampleB =
+            FindCharacterSample(FrameB, Character);
+
+        ApplyCharacterPlaybackSample(
+            SampleA,
+            SampleB,
+            Alpha,
+            VisualDeltaSeconds,
+            false
+        );
+    }
+
+    ApplyBallPlaybackSample(
+        FrameA.Ball,
+        &FrameB.Ball,
+        Alpha,
+        false
+    );
+}
+
+const FSoccerReplayCharacterSample*
+ASoccerInstantReplayManager::FindCharacterSample(
+    const FSoccerReplayFrame& Frame,
+    const ASoccerCharacterBase* Character
+) const
+{
+    if (Character == nullptr)
+    {
+        return nullptr;
+    }
+
+    for (const FSoccerReplayCharacterSample& Sample : Frame.Characters)
+    {
+        if (Sample.Character.Get() == Character)
+        {
+            return &Sample;
+        }
+    }
+
+    return nullptr;
+}
+
+void ASoccerInstantReplayManager::ApplyCharacterPlaybackSample(
+    const FSoccerReplayCharacterSample& SampleA,
+    const FSoccerReplayCharacterSample* SampleB,
+    float Alpha,
+    float VisualDeltaSeconds,
+    bool bRestoreCollision
+)
+{
+    ASoccerCharacterBase* Character = SampleA.Character.Get();
+
+    if (!IsValid(Character))
+    {
+        return;
+    }
+
+    const FSoccerReplayCharacterSample& VisualSample =
+        SampleB != nullptr && Alpha >= 0.5f
+            ? *SampleB
+            : SampleA;
+
+    FTransform TargetTransform = SampleA.ActorTransform;
+    FVector TargetVelocity = SampleA.Velocity;
+
+    if (SampleB != nullptr)
+    {
+        const FVector InterpolatedLocation = FMath::Lerp(
+            SampleA.ActorTransform.GetLocation(),
+            SampleB->ActorTransform.GetLocation(),
+            Alpha
+        );
+
+        const FQuat InterpolatedRotation = FQuat::Slerp(
+            SampleA.ActorTransform.GetRotation(),
+            SampleB->ActorTransform.GetRotation(),
+            Alpha
+        ).GetNormalized();
+
+        const FVector InterpolatedScale = FMath::Lerp(
+            SampleA.ActorTransform.GetScale3D(),
+            SampleB->ActorTransform.GetScale3D(),
+            Alpha
+        );
+
+        TargetTransform = FTransform(
+            InterpolatedRotation,
+            InterpolatedLocation,
+            InterpolatedScale
+        );
+
+        TargetVelocity = FMath::Lerp(
+            SampleA.Velocity,
+            SampleB->Velocity,
+            Alpha
+        );
+    }
+
+    Character->SetActorTransform(
+        TargetTransform,
+        false,
+        nullptr,
+        ETeleportType::TeleportPhysics
+    );
+
+    if (bRestoreCollision)
+    {
+        Character->SetActorEnableCollision(
+            VisualSample.bActorCollisionEnabled
+        );
+    }
+    else
+    {
+        Character->SetActorEnableCollision(false);
+    }
+
+    if (UCharacterMovementComponent* Movement =
+        Character->GetCharacterMovement())
+    {
+        Movement->Velocity = TargetVelocity;
+        Movement->MovementMode =
+            static_cast<EMovementMode>(VisualSample.MovementMode);
+        Movement->CustomMovementMode =
+            VisualSample.CustomMovementMode;
+    }
+
+    Character->ApplyInstantReplayVisualState(
+        VisualSample.bPossessingBall,
+        VisualSample.bChasingBall,
+        VisualSample.bKicking,
+        VisualSample.bForceDribbleTurnLocomotion,
+        VisualSample.ForcedDribbleTurnLocomotionSpeed
+    );
+
+    ApplyCharacterMontageVisual(
+        Character,
+        VisualSample,
+        VisualDeltaSeconds,
+        bRestoreCollision
+    );
+}
+
+void ASoccerInstantReplayManager::ApplyCharacterMontageVisual(
+    ASoccerCharacterBase* Character,
+    const FSoccerReplayCharacterSample& Sample,
+    float VisualDeltaSeconds,
+    bool bResumeLivePlayback
+)
+{
+    if (!IsValid(Character))
+    {
+        return;
+    }
+
+    USkeletalMeshComponent* Mesh = Character->GetMesh();
+    UAnimInstance* AnimInstance =
+        Mesh != nullptr ? Mesh->GetAnimInstance() : nullptr;
+
+    if (Mesh == nullptr || AnimInstance == nullptr)
+    {
+        return;
+    }
+
+    UAnimMontage* TargetMontage = Sample.ActiveMontage.Get();
+    UAnimMontage* CurrentMontage =
+        AnimInstance->GetCurrentActiveMontage();
+
+    if (TargetMontage != nullptr)
+    {
+        if (
+            CurrentMontage != TargetMontage ||
+            !AnimInstance->Montage_IsActive(TargetMontage)
+        )
+        {
+            AnimInstance->Montage_Stop(0.0f);
+            AnimInstance->Montage_Play(
+                TargetMontage,
+                FMath::Max(0.01f, Sample.MontagePlayRate)
+            );
+        }
+
+        AnimInstance->Montage_SetPosition(
+            TargetMontage,
+            FMath::Max(0.0f, Sample.MontagePositionSeconds)
+        );
+
+        if (bResumeLivePlayback)
+        {
+            AnimInstance->Montage_SetPlayRate(
+                TargetMontage,
+                FMath::Max(0.01f, Sample.MontagePlayRate)
+            );
+
+            if (Sample.bMontagePlaying)
+            {
+                AnimInstance->Montage_Resume(TargetMontage);
+            }
+            else
+            {
+                AnimInstance->Montage_Pause(TargetMontage);
+            }
+        }
+        else
+        {
+            /*
+             * Playback time is controlled by recorded samples, not by the
+             * animation clock. Pausing prevents AnimNotifies from executing
+             * gameplay actions while the replay is being viewed.
+             */
+            AnimInstance->Montage_Pause(TargetMontage);
+        }
+    }
+    else if (CurrentMontage != nullptr)
+    {
+        AnimInstance->Montage_Stop(0.0f);
+    }
+
+    /*
+     * The world itself is paused. Advance only the locomotion graph manually;
+     * a replay montage remains paused and is positioned from the recording.
+     */
+    Mesh->TickAnimation(
+        bResumeLivePlayback ? 0.0f : FMath::Max(0.0f, VisualDeltaSeconds),
+        false
+    );
+
+    if (TargetMontage != nullptr && !bResumeLivePlayback)
+    {
+        AnimInstance->Montage_SetPosition(
+            TargetMontage,
+            FMath::Max(0.0f, Sample.MontagePositionSeconds)
+        );
+    }
+
+    Mesh->RefreshBoneTransforms(nullptr);
+}
+
+void ASoccerInstantReplayManager::ApplyBallPlaybackSample(
+    const FSoccerReplayBallSample& SampleA,
+    const FSoccerReplayBallSample* SampleB,
+    float Alpha,
+    bool bRestoreLiveState
+)
+{
+    ASoccerBall* Ball = SampleA.Ball.Get();
+
+    if (!IsValid(Ball))
+    {
+        return;
+    }
+
+    FTransform TargetTransform = SampleA.ActorTransform;
+
+    if (SampleB != nullptr && SampleB->Ball.Get() == Ball)
+    {
+        const FVector InterpolatedLocation = FMath::Lerp(
+            SampleA.ActorTransform.GetLocation(),
+            SampleB->ActorTransform.GetLocation(),
+            Alpha
+        );
+
+        const FQuat InterpolatedRotation = FQuat::Slerp(
+            SampleA.ActorTransform.GetRotation(),
+            SampleB->ActorTransform.GetRotation(),
+            Alpha
+        ).GetNormalized();
+
+        const FVector InterpolatedScale = FMath::Lerp(
+            SampleA.ActorTransform.GetScale3D(),
+            SampleB->ActorTransform.GetScale3D(),
+            Alpha
+        );
+
+        TargetTransform = FTransform(
+            InterpolatedRotation,
+            InterpolatedLocation,
+            InterpolatedScale
+        );
+    }
+
+    USceneComponent* BallRootComponent = Ball->GetRootComponent();
+    UPrimitiveComponent* PrimitiveRoot =
+        Cast<UPrimitiveComponent>(BallRootComponent);
+
+    if (!bRestoreLiveState)
+    {
+        if (PrimitiveRoot != nullptr && PrimitiveRoot->IsSimulatingPhysics())
+        {
+            PrimitiveRoot->SetSimulatePhysics(false);
+        }
+
+        if (Ball->GetAttachParentActor() != nullptr)
+        {
+            Ball->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+        }
+
+        Ball->SetActorEnableCollision(false);
+        Ball->SetActorTransform(
+            TargetTransform,
+            false,
+            nullptr,
+            ETeleportType::TeleportPhysics
+        );
+        return;
+    }
+
+    if (PrimitiveRoot != nullptr)
+    {
+        PrimitiveRoot->SetSimulatePhysics(false);
+    }
+
+    Ball->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+    Ball->SetActorTransform(
+        SampleA.ActorTransform,
+        false,
+        nullptr,
+        ETeleportType::TeleportPhysics
+    );
+
+    USceneComponent* BallParentComponent =
+        SampleA.AttachedParentComponent.Get();
+
+    if (IsValid(BallParentComponent))
+    {
+        Ball->AttachToComponent(
+            BallParentComponent,
+            FAttachmentTransformRules::KeepWorldTransform,
+            SampleA.AttachedSocketName
+        );
+    }
+
+    Ball->SetActorEnableCollision(SampleA.bActorCollisionEnabled);
+
+    if (PrimitiveRoot != nullptr)
+    {
+        const bool bCanResumePhysics =
+            SampleA.bSimulatingPhysics && !IsValid(BallParentComponent);
+
+        PrimitiveRoot->SetSimulatePhysics(bCanResumePhysics);
+
+        if (bCanResumePhysics)
+        {
+            PrimitiveRoot->SetPhysicsLinearVelocity(
+                SampleA.LinearVelocity
+            );
+            PrimitiveRoot->SetPhysicsAngularVelocityInDegrees(
+                SampleA.AngularVelocityDegrees
+            );
+        }
+    }
+}
+
+bool ASoccerInstantReplayManager::BuildFixedReplayCamera()
+{
+    UWorld* World = GetWorld();
+
+    if (World == nullptr || PlaybackFrames.Num() <= 0)
+    {
+        return false;
+    }
+
+    if (ReplayCamera.IsValid())
+    {
+        ReplayCamera->Destroy();
+        ReplayCamera.Reset();
+    }
+
+    FVector FocusLocation = FVector::ZeroVector;
+    int32 FocusSampleCount = 0;
+
+    for (const FSoccerReplayFrame& Frame : PlaybackFrames)
+    {
+        if (Frame.Ball.Ball.IsValid())
+        {
+            FocusLocation += Frame.Ball.ActorTransform.GetLocation();
+            ++FocusSampleCount;
+        }
+    }
+
+    if (FocusSampleCount <= 0 && PlaybackFrames[0].Characters.Num() > 0)
+    {
+        for (
+            const FSoccerReplayCharacterSample& Sample :
+            PlaybackFrames[0].Characters
+        )
+        {
+            if (Sample.Character.IsValid())
+            {
+                FocusLocation += Sample.ActorTransform.GetLocation();
+                ++FocusSampleCount;
+            }
+        }
+    }
+
+    if (FocusSampleCount > 0)
+    {
+        FocusLocation /= static_cast<float>(FocusSampleCount);
+    }
+
+    FVector SideDirection = FVector::RightVector;
+
+    const ASoccerMatchManager* Manager = MatchManager.Get();
+    const ASoccerField* Field =
+        IsValid(Manager) ? Manager->GetSoccerField() : nullptr;
+
+    if (IsValid(Field))
+    {
+        SideDirection = Field->GetPitchWidthWorldDirection();
+        SideDirection.Z = 0.0f;
+
+        if (!SideDirection.Normalize())
+        {
+            SideDirection = FVector::RightVector;
+        }
+    }
+
+    const FVector CameraLocation =
+        FocusLocation - SideDirection * FMath::Max(500.0f, FixedCameraSideDistance) +
+        FVector::UpVector * FMath::Max(200.0f, FixedCameraHeight);
+
+    const FVector CameraAimLocation =
+        FocusLocation + FVector::UpVector * 120.0f;
+
+    const FRotator CameraRotation =
+        (CameraAimLocation - CameraLocation).Rotation();
+
+    FActorSpawnParameters SpawnParameters;
+    SpawnParameters.Owner = this;
+    SpawnParameters.SpawnCollisionHandlingOverride =
+        ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+    ACameraActor* CameraActor = World->SpawnActor<ACameraActor>(
+        CameraLocation,
+        CameraRotation,
+        SpawnParameters
+    );
+
+    if (!IsValid(CameraActor))
+    {
+        return false;
+    }
+
+    if (UCameraComponent* CameraComponent = CameraActor->GetCameraComponent())
+    {
+        CameraComponent->SetFieldOfView(
+            FMath::Clamp(FixedCameraFOV, 30.0f, 120.0f)
+        );
+    }
+
+    ReplayCamera = CameraActor;
+    return true;
+}
+
+void ASoccerInstantReplayManager::RestoreLiveStateAfterReplay()
+{
+    for (const FSoccerReplayCharacterSample& LiveSample : LiveResumeFrame.Characters)
+    {
+        ApplyCharacterPlaybackSample(
+            LiveSample,
+            nullptr,
+            0.0f,
+            0.0f,
+            true
+        );
+    }
+
+    ApplyBallPlaybackSample(
+        LiveResumeFrame.Ball,
+        nullptr,
+        0.0f,
+        true
+    );
+}
+
+void ASoccerInstantReplayManager::FinishManualReplay(bool bRestoreLiveState)
+{
+    if (!bReplayPlaying)
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    APlayerController* PlayerController = ReplayPlayerController.Get();
+
+    if (bRestoreLiveState)
+    {
+        RestoreLiveStateAfterReplay();
+    }
+
+    if (IsValid(PlayerController))
+    {
+        AActor* OldViewTarget = PreviousViewTarget.Get();
+
+        if (IsValid(OldViewTarget))
+        {
+            PlayerController->SetViewTarget(OldViewTarget);
+        }
+
+        if (bAppliedMoveInputIgnore)
+        {
+            PlayerController->SetIgnoreMoveInput(false);
+        }
+
+        if (bAppliedLookInputIgnore)
+        {
+            PlayerController->SetIgnoreLookInput(false);
+        }
+    }
+
+    bAppliedMoveInputIgnore = false;
+    bAppliedLookInputIgnore = false;
+
+    if (ReplayCamera.IsValid())
+    {
+        ReplayCamera->Destroy();
+        ReplayCamera.Reset();
+    }
+
+    bReplayPlaying = false;
+
+    if (World != nullptr && UGameplayStatics::IsGamePaused(World))
+    {
+        UGameplayStatics::SetGamePaused(World, false);
+    }
+
+    SetRecordingEnabled(bRecordingWasEnabledBeforeReplay);
+
+    PlaybackFrames.Reset();
+    LiveResumeFrame = FSoccerReplayFrame();
+    PlaybackFrameCursor = 0;
+    PlaybackClipStartTimeSeconds = 0.0;
+    PlaybackClipEndTimeSeconds = 0.0;
+    PlaybackElapsedSeconds = 0.0;
+    LastPlaybackRealTimeSeconds = 0.0;
+    ReplayPlayerController.Reset();
+    PreviousViewTarget.Reset();
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("[InstantReplay] Manual replay finished. Live match state restored.")
+    );
 }

@@ -10950,7 +10950,8 @@ void ASoccerMatchManager::InitializeInstantReplayRecorder()
 		this,
 		SoccerBall,
 		InstantReplayHistorySeconds,
-		InstantReplaySamplesPerSecond
+		InstantReplaySamplesPerSecond,
+		InstantReplayManualPlaybackSeconds
 	);
 }
 

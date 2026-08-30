@@ -5,10 +5,13 @@
 #include "SoccerInstantReplayManager.generated.h"
 
 class AActor;
+class ACameraActor;
+class APlayerController;
 class ASoccerBall;
 class ASoccerCharacterBase;
 class ASoccerMatchManager;
 class UAnimMontage;
+class USceneComponent;
 
 /*
  * One visual sample of a soccer character.
@@ -27,6 +30,7 @@ struct FSoccerReplayCharacterSample
     uint8 MovementMode = 0;
     uint8 CustomMovementMode = 0;
 
+    bool bActorCollisionEnabled = true;
     bool bPossessingBall = false;
     bool bChasingBall = false;
     bool bKicking = false;
@@ -48,9 +52,11 @@ struct FSoccerReplayBallSample
     FVector LinearVelocity = FVector::ZeroVector;
     FVector AngularVelocityDegrees = FVector::ZeroVector;
 
+    bool bActorCollisionEnabled = true;
     bool bSimulatingPhysics = false;
 
     TWeakObjectPtr<AActor> AttachedParentActor;
+    TWeakObjectPtr<USceneComponent> AttachedParentComponent;
     FName AttachedSocketName = NAME_None;
 };
 
@@ -71,16 +77,14 @@ public:
     ASoccerInstantReplayManager();
 
     virtual void Tick(float DeltaTime) override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-    /*
-     * Called by ASoccerMatchManager after it has resolved the active ball.
-     * This does not start playback; Stage 1 is recording only.
-     */
     void InitializeRecorder(
         ASoccerMatchManager* InMatchManager,
         ASoccerBall* InSoccerBall,
         float InHistorySeconds,
-        float InSamplesPerSecond
+        float InSamplesPerSecond,
+        float InManualReplaySeconds
     );
 
     void SetRecordingEnabled(bool bEnabled);
@@ -92,11 +96,6 @@ public:
     float GetRecordedDurationSeconds() const;
     double GetLatestRecordingTimeSeconds() const;
 
-    /*
-     * Copies the requested tail of the ring buffer in chronological order.
-     * Stage 2 will use this to build a playback clip without knowing how the
-     * recorder stores its circular history internally.
-     */
     void CopyRecentFrames(
         float RequestedSeconds,
         TArray<FSoccerReplayFrame>& OutFrames
@@ -104,22 +103,66 @@ public:
 
     ASoccerBall* GetTrackedBall() const;
 
+    /* Stage 2 manual playback. NumPad 8 toggles this during PIE. */
+    bool StartManualReplay(float RequestedSeconds = -1.0f);
+    void StopManualReplay();
+    bool IsReplayPlaying() const;
+
 protected:
     virtual void BeginPlay() override;
 
 private:
     void ApplyRecorderConfiguration(
         float InHistorySeconds,
-        float InSamplesPerSecond
+        float InSamplesPerSecond,
+        float InManualReplaySeconds
     );
 
     void RebuildRingBuffer();
     void RefreshTrackedCharacters();
     void ResolveTrackedBallIfNeeded();
     void CaptureFrame();
+    void CaptureCurrentWorldFrame(FSoccerReplayFrame& OutFrame) const;
 
     int32 GetOldestFrameIndex() const;
     int32 GetNewestFrameIndex() const;
+
+    void TryBindManualReplayInput();
+    void HandleManualReplayInput();
+
+    void TickManualReplay();
+    void FinishManualReplay(bool bRestoreLiveState);
+    void PrepareActorsForReplay();
+    void RestoreLiveStateAfterReplay();
+
+    void ApplyPlaybackTime(double TargetRecordingTimeSeconds, float VisualDeltaSeconds);
+    void ApplyCharacterPlaybackSample(
+        const FSoccerReplayCharacterSample& SampleA,
+        const FSoccerReplayCharacterSample* SampleB,
+        float Alpha,
+        float VisualDeltaSeconds,
+        bool bRestoreCollision
+    );
+    void ApplyBallPlaybackSample(
+        const FSoccerReplayBallSample& SampleA,
+        const FSoccerReplayBallSample* SampleB,
+        float Alpha,
+        bool bRestoreLiveState
+    );
+
+    const FSoccerReplayCharacterSample* FindCharacterSample(
+        const FSoccerReplayFrame& Frame,
+        const ASoccerCharacterBase* Character
+    ) const;
+
+    void ApplyCharacterMontageVisual(
+        ASoccerCharacterBase* Character,
+        const FSoccerReplayCharacterSample& Sample,
+        float VisualDeltaSeconds,
+        bool bResumeLivePlayback
+    );
+
+    bool BuildFixedReplayCamera();
 
     UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording", meta = (ClampMin = "2.0", UIMin = "2.0"))
     float HistorySeconds = 10.0f;
@@ -129,6 +172,18 @@ private:
 
     UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording")
     bool bRecordingEnabled = true;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Manual Playback", meta = (ClampMin = "1.0", ClampMax = "10.0", UIMin = "1.0", UIMax = "10.0"))
+    float ManualReplaySeconds = 5.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Manual Playback", meta = (ClampMin = "500.0", UIMin = "500.0"))
+    float FixedCameraSideDistance = 3000.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Manual Playback", meta = (ClampMin = "200.0", UIMin = "200.0"))
+    float FixedCameraHeight = 1500.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Manual Playback", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
+    float FixedCameraFOV = 75.0f;
 
     /* Characters are refreshed occasionally so later spawned/replaced actors join recording. */
     UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording", meta = (ClampMin = "0.25", UIMin = "0.25"))
@@ -146,4 +201,22 @@ private:
     float TrackedActorRefreshAccumulator = 0.0f;
     double RecordingClockSeconds = 0.0;
     bool bLoggedFullHistoryReady = false;
+
+    bool bManualReplayInputBound = false;
+    bool bReplayPlaying = false;
+    bool bRecordingWasEnabledBeforeReplay = false;
+    bool bAppliedMoveInputIgnore = false;
+    bool bAppliedLookInputIgnore = false;
+
+    TArray<FSoccerReplayFrame> PlaybackFrames;
+    FSoccerReplayFrame LiveResumeFrame;
+    int32 PlaybackFrameCursor = 0;
+    double PlaybackClipStartTimeSeconds = 0.0;
+    double PlaybackClipEndTimeSeconds = 0.0;
+    double PlaybackElapsedSeconds = 0.0;
+    double LastPlaybackRealTimeSeconds = 0.0;
+
+    TWeakObjectPtr<APlayerController> ReplayPlayerController;
+    TWeakObjectPtr<AActor> PreviousViewTarget;
+    TWeakObjectPtr<ACameraActor> ReplayCamera;
 };
