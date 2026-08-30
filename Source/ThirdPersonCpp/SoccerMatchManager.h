@@ -25,6 +25,7 @@ class ASoccerCharacterBase;
 class AThirdPersonCppCharacter;
 class ASoccerOffsideLineActor;
 class ASoccerRestartRadiusActor;
+class ASoccerInstantReplayManager;
 class UCurveTable;
 
 enum class ESoccerRestartRestrictionShape : uint8
@@ -76,6 +77,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match")
 		ASoccerBall* GetSoccerBall() const;
+
+	/* Stage 1 instant-replay recorder. Playback is added in later stages. */
+	ASoccerInstantReplayManager* GetInstantReplayManager() const;
 
 	// Stage 10C geometry authority. Gameplay resolves goals and restarts from
 	// ASoccerField instead of editor Target Points.
@@ -655,6 +659,8 @@ bool IsPenaltyMatchStateActive() const;
 	ESoccerMatchStateTransition PendingMatchStateTransition = ESoccerMatchStateTransition::None;
 
 	void FindSoccerBall();
+	void InitializeInstantReplayRecorder();
+	void ShutdownInstantReplayRecorder();
 	void FindSoccerField();
 	void InitializeTeamFieldSides();
 	void CaptureInitialHumanFieldReferences();
@@ -2406,6 +2412,24 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY()
 		ASoccerBall* SoccerBall = nullptr;
+
+	// ============================================================
+	// INSTANT REPLAY - STAGE 1: CONTINUOUS RECORDER
+	// ============================================================
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording")
+		bool bEnableInstantReplayRecording = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording", meta = (ClampMin = "2.0", UIMin = "2.0"))
+		float InstantReplayHistorySeconds = 10.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording", meta = (ClampMin = "5.0", ClampMax = "60.0", UIMin = "5.0", UIMax = "60.0"))
+		float InstantReplaySamplesPerSecond = 30.0f;
+
+	UPROPERTY()
+		ASoccerInstantReplayManager* InstantReplayManager = nullptr;
+
+	bool bOwnsInstantReplayManager = false;
 
 	UPROPERTY()
 		ASoccerField* SoccerField = nullptr;

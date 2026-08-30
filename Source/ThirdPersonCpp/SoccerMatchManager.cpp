@@ -41,6 +41,7 @@
 #include "SoccerDebugManager.h"
 #include "SoccerOffsideLineActor.h"
 #include "SoccerRestartRadiusActor.h"
+#include "SoccerInstantReplayManager.h"
 #include "ThirdPersonCppCharacter.h"
 
 #include "Engine/CurveTable.h"
@@ -392,6 +393,7 @@ void ASoccerMatchManager::BeginPlay()
 	Super::BeginPlay();
 
 	FindSoccerBall();
+	InitializeInstantReplayRecorder();
 	FindSoccerField();
 	InitializeTeamFieldSides();
 	CaptureInitialHumanFieldReferences();
@@ -421,6 +423,8 @@ void ASoccerMatchManager::EndPlay(
 	const EEndPlayReason::Type EndPlayReason
 )
 {
+	ShutdownInstantReplayRecorder();
+
 	DestroyOffsideFreezeLine();
 	DestroyActiveRestartHumanRestrictionIndicator();
 	CancelBallOutOfPlayDelay();
@@ -10877,6 +10881,97 @@ void ASoccerMatchManager::RepositionHumansForCurrentFieldSide()
 		bHasOpponentTeamInitialHumanFieldReference,
 		OpponentTeamInitialHumanFieldReferenceLocation
 	);
+}
+
+ASoccerInstantReplayManager* ASoccerMatchManager::GetInstantReplayManager() const
+{
+	return InstantReplayManager;
+}
+
+void ASoccerMatchManager::InitializeInstantReplayRecorder()
+{
+	InstantReplayManager = nullptr;
+	bOwnsInstantReplayManager = false;
+
+	if (!bEnableInstantReplayRecording)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	/*
+	 * Reuse a recorder deliberately placed in the level if one exists. The
+	 * normal path needs no editor setup: MatchManager simply creates one.
+	 */
+	for (TActorIterator<ASoccerInstantReplayManager> It(World); It; ++It)
+	{
+		ASoccerInstantReplayManager* ExistingRecorder = *It;
+
+		if (IsValid(ExistingRecorder))
+		{
+			InstantReplayManager = ExistingRecorder;
+			break;
+		}
+	}
+
+	if (!IsValid(InstantReplayManager))
+	{
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.Owner = this;
+		SpawnParameters.SpawnCollisionHandlingOverride =
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		InstantReplayManager = World->SpawnActor<ASoccerInstantReplayManager>(
+			FVector::ZeroVector,
+			FRotator::ZeroRotator,
+			SpawnParameters
+		);
+
+		bOwnsInstantReplayManager = IsValid(InstantReplayManager);
+	}
+
+	if (!IsValid(InstantReplayManager))
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[InstantReplay] MatchManager could not create the recorder.")
+		);
+		return;
+	}
+
+	InstantReplayManager->InitializeRecorder(
+		this,
+		SoccerBall,
+		InstantReplayHistorySeconds,
+		InstantReplaySamplesPerSecond
+	);
+}
+
+void ASoccerMatchManager::ShutdownInstantReplayRecorder()
+{
+	if (!IsValid(InstantReplayManager))
+	{
+		InstantReplayManager = nullptr;
+		bOwnsInstantReplayManager = false;
+		return;
+	}
+
+	InstantReplayManager->SetRecordingEnabled(false);
+
+	if (bOwnsInstantReplayManager)
+	{
+		InstantReplayManager->Destroy();
+	}
+
+	InstantReplayManager = nullptr;
+	bOwnsInstantReplayManager = false;
 }
 
 void ASoccerMatchManager::FindSoccerBall()
