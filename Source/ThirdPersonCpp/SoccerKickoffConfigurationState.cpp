@@ -37,6 +37,7 @@ bool FSoccerKickoffConfigurationState::Enter(ASoccerMatchManager& Manager)
 	Manager.KickoffTakerAI = nullptr;
 	Manager.KickoffReceiverAI = nullptr;
 	Manager.ResetKickoffRunUpState();
+	Manager.ResetNonFreeKickHumanTakerRuntime();
 
 	Manager.KickoffTakerAI = Manager.FindKickoffTaker(RestartTeam);
 	Manager.KickoffReceiverAI = Manager.FindKickoffReceiver(

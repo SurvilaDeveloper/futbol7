@@ -21,6 +21,24 @@ bool FSoccerGoalKickExecutionState::Enter(ASoccerMatchManager& Manager)
 		return false;
 	}
 
+	if (Manager.IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::GoalKick))
+	{
+		Manager.GoalLineRestart.ResetGoalKickFinalRunRuntime(Manager);
+		Manager.MatchPlayState = ESoccerMatchPlayState::GoalLineRestartTaking;
+		Manager.AuthorizeNonFreeKickHumanTakerExecution(
+			ESoccerRestartType::GoalKick
+		);
+		Manager.ResetActiveRestartReadyHold();
+
+		ASoccerDebugManager::Message(
+			&Manager,
+			ESoccerDebugCategory::Restarts,
+			TEXT("GOAL KICK EXECUTION: humano habilitado para sacar"),
+			FColor::Cyan
+		);
+		return true;
+	}
+
 	Manager.SelectActiveRestartExecutionReceiver(
 		Manager.GoalLineRestart.GetRestartTeam(),
 		Taker,
@@ -72,14 +90,59 @@ void FSoccerGoalKickExecutionState::Tick(
 	ASoccerAICharacter* Taker = Manager.GoalLineRestart.GetTaker();
 
 	if (
+		Manager.MatchPlayState == ESoccerMatchPlayState::Playing &&
+		!Manager.IsRestartContextActive()
+	)
+	{
+		Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+		return;
+	}
+
+	if (
 		Manager.GoalLineRestart.GetType() != ESoccerGoalLineRestartType::GoalKick ||
-		!Manager.GoalLineRestart.IsGoalKickFinalRunActive() ||
 		!IsValid(Taker) ||
 		!IsValid(Manager.SoccerBall)
 	)
 	{
 		Manager.CancelGoalLineRestart();
 		Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+		return;
+	}
+
+	if (Manager.bActiveNonFreeKickHumanExecutionAuthorized)
+	{
+		Manager.SoccerBall->StopBallKeepingPhysics();
+		Manager.SoccerBall->SetActorLocation(
+			Manager.GoalLineRestart.GetBallLocation(),
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics
+		);
+
+		if (Manager.ShouldNonFreeKickHumanTakerKeepExecutionClaim(
+			ESoccerRestartType::GoalKick
+		))
+		{
+			return;
+		}
+
+		Manager.ReleaseNonFreeKickHumanTakerClaim();
+		Manager.RecalculateGoalLineRestartGeometry();
+		Manager.MatchPlayState = ESoccerMatchPlayState::GoalLineRestartSetup;
+		Manager.CaptureActiveRestartAITargetLocations(
+			Manager.AreActiveRestartOpponentsLegal()
+		);
+		Manager.RequestMatchStateTransition(
+			ESoccerMatchStateTransition::GoalKickPreparation
+		);
+		return;
+	}
+
+	if (!Manager.GoalLineRestart.IsGoalKickFinalRunActive())
+	{
+		Manager.RequestMatchStateTransition(
+			ESoccerMatchStateTransition::GoalKickPreparation
+		);
 		return;
 	}
 

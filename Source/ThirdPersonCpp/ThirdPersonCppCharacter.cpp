@@ -599,7 +599,18 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 	// that begins after the user's click was already pressed.
 	if (!IsHumanBallActionAllowedNow())
 	{
-		ClearBallActionsForMatchRestriction();
+		// After a legal human set-piece impact the no-retouch rule becomes active
+		// immediately. Preserve only the already-completed kick montage; new ball
+		// actions remain blocked until another player touches the ball.
+		const bool bPreserveCompletedRestartKickAnimation =
+			SoccerControlState == ESoccerPlayerControlState::Kicking &&
+			bActiveKickHasImpactedBall &&
+			bActiveKickWasHumanRestartExecution;
+
+		if (!bPreserveCompletedRestartKickAnimation)
+		{
+			ClearBallActionsForMatchRestriction();
+		}
 	}
 
 	/*
@@ -682,13 +693,13 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 	}
 	else if (SoccerControlState == ESoccerPlayerControlState::Kicking)
 	{
-		const bool bKeepFreeKickBallStationary =
+		const bool bKeepRestartBallStationary =
 			IsValid(MatchManager) &&
-			MatchManager->CanHumanFreeKickTakerExecuteNow(this);
+			MatchManager->CanHumanFootRestartTakerExecuteNow(this);
 
 		if (
 			!bActiveKickHasImpactedBall &&
-			!bKeepFreeKickBallStationary
+			!bKeepRestartBallStationary
 		)
 		{
 			UpdatePossessedBallLocation();
@@ -2193,7 +2204,7 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 	ActiveKickMode = ESoccerPendingKickMode::None;
 	bActiveKickHasImpactedBall = false;
 	bActiveKickUsesChargedTrajectory = false;
-	bActiveKickWasHumanFreeKickExecution = false;
+	bActiveKickWasHumanRestartExecution = false;
 
 	// The two dribble-turn systems also own delayed ball-contact timers. A
 	// restart can begin between montage start and impact, so erase those timers
@@ -4363,12 +4374,12 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 		return;
 	}
 
-	// A free-kick taker is already at a dead-ball restart: the first left click
+	// A human set-piece taker is already at a dead-ball restart: the first left click
 	// must arm the actual pass/kick, not the generic "collect the loose ball"
 	// action used in open play.
 	if (
 		IsValid(MatchManager) &&
-		MatchManager->CanHumanFreeKickTakerExecuteNow(this)
+		MatchManager->CanHumanFootRestartTakerExecuteNow(this)
 	)
 	{
 		ArmChaseCancelIgnoreForCurrentMovementInput();
@@ -4518,7 +4529,7 @@ void AThirdPersonCppCharacter::StartChargedKickRelease()
 
 	if (
 		IsValid(MatchManager) &&
-		MatchManager->CanHumanFreeKickTakerExecuteNow(this)
+		MatchManager->CanHumanFootRestartTakerExecuteNow(this)
 	)
 	{
 		if (SoccerControlState == ESoccerPlayerControlState::Kicking)
@@ -4526,7 +4537,7 @@ void AThirdPersonCppCharacter::StartChargedKickRelease()
 			return;
 		}
 
-		// Same idea as the penalty: this is a stationary set piece, so right click
+		// This is a stationary set piece, so right click
 		// charges a normal ground kick instead of arming aerial interception logic.
 		bIsChargingKickRelease = true;
 		KickChargeStartTime = GetWorld()->GetTimeSeconds();
@@ -4995,14 +5006,14 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		return;
 	}
 
-	const bool bHumanFreeKickExecution =
+	const bool bHumanRestartExecution =
 		IsValid(MatchManager) &&
-		MatchManager->CanHumanFreeKickTakerExecuteNow(this);
+		MatchManager->CanHumanFootRestartTakerExecuteNow(this);
 
 	// A set piece never starts a dribble-turn carry. The ball must remain on the
 	// restart spot until the actual kick impact.
 	if (
-		!bHumanFreeKickExecution &&
+		!bHumanRestartExecution &&
 		TryStartStrongRunDribbleTurnForPendingKick()
 	)
 	{
@@ -5050,7 +5061,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 
 		if (
 			ExecutedMode == ESoccerPendingKickMode::KickAndFollow &&
-			!bHumanFreeKickExecution
+			!bHumanRestartExecution
 		)
 		{
 			PrepareAutoPassBallForCleanKick(ExecutedTarget);
@@ -5081,7 +5092,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 
 		if (
 			ExecutedMode == ESoccerPendingKickMode::KickAndFollow &&
-			!bHumanFreeKickExecution
+			!bHumanRestartExecution
 		)
 		{
 			StartAutoPassFollow(ExecutedTarget);
@@ -5099,7 +5110,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 	ActiveKickMode = PendingKickMode;
 	bActiveKickHasImpactedBall = false;
 	bActiveKickUsesChargedTrajectory = bUseChargedTrajectory;
-	bActiveKickWasHumanFreeKickExecution = bHumanFreeKickExecution;
+	bActiveKickWasHumanRestartExecution = bHumanRestartExecution;
 
 	PendingKickMode = ESoccerPendingKickMode::None;
 
@@ -5110,7 +5121,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 
 	GetCharacterMovement()->StopMovementImmediately();
 
-	if (!bHumanFreeKickExecution)
+	if (!bHumanRestartExecution)
 	{
 		ControlledBall->SetPossessed(true);
 		UpdatePossessedBallLocation();
@@ -5203,7 +5214,7 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 
 	if (
 		ActiveKickMode == ESoccerPendingKickMode::KickAndFollow &&
-		!bActiveKickWasHumanFreeKickExecution
+		!bActiveKickWasHumanRestartExecution
 	)
 	{
 		PrepareAutoPassBallForCleanKick(ActiveKickTarget);
@@ -5253,18 +5264,18 @@ void AThirdPersonCppCharacter::FinishPendingKickAnimation()
 
 	const ESoccerPendingKickMode FinishedKickMode = ActiveKickMode;
 	const FVector FinishedKickTarget = ActiveKickTarget;
-	const bool bFinishedHumanFreeKickExecution =
-		bActiveKickWasHumanFreeKickExecution;
+	const bool bFinishedHumanRestartExecution =
+		bActiveKickWasHumanRestartExecution;
 
 	ActiveKickMode = ESoccerPendingKickMode::None;
 	ActiveKickHorizontalSpeed = 0.0f;
 	bActiveKickHasImpactedBall = false;
 	bActiveKickUsesChargedTrajectory = false;
-	bActiveKickWasHumanFreeKickExecution = false;
+	bActiveKickWasHumanRestartExecution = false;
 
 	if (
 		FinishedKickMode == ESoccerPendingKickMode::KickAndFollow &&
-		!bFinishedHumanFreeKickExecution
+		!bFinishedHumanRestartExecution
 	)
 	{
 		StartAutoPassFollow(FinishedKickTarget);

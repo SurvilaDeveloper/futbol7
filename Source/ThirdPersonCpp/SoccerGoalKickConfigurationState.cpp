@@ -26,6 +26,7 @@ bool FSoccerGoalKickConfigurationState::Enter(ASoccerMatchManager& Manager)
 	Manager.ClearAssignedAI();
 	Manager.ReleaseAllAIBallPossessions();
 	Manager.ReleaseAllHumanBallPossessions();
+	Manager.ResetNonFreeKickHumanTakerRuntime();
 
 	if (!Manager.ConfigureGoalLineRestart(
 		ESoccerGoalLineRestartType::GoalKick,

@@ -4248,6 +4248,64 @@ bool ASoccerMatchManager::CanHumanFreeKickTakerExecuteNow(
 	return FreeKickRestart.CanHumanTakerExecute(*this, HumanCharacter);
 }
 
+bool ASoccerMatchManager::IsHumanFootRestartTaker(
+	const AThirdPersonCppCharacter* HumanCharacter
+) const
+{
+	if (!IsValid(HumanCharacter))
+	{
+		return false;
+	}
+
+	if (FreeKickRestart.IsHumanTaker(*this, HumanCharacter))
+	{
+		return true;
+	}
+
+	return
+		bActiveNonFreeKickHumanTakerClaimed &&
+		IsValid(ActiveNonFreeKickHumanTaker) &&
+		HumanCharacter == ActiveNonFreeKickHumanTaker &&
+		(
+			ActiveNonFreeKickHumanTakerType == ESoccerRestartType::Kickoff ||
+			ActiveNonFreeKickHumanTakerType == ESoccerRestartType::GoalKick ||
+			ActiveNonFreeKickHumanTakerType == ESoccerRestartType::CornerKick
+		);
+}
+
+bool ASoccerMatchManager::CanHumanFootRestartTakerExecuteNow(
+	const AThirdPersonCppCharacter* HumanCharacter
+) const
+{
+	if (FreeKickRestart.CanHumanTakerExecute(*this, HumanCharacter))
+	{
+		return true;
+	}
+
+	if (
+		!bActiveNonFreeKickHumanExecutionAuthorized ||
+		!IsHumanFootRestartTaker(HumanCharacter) ||
+		!IsRestartContextActive() ||
+		ActiveRestartType != ActiveNonFreeKickHumanTakerType
+	)
+	{
+		return false;
+	}
+
+	switch (ActiveNonFreeKickHumanTakerType)
+	{
+	case ESoccerRestartType::Kickoff:
+		return MatchPlayState == ESoccerMatchPlayState::KickoffTaking;
+
+	case ESoccerRestartType::GoalKick:
+	case ESoccerRestartType::CornerKick:
+		return MatchPlayState == ESoccerMatchPlayState::GoalLineRestartTaking;
+
+	default:
+		return false;
+	}
+}
+
 bool ASoccerMatchManager::IsOffsideRestartFinalRunActiveForCharacter(
 	const ASoccerAICharacter* SoccerAICharacter
 ) const
@@ -9075,8 +9133,14 @@ bool ASoccerMatchManager::IsGoalLineRestartTaker(
 	const ASoccerAICharacter* SoccerAICharacter
 ) const
 {
+	const ESoccerRestartType ExpectedType =
+		GoalLineRestart.RestartType == ESoccerGoalLineRestartType::CornerKick
+		? ESoccerRestartType::CornerKick
+		: ESoccerRestartType::GoalKick;
+
 	return
 		IsGoalLineRestartActive() &&
+		!IsNonFreeKickHumanTakerClaimedFor(ExpectedType) &&
 		IsValid(SoccerAICharacter) &&
 		SoccerAICharacter == GoalLineRestart.TakerAI;
 }
@@ -9854,6 +9918,15 @@ FVector ASoccerMatchManager::GetGoalLineRestartMoveLocation(
 
 	if (SoccerAICharacter == GoalLineRestart.TakerAI)
 	{
+		const ESoccerRestartType ExpectedType =
+			GoalLineRestart.RestartType == ESoccerGoalLineRestartType::CornerKick
+			? ESoccerRestartType::CornerKick
+			: ESoccerRestartType::GoalKick;
+
+		if (IsNonFreeKickHumanTakerClaimedFor(ExpectedType))
+		{
+			return BuildNonFreeKickFallbackTakerMoveLocation(SoccerAICharacter);
+		}
 		// El corner usa movimiento manual fuera del NavMesh.
 		if (
 			GoalLineRestart.RestartType ==
@@ -12481,6 +12554,180 @@ void ASoccerMatchManager::ResetActiveRestartRestrictionRecovery()
 	ActiveRestartEmergencyTargetLocations.Empty();
 }
 
+bool ASoccerMatchManager::IsNonFreeKickHumanTakerClaimedFor(
+	ESoccerRestartType ExpectedRestartType
+) const
+{
+	return
+		bActiveNonFreeKickHumanTakerClaimed &&
+		ActiveNonFreeKickHumanTakerType == ExpectedRestartType &&
+		IsValid(ActiveNonFreeKickHumanTaker);
+}
+
+bool ASoccerMatchManager::UpdateNonFreeKickHumanTakerClaimDuringPreparation(
+	ESoccerRestartType ExpectedRestartType
+)
+{
+	if (
+		!IsRestartContextActive() ||
+		ActiveRestartType != ExpectedRestartType ||
+		(
+			ExpectedRestartType != ESoccerRestartType::Kickoff &&
+			ExpectedRestartType != ESoccerRestartType::GoalKick &&
+			ExpectedRestartType != ESoccerRestartType::CornerKick
+		)
+	)
+	{
+		return false;
+	}
+
+	AThirdPersonCppCharacter* CandidateHuman =
+		FindHumanCharacterForTeam(ActiveRestartTeam);
+
+	const bool bPreviousClaim =
+		IsNonFreeKickHumanTakerClaimedFor(ExpectedRestartType);
+
+	ActiveNonFreeKickHumanTaker = IsValid(CandidateHuman)
+		? CandidateHuman
+		: nullptr;
+	ActiveNonFreeKickHumanTakerType = ExpectedRestartType;
+	bActiveNonFreeKickHumanExecutionAuthorized = false;
+
+	if (!IsValid(ActiveNonFreeKickHumanTaker))
+	{
+		bActiveNonFreeKickHumanTakerClaimed = false;
+		return bPreviousClaim;
+	}
+
+	const float ClaimRadius =
+		FMath::Max(50.0f, RestartHumanTakerClaimRadius);
+	const float ReleaseRadius =
+		FMath::Max(ClaimRadius, RestartHumanTakerReleaseRadius);
+
+	const float DistanceToRestart = FVector::Dist2D(
+		ActiveNonFreeKickHumanTaker->GetActorLocation(),
+		ActiveRestartLocation
+	);
+
+	bActiveNonFreeKickHumanTakerClaimed = bPreviousClaim
+		? DistanceToRestart <= ReleaseRadius
+		: DistanceToRestart <= ClaimRadius;
+
+	if (bPreviousClaim != bActiveNonFreeKickHumanTakerClaimed)
+	{
+		const TCHAR* RestartLabel = TEXT("REANUDACION");
+		if (ExpectedRestartType == ESoccerRestartType::Kickoff)
+		{
+			RestartLabel = TEXT("KICKOFF");
+		}
+		else if (ExpectedRestartType == ESoccerRestartType::GoalKick)
+		{
+			RestartLabel = TEXT("SAQUE DE ARCO");
+		}
+		else if (ExpectedRestartType == ESoccerRestartType::CornerKick)
+		{
+			RestartLabel = TEXT("CORNER");
+		}
+
+		ASoccerDebugManager::Message(
+			this,
+			ESoccerDebugCategory::Restarts,
+			FString::Printf(
+				TEXT("%s: humano %s el saque"),
+				RestartLabel,
+				bActiveNonFreeKickHumanTakerClaimed
+					? TEXT("reclama")
+					: TEXT("cede")
+			),
+			bActiveNonFreeKickHumanTakerClaimed
+				? FColor::Cyan
+				: FColor::Yellow
+		);
+	}
+
+	return bPreviousClaim != bActiveNonFreeKickHumanTakerClaimed;
+}
+
+bool ASoccerMatchManager::ShouldNonFreeKickHumanTakerKeepExecutionClaim(
+	ESoccerRestartType ExpectedRestartType
+) const
+{
+	if (
+		!bActiveNonFreeKickHumanExecutionAuthorized ||
+		!IsNonFreeKickHumanTakerClaimedFor(ExpectedRestartType)
+	)
+	{
+		return false;
+	}
+
+	const float ReleaseRadius = FMath::Max(
+		FMath::Max(50.0f, RestartHumanTakerClaimRadius),
+		RestartHumanTakerReleaseRadius
+	);
+
+	return FVector::Dist2D(
+		ActiveNonFreeKickHumanTaker->GetActorLocation(),
+		ActiveRestartLocation
+	) <= ReleaseRadius;
+}
+
+void ASoccerMatchManager::AuthorizeNonFreeKickHumanTakerExecution(
+	ESoccerRestartType ExpectedRestartType
+)
+{
+	bActiveNonFreeKickHumanExecutionAuthorized =
+		IsNonFreeKickHumanTakerClaimedFor(ExpectedRestartType) &&
+		IsRestartContextActive() &&
+		ActiveRestartType == ExpectedRestartType;
+}
+
+void ASoccerMatchManager::ReleaseNonFreeKickHumanTakerClaim()
+{
+	bActiveNonFreeKickHumanTakerClaimed = false;
+	bActiveNonFreeKickHumanExecutionAuthorized = false;
+}
+
+void ASoccerMatchManager::ResetNonFreeKickHumanTakerRuntime()
+{
+	ActiveNonFreeKickHumanTaker = nullptr;
+	ActiveNonFreeKickHumanTakerType = ESoccerRestartType::None;
+	bActiveNonFreeKickHumanTakerClaimed = false;
+	bActiveNonFreeKickHumanExecutionAuthorized = false;
+}
+
+FVector ASoccerMatchManager::BuildNonFreeKickFallbackTakerMoveLocation(
+	const ASoccerAICharacter* SoccerAICharacter
+) const
+{
+	if (!IsValid(SoccerAICharacter))
+	{
+		return FVector::ZeroVector;
+	}
+
+	if (SoccerAICharacter->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
+	{
+		return ProjectLocationToNavigation(
+			GetGoalkeeperMoveLocation(SoccerAICharacter),
+			SoccerAICharacter
+		);
+	}
+
+	const ESoccerAIOrder RestartAttackOrder =
+		GetDefaultRestartAttackOrderForCharacter(SoccerAICharacter);
+
+	FVector DesiredLocation = BuildAttackShapeLocation(
+		SoccerAICharacter,
+		RestartAttackOrder
+	);
+	DesiredLocation = ApplyOffsideSafetyToAttackMoveLocation(
+		SoccerAICharacter,
+		DesiredLocation,
+		RestartAttackOrder
+	);
+
+	return ProjectLocationToNavigation(DesiredLocation, SoccerAICharacter);
+}
+
 void ASoccerMatchManager::BeginRestartContext(
 	ESoccerRestartType RestartType,
 	ESoccerTeam RestartTeam,
@@ -12513,6 +12760,7 @@ void ASoccerMatchManager::EndRestartContext()
 	FreeKickRestart.ResetRuntime(*this);
 	GoalLineRestart.ResetGoalKickFinalRunRuntime(*this);
 	GoalLineRestart.ResetCornerFinalRunRuntime(*this);
+	ResetNonFreeKickHumanTakerRuntime();
 
 	if (ActiveRestartType == ESoccerRestartType::ThrowIn)
 	{
@@ -12728,7 +12976,9 @@ float ASoccerMatchManager::GetActiveRestartAcceptanceRadius(
 	case ESoccerRestartType::CornerKick:
 		if (SoccerAICharacter == GoalLineRestart.TakerAI)
 		{
-			return GoalLineRestartTakerReadyDistance;
+			return IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::CornerKick)
+				? RestartDefaultBotAcceptanceRadius
+				: GoalLineRestartTakerReadyDistance;
 		}
 		if (SoccerAICharacter == GoalLineRestart.ReceiverAI)
 		{
@@ -12739,7 +12989,9 @@ float ASoccerMatchManager::GetActiveRestartAcceptanceRadius(
 	case ESoccerRestartType::GoalKick:
 		if (SoccerAICharacter == GoalLineRestart.TakerAI)
 		{
-			return GoalKickRunUpAcceptanceRadius;
+			return IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::GoalKick)
+				? RestartDefaultBotAcceptanceRadius
+				: GoalKickRunUpAcceptanceRadius;
 		}
 		if (SoccerAICharacter == GoalLineRestart.ReceiverAI)
 		{
@@ -15819,8 +16071,9 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 	}
 
 	// Human input must respect the restart phase before a touch is registered.
-	// AI takers keep their existing explicit restart paths below, while the
-	// human penalty taker remains the sole special case allowed outside Playing.
+	// AI takers keep their existing explicit restart paths below. Human penalties
+	// and authorized stationary-foot restart takers are the intentional exceptions
+	// that may register their first touch outside ordinary open play.
 	if (
 		const AThirdPersonCppCharacter* HumanCharacter =
 			Cast<AThirdPersonCppCharacter>(TouchingCharacter)
@@ -15845,6 +16098,16 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 	const bool bCompletingHumanFreeKickTouch =
 		IsValid(TouchingHuman) &&
 		FreeKickRestart.CanHumanTakerExecute(*this, TouchingHuman);
+
+	const bool bCompletingHumanNonFreeKickRestartTouch =
+		IsValid(TouchingHuman) &&
+		!bCompletingHumanFreeKickTouch &&
+		CanHumanFootRestartTakerExecuteNow(TouchingHuman) &&
+		(
+			ActiveRestartType == ESoccerRestartType::Kickoff ||
+			ActiveRestartType == ESoccerRestartType::GoalKick ||
+			ActiveRestartType == ESoccerRestartType::CornerKick
+		);
 
 	if (
 		bCompletingPenaltyKickTouch &&
@@ -15951,6 +16214,61 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 		);
 	}
 
+	if (bCompletingHumanNonFreeKickRestartTouch)
+	{
+		const ESoccerRestartType CompletedRestartType = ActiveRestartType;
+
+		DestroyActiveRestartHumanRestrictionIndicator();
+
+		// Goal kicks and corners never create an offside offence directly. The
+		// generic touch registration above may have prepared a snapshot, so erase
+		// it before open play begins.
+		if (
+			CompletedRestartType == ESoccerRestartType::GoalKick ||
+			CompletedRestartType == ESoccerRestartType::CornerKick
+		)
+		{
+			ClearPendingOffsideSnapshot();
+		}
+
+		MatchPlayState = ESoccerMatchPlayState::Playing;
+		EndRestartContext();
+
+		if (
+			CompletedRestartType == ESoccerRestartType::GoalKick ||
+			CompletedRestartType == ESoccerRestartType::CornerKick
+		)
+		{
+			GoalLineRestart.ResetRuntime();
+		}
+
+		StartNoRetouchRestriction(TouchingCharacter);
+		StartAttackRunReleaseForTeam(TouchingCharacter->GetTeam());
+		ClearAssignedAI();
+		RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+
+		const TCHAR* CompletedMessage = TEXT("Reanudacion realizada por el humano");
+		if (CompletedRestartType == ESoccerRestartType::Kickoff)
+		{
+			CompletedMessage = TEXT("Saque del centro realizado por el humano");
+		}
+		else if (CompletedRestartType == ESoccerRestartType::GoalKick)
+		{
+			CompletedMessage = TEXT("Saque de arco realizado por el humano");
+		}
+		else if (CompletedRestartType == ESoccerRestartType::CornerKick)
+		{
+			CompletedMessage = TEXT("Corner realizado por el humano");
+		}
+
+		ASoccerDebugManager::Message(
+			this,
+			ESoccerDebugCategory::Restarts,
+			CompletedMessage,
+			FColor::Green
+		);
+	}
+
 	return true;
 }
 
@@ -15973,7 +16291,16 @@ bool ASoccerMatchManager::CanCharacterTouchBallNow(
 
 	if (IsGoalLineRestartActive())
 	{
-		return false;
+		const AThirdPersonCppCharacter* HumanCharacter =
+			Cast<const AThirdPersonCppCharacter>(Character);
+
+		if (
+			!IsValid(HumanCharacter) ||
+			!CanHumanFootRestartTakerExecuteNow(HumanCharacter)
+		)
+		{
+			return false;
+		}
 	}
 
 	if (IsBallProtectedFromCharacter(Character))
@@ -16019,15 +16346,15 @@ bool ASoccerMatchManager::CanHumanStartBallActionNow(
 			CanCharacterTouchBallNow(Character);
 	}
 
-	// Free kicks use the same strong input lock during Configuration and
-	// Preparation. Once the explicit Execution phase starts, only the human who
-	// currently owns the restart receives a temporary exception.
-	if (CanHumanFreeKickTakerExecuteNow(Character))
+	// Stationary foot restarts use the same strong input lock during Configuration
+	// and Preparation. Once Execution starts, only the human who currently owns
+	// that restart receives a temporary exception.
+	if (CanHumanFootRestartTakerExecuteNow(Character))
 	{
 		return CanCharacterTouchBallNow(Character);
 	}
 
-	// A human free-kick impact ends the restart context immediately, while the
+	// A human set-piece impact ends the restart context immediately, while the
 	// explicit state transition to Playing is applied on the manager tick. Do not
 	// clear the just-finished kick animation in that one-frame handoff.
 	if (
@@ -17036,13 +17363,22 @@ bool ASoccerMatchManager::IsCharacterInLegalKickoffPosition(
 		return true;
 	}
 
-	// Única excepción:
-	// el bot que ejecuta el saque puede entrar al círculo central
-	// y acercarse a la pelota.
+	// Only the currently selected taker may enter the center circle and approach
+	// the ball. If the human claims the kickoff, the fallback AI loses this
+	// exception and must return to a normal legal kickoff position.
 	if (
 		IsValid(KickoffTakerAI) &&
-		Character == KickoffTakerAI
+		Character == KickoffTakerAI &&
+		!IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::Kickoff)
 		)
+	{
+		return true;
+	}
+
+	if (
+		IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::Kickoff) &&
+		Character == ActiveNonFreeKickHumanTaker
+	)
 	{
 		return true;
 	}
@@ -17522,6 +17858,7 @@ bool ASoccerMatchManager::IsKickoffTaker(
 ) const
 {
 	return
+		!IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::Kickoff) &&
 		IsValid(SoccerAICharacter) &&
 		SoccerAICharacter == KickoffTakerAI;
 }
@@ -17549,6 +17886,24 @@ FVector ASoccerMatchManager::GetKickoffMoveLocation(
 	if (SoccerAICharacter == nullptr)
 	{
 		return FVector::ZeroVector;
+	}
+
+	if (
+		SoccerAICharacter == KickoffTakerAI &&
+		IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::Kickoff)
+	)
+	{
+		if (AActor* HomePositionActor = SoccerAICharacter->GetHomePositionActor())
+		{
+			FVector HomeLocation = GetTeamRebasedFieldReferenceLocation(
+				SoccerAICharacter->GetTeam(),
+				HomePositionActor->GetActorLocation()
+			);
+			HomeLocation.Z = SoccerAICharacter->GetActorLocation().Z;
+			return HomeLocation;
+		}
+
+		return SoccerAICharacter->GetActorLocation();
 	}
 
 	if (

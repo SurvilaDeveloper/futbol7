@@ -20,6 +20,24 @@ bool FSoccerKickoffExecutionState::Enter(ASoccerMatchManager& Manager)
 	}
 
 	Manager.MatchPlayState = ESoccerMatchPlayState::KickoffTaking;
+
+	if (Manager.IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::Kickoff))
+	{
+		Manager.bKickoffFinalRunActive = false;
+		Manager.AuthorizeNonFreeKickHumanTakerExecution(
+			ESoccerRestartType::Kickoff
+		);
+		Manager.ResetActiveRestartReadyHold();
+
+		ASoccerDebugManager::Message(
+			&Manager,
+			ESoccerDebugCategory::Restarts,
+			TEXT("KICKOFF EXECUTION: humano habilitado para sacar"),
+			FColor::Cyan
+		);
+		return true;
+	}
+
 	Manager.CaptureActiveRestartAITargetLocations(true);
 
 	ASoccerDebugManager::Message(
@@ -51,7 +69,44 @@ void FSoccerKickoffExecutionState::Tick(
 		return;
 	}
 
+	if (
+		Manager.MatchPlayState == ESoccerMatchPlayState::Playing &&
+		!Manager.IsRestartContextActive()
+	)
+	{
+		Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+		return;
+	}
+
 	Manager.SoccerBall->StopBallKeepingPhysics();
+
+	if (Manager.bActiveNonFreeKickHumanExecutionAuthorized)
+	{
+		Manager.SoccerBall->SetActorLocation(
+			Manager.GetKickoffCenterLocation(),
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics
+		);
+
+		if (Manager.ShouldNonFreeKickHumanTakerKeepExecutionClaim(
+			ESoccerRestartType::Kickoff
+		))
+		{
+			return;
+		}
+
+		Manager.ReleaseNonFreeKickHumanTakerClaim();
+		Manager.RecalculateKickoffRunUpGeometry();
+		Manager.MatchPlayState = ESoccerMatchPlayState::KickoffSetup;
+		Manager.CaptureActiveRestartAITargetLocations(
+			Manager.AreKickoffPlayersInLegalPositions()
+		);
+		Manager.RequestMatchStateTransition(
+			ESoccerMatchStateTransition::KickoffPreparation
+		);
+		return;
+	}
 
 	if (!Manager.bKickoffFinalRunActive)
 	{

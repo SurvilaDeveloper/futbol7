@@ -542,6 +542,17 @@ public:
 		const AThirdPersonCppCharacter* HumanCharacter
 	) const;
 
+	// Common human execution query for stationary foot restarts. Free kicks keep
+	// their dedicated runtime, while kickoff/goal kick/corner use the shared
+	// non-free-kick claimant below. Input code should use this broader query.
+	bool IsHumanFootRestartTaker(
+		const AThirdPersonCppCharacter* HumanCharacter
+	) const;
+
+	bool CanHumanFootRestartTakerExecuteNow(
+		const AThirdPersonCppCharacter* HumanCharacter
+	) const;
+
 	bool IsOffsideRestartFinalRunActiveForCharacter(
 		const ASoccerAICharacter* SoccerAICharacter
 	) const;
@@ -1081,6 +1092,29 @@ bool IsPenaltyMatchStateActive() const;
 	);
 
 	void ResetActiveRestartReadyHold();
+
+	bool UpdateNonFreeKickHumanTakerClaimDuringPreparation(
+		ESoccerRestartType ExpectedRestartType
+	);
+
+	bool IsNonFreeKickHumanTakerClaimedFor(
+		ESoccerRestartType ExpectedRestartType
+	) const;
+
+	bool ShouldNonFreeKickHumanTakerKeepExecutionClaim(
+		ESoccerRestartType ExpectedRestartType
+	) const;
+
+	void AuthorizeNonFreeKickHumanTakerExecution(
+		ESoccerRestartType ExpectedRestartType
+	);
+
+	void ReleaseNonFreeKickHumanTakerClaim();
+	void ResetNonFreeKickHumanTakerRuntime();
+
+	FVector BuildNonFreeKickFallbackTakerMoveLocation(
+		const ASoccerAICharacter* SoccerAICharacter
+	) const;
 
 	bool IsTeamCurrentlyAttacking(ESoccerTeam Team) const;
 
@@ -2109,6 +2143,14 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Human Taker", meta = (ClampMin = "50.0"))
 		float FreeKickHumanTakerReleaseRadius = 380.0f;
 
+	// Kickoff, goal kick and corner share the same claim/release behavior. The
+	// free-kick values above remain separate so Stage 2 tuning is preserved.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Human Taker", meta = (ClampMin = "50.0"))
+		float RestartHumanTakerClaimRadius = 300.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Human Taker", meta = (ClampMin = "50.0"))
+		float RestartHumanTakerReleaseRadius = 380.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restart Restriction|Human Indicator")
 		bool bEnableThrowInHumanRestrictionIndicator = true;
 
@@ -2183,6 +2225,15 @@ bool IsPenaltyMatchStateActive() const;
 	TMap<ASoccerAICharacter*, FVector>
 		ActiveRestartEmergencyTargetLocations;
 	TSet<ASoccerAICharacter*> ActiveRestartEmergencyAssistedBots;
+
+	// Shared human-taker runtime for kickoff, goal kick and corner. The bot
+	// selected during Configuration remains the fallback and is never destroyed.
+	UPROPERTY()
+		AThirdPersonCppCharacter* ActiveNonFreeKickHumanTaker = nullptr;
+
+	ESoccerRestartType ActiveNonFreeKickHumanTakerType = ESoccerRestartType::None;
+	bool bActiveNonFreeKickHumanTakerClaimed = false;
+	bool bActiveNonFreeKickHumanExecutionAuthorized = false;
 
 	// Real receiver chosen for the execution only. ReceiverAI fields elsewhere
 	// remain untouched so bot preparation/positioning keeps its existing plan.

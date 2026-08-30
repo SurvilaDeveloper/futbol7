@@ -632,7 +632,7 @@ private:
 
 	// Captured when a kick animation starts so the restart-specific behavior
 	// survives the first-touch transition that immediately ends the context.
-	bool bActiveKickWasHumanFreeKickExecution = false;
+	bool bActiveKickWasHumanRestartExecution = false;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
 		float PassKickImpactDelay = 0.25f;

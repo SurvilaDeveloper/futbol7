@@ -46,9 +46,14 @@ bool FSoccerGoalKickPreparationState::Enter(ASoccerMatchManager& Manager)
 	);
 
 	Manager.MatchPlayState = ESoccerMatchPlayState::GoalLineRestartSetup;
+	const bool bHumanTakerClaimChanged =
+		Manager.UpdateNonFreeKickHumanTakerClaimDuringPreparation(
+			ESoccerRestartType::GoalKick
+		);
 
 	if (
 		!bUseStagedRestartContext ||
+		bHumanTakerClaimChanged ||
 		Manager.ActiveRestartAITargetLocations.Num() == 0
 	)
 	{
@@ -78,6 +83,25 @@ void FSoccerGoalKickPreparationState::Tick(ASoccerMatchManager& Manager, float D
 
 	if (Manager.MatchPlayState != ESoccerMatchPlayState::GoalLineRestartSetup)
 	{
+		return;
+	}
+
+	Manager.SoccerBall->StopBallKeepingPhysics();
+	Manager.SoccerBall->SetActorLocation(
+		Manager.GoalLineRestart.GetBallLocation(),
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics
+	);
+
+	if (Manager.UpdateNonFreeKickHumanTakerClaimDuringPreparation(
+		ESoccerRestartType::GoalKick
+	))
+	{
+		Manager.RecalculateGoalLineRestartGeometry();
+		Manager.CaptureActiveRestartAITargetLocations(
+			Manager.AreActiveRestartOpponentsLegal()
+		);
 		return;
 	}
 

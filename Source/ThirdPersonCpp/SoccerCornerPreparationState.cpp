@@ -50,9 +50,14 @@ bool FSoccerCornerPreparationState::Enter(ASoccerMatchManager& Manager)
     );
 
     Manager.MatchPlayState = ESoccerMatchPlayState::GoalLineRestartSetup;
+    const bool bHumanTakerClaimChanged =
+        Manager.UpdateNonFreeKickHumanTakerClaimDuringPreparation(
+            ESoccerRestartType::CornerKick
+        );
 
     if (
         !bUseStagedRestartContext ||
+        bHumanTakerClaimChanged ||
         Manager.ActiveRestartAITargetLocations.Num() == 0
     )
     {
@@ -80,6 +85,30 @@ void FSoccerCornerPreparationState::Tick(ASoccerMatchManager& Manager, float Del
         return;
     }
 
+    Manager.SoccerBall->StopBallKeepingPhysics();
+    Manager.SoccerBall->SetActorLocation(
+        Manager.GoalLineRestart.GetBallLocation(),
+        false,
+        nullptr,
+        ETeleportType::TeleportPhysics
+    );
+
+    if (Manager.UpdateNonFreeKickHumanTakerClaimDuringPreparation(
+        ESoccerRestartType::CornerKick
+    ))
+    {
+        if (IsValid(Manager.GoalLineRestart.GetTaker()))
+        {
+            Manager.GoalLineRestart.GetTaker()->ClearScriptedLocomotionVelocity();
+        }
+        Manager.MatchPlayState = ESoccerMatchPlayState::GoalLineRestartSetup;
+        Manager.RecalculateGoalLineRestartGeometry();
+        Manager.CaptureActiveRestartAITargetLocations(
+            Manager.AreActiveRestartOpponentsLegal()
+        );
+        return;
+    }
+
     if (Manager.MatchPlayState == ESoccerMatchPlayState::GoalLineRestartSetup)
     {
         if (!Manager.UpdateActiveRestartReadiness(
@@ -92,6 +121,16 @@ void FSoccerCornerPreparationState::Tick(ASoccerMatchManager& Manager, float Del
 
         Manager.RecalculateGoalLineRestartGeometry();
         Manager.GoalLineRestart.SetCornerFinalRunActive(false);
+
+        if (Manager.IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::CornerKick))
+        {
+            Manager.GoalLineRestart.GetTaker()->ClearScriptedLocomotionVelocity();
+            Manager.RequestMatchStateTransition(
+                ESoccerMatchStateTransition::CornerExecution
+            );
+            return;
+        }
+
         Manager.MatchPlayState = ESoccerMatchPlayState::GoalLineRestartPositioning;
 
         Manager.GoalLineRestart.GetTaker()->ClearScriptedLocomotionVelocity();

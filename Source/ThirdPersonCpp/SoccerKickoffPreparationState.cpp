@@ -27,6 +27,9 @@ bool FSoccerKickoffPreparationState::Enter(ASoccerMatchManager& Manager)
 	);
 
 	Manager.MatchPlayState = ESoccerMatchPlayState::KickoffSetup;
+	Manager.UpdateNonFreeKickHumanTakerClaimDuringPreparation(
+		ESoccerRestartType::Kickoff
+	);
 	Manager.CaptureActiveRestartAITargetLocations(false);
 
 	ASoccerDebugManager::Message(
@@ -50,6 +53,22 @@ void FSoccerKickoffPreparationState::Tick(ASoccerMatchManager& Manager, float De
 	}
 
 	Manager.SoccerBall->StopBallKeepingPhysics();
+	Manager.SoccerBall->SetActorLocation(
+		Manager.GetKickoffCenterLocation(),
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics
+	);
+
+	if (Manager.UpdateNonFreeKickHumanTakerClaimDuringPreparation(
+		ESoccerRestartType::Kickoff
+	))
+	{
+		Manager.CaptureActiveRestartAITargetLocations(
+			Manager.AreKickoffPlayersInLegalPositions()
+		);
+		return;
+	}
 
 	if (!IsValid(Manager.KickoffTakerAI) || !IsValid(Manager.KickoffReceiverAI))
 	{
@@ -63,12 +82,15 @@ void FSoccerKickoffPreparationState::Tick(ASoccerMatchManager& Manager, float De
 		return;
 	}
 
-	Manager.RecalculateKickoffRunUpGeometry();
-	if (Manager.KickoffRunUpStartLocation.IsNearlyZero())
+	if (!Manager.IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::Kickoff))
 	{
-		Manager.EndRestartContext();
-		Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
-		return;
+		Manager.RecalculateKickoffRunUpGeometry();
+		if (Manager.KickoffRunUpStartLocation.IsNearlyZero())
+		{
+			Manager.EndRestartContext();
+			Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+			return;
+		}
 	}
 
 	Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::KickoffExecution);
