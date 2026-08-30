@@ -1,6 +1,10 @@
-# ThirdPersonCpp – Soccer AI Gameplay Project
+# Futbol7
 
-A work-in-progress soccer gameplay project developed in **Unreal Engine 4.27 with C++**.
+[Español](README_ES.md)
+
+**Futbol7** is a work-in-progress soccer gameplay project developed in **Unreal Engine 4.27 with C++**.
+
+> **Technical note:** the Unreal project and C++ module are currently still named `ThirdPersonCpp`, because the project originally started from Unreal's default Third Person template. The public/project name is now **Futbol7**. The internal Unreal project/module name may be migrated later.
 
 The main goal is to build a soccer game where human-controlled players and AI-controlled teammates/opponents share the same match environment, rules, ball interactions, tactical behavior, animations and restart systems.
 
@@ -272,6 +276,6 @@ Upcoming work will continue to focus on:
 
 ## Notes
 
-This project is primarily being developed as a learning and experimentation environment for **gameplay programming, artificial intelligence, animation integration and soccer simulation systems**.
+Futbol7 is primarily being developed as a learning and experimentation environment for **gameplay programming, artificial intelligence, animation integration and soccer simulation systems**.
 
 The codebase changes frequently as systems are tested and redesigned.
