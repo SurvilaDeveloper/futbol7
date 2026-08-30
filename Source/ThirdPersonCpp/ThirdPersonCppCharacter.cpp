@@ -593,6 +593,15 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// Restarts and goalkeeper hand possession are authoritative. Clear any
+	// direct ball action immediately, before assisted aerial/chase logic has a
+	// chance to update. This also makes the cleanup resilient to a restriction
+	// that begins after the user's click was already pressed.
+	if (!IsHumanBallActionAllowedNow())
+	{
+		ClearBallActionsForMatchRestriction();
+	}
+
 	/*
 	 * ASoccerCharacterBase updates/cancels the predictive aerial plan in its
 	 * Tick. Observe the result before processing human locomotion so a lost
@@ -673,7 +682,14 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 	}
 	else if (SoccerControlState == ESoccerPlayerControlState::Kicking)
 	{
-		if (!bActiveKickHasImpactedBall)
+		const bool bKeepFreeKickBallStationary =
+			IsValid(MatchManager) &&
+			MatchManager->CanHumanFreeKickTakerExecuteNow(this);
+
+		if (
+			!bActiveKickHasImpactedBall &&
+			!bKeepFreeKickBallStationary
+		)
 		{
 			UpdatePossessedBallLocation();
 		}
@@ -1306,6 +1322,12 @@ void AThirdPersonCppCharacter::StartBallControl()
 		return;
 	}
 
+	if (!IsHumanBallActionAllowedNow())
+	{
+		ClearBallActionsForMatchRestriction();
+		return;
+	}
+
 	if (IsAerialActionLocked())
 	{
 		return;
@@ -1368,9 +1390,9 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 		FindMatchManager();
 	}
 
-	// No contin�a la persecuci�n autom�tica hacia una pelota
-	// asegurada por el arquero rival. Adem�s de impedir el robo,
-	// evita que el jugador corra deliberadamente contra �l.
+	// No continua la persecucion automatica hacia una pelota asegurada por un
+	// arquero. La proteccion tambien se aplica al humano del mismo equipo, para
+	// que no pueda sacar la pelota de las manos de su propio arquero.
 	if (
 		IsValid(MatchManager) &&
 		!MatchManager->CanCharacterTouchBallNow(this)
@@ -2117,34 +2139,12 @@ void AThirdPersonCppCharacter::ReleaseBallForAISteal()
 
 void AThirdPersonCppCharacter::ReleaseBallForMatchRestart(bool bShowFeedback)
 {
-	ClearHumanStealAttemptOnly();
-	ClearAutoPassFollowState();
-	ClearHumanJumpHeaderRequest(true, true);
-	ClearHumanBallClaim();
-
-	PendingKickMode = ESoccerPendingKickMode::None;
-	PendingKickTarget = FVector::ZeroVector;
-
-	bIsChargingKickRelease = false;
-
-	bHasPendingKickHorizontalSpeedOverride = false;
-	PendingKickHorizontalSpeedOverride = 0.0f;
-
-	HideAutoPassTargetMarker();
-	HideReleaseTargetMarker();
-
-	PendingDribbleInputDirection = FVector::ZeroVector;
-	bHasDesiredDribbleDirection = false;
-	bCanDribbleTouch = false;
+	ClearBallActionsForMatchRestriction();
 
 	if (ControlledBall != nullptr)
 	{
 		ControlledBall->SetPossessed(false);
 	}
-
-	SoccerControlState = ESoccerPlayerControlState::Manual;
-
-	UpdateEnergyAdjustedMovementSpeed();
 
 	if (bShowFeedback && GEngine)
 	{
@@ -2155,6 +2155,115 @@ void AThirdPersonCppCharacter::ReleaseBallForMatchRestart(bool bShowFeedback)
 			TEXT("Posesion perdida por reinicio de juego")
 		);
 	}
+}
+
+void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
+{
+	const bool bWasKickOrDribbleTurn =
+		SoccerControlState == ESoccerPlayerControlState::Kicking ||
+		SoccerControlState == ESoccerPlayerControlState::DribbleTurning;
+
+	ClearHumanStealAttemptOnly();
+	ClearAutoPassFollowState();
+
+	if (IsAerialActionApproaching() || IsAerialActionWaitingToStart())
+	{
+		CancelAerialAction();
+	}
+
+	ClearHumanJumpHeaderRequest(true, true);
+	ClearHumanBallClaim();
+	ClearBallPursuitTarget();
+
+	PendingKickMode = ESoccerPendingKickMode::None;
+	PendingKickTarget = FVector::ZeroVector;
+	bIsChargingKickRelease = false;
+	bHasPendingKickHorizontalSpeedOverride = false;
+	PendingKickHorizontalSpeedOverride = 0.0f;
+
+	HideAutoPassTargetMarker();
+	HideReleaseTargetMarker();
+
+	// A kick montage that was armed just before the restriction must not leave a
+	// delayed impact timer capable of firing after the restart has completed.
+	GetWorldTimerManager().ClearTimer(KickImpactTimerHandle);
+	GetWorldTimerManager().ClearTimer(KickFinishTimerHandle);
+	ActiveKickTarget = FVector::ZeroVector;
+	ActiveKickHorizontalSpeed = 0.0f;
+	ActiveKickMode = ESoccerPendingKickMode::None;
+	bActiveKickHasImpactedBall = false;
+	bActiveKickUsesChargedTrajectory = false;
+	bActiveKickWasHumanFreeKickExecution = false;
+
+	// The two dribble-turn systems also own delayed ball-contact timers. A
+	// restart can begin between montage start and impact, so erase those timers
+	// as part of the same restriction cleanup.
+	GetWorldTimerManager().ClearTimer(StrongRunDribbleTurnImpactTimerHandle);
+	GetWorldTimerManager().ClearTimer(StrongRunDribbleTurnFinishTimerHandle);
+	ActiveStrongRunDribbleTurnDirection = FVector::ZeroVector;
+	ActiveStrongRunDribbleTurnTouchSpeed = 0.0f;
+	ActiveStrongRunDribbleTurnUpwardSpeed = 0.0f;
+	bActiveStrongRunDribbleTurnHasImpactedBall = false;
+	bActiveStrongRunDribbleTurnShouldKickToTarget = false;
+	ActiveStrongRunDribbleTurnKickTarget = FVector::ZeroVector;
+	ActiveStrongRunDribbleTurnKickMode = ESoccerPendingKickMode::None;
+	ActiveStrongRunDribbleTurnKickHorizontalSpeed = 0.0f;
+	bActiveStrongRunDribbleTurnUsesChargedTrajectory = false;
+	ActiveStrongRunDribbleTurnResumeSpeed = 0.0f;
+	bIsStrongRunDribbleTurnActorRotating = false;
+	ActiveStrongRunDribbleTurnDuration = 0.0f;
+	ActiveStrongRunDribbleTurnElapsedTime = 0.0f;
+	ActiveStrongRunDribbleTurnInitialSpeed = 0.0f;
+	ActiveStrongRunDribbleTurnInitialDirection = FVector::ZeroVector;
+
+	GetWorldTimerManager().ClearTimer(NormalRunDribbleTurnImpactTimerHandle);
+	GetWorldTimerManager().ClearTimer(NormalRunDribbleTurnFinishTimerHandle);
+	ActiveNormalRunDribbleTurnDirection = FVector::ZeroVector;
+	ActiveNormalRunDribbleTurnTouchSpeed = 0.0f;
+	ActiveNormalRunDribbleTurnUpwardSpeed = 0.0f;
+	bActiveNormalRunDribbleTurnHasImpactedBall = false;
+	ActiveNormalRunDribbleTurnResumeSpeed = 0.0f;
+	ActiveNormalRunDribbleTurnDuration = 0.0f;
+	ActiveNormalRunDribbleTurnElapsedTime = 0.0f;
+	ActiveNormalRunDribbleTurnInitialSpeed = 0.0f;
+	ActiveNormalRunDribbleTurnInitialDirection = FVector::ZeroVector;
+
+	PendingDribbleInputDirection = FVector::ZeroVector;
+	bHasDesiredDribbleDirection = false;
+	bCanDribbleTouch = false;
+
+	bIgnoreChaseCancelUntilMovementInputChanges = false;
+	IgnoredMovementInputForChaseCancel = FVector2D::ZeroVector;
+
+	if (
+		SoccerControlState == ESoccerPlayerControlState::ChasingBall ||
+		SoccerControlState == ESoccerPlayerControlState::PossessingBall ||
+		SoccerControlState == ESoccerPlayerControlState::Kicking ||
+		SoccerControlState == ESoccerPlayerControlState::DribbleTurning
+		)
+	{
+		SoccerControlState = ESoccerPlayerControlState::Manual;
+	}
+
+	if (bWasKickOrDribbleTurn)
+	{
+		StopAnimMontage();
+	}
+
+	UpdateEnergyAdjustedMovementSpeed();
+}
+
+bool AThirdPersonCppCharacter::IsHumanBallActionAllowedNow()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	// Preserve the old standalone/debug behavior when no manager exists.
+	return
+		!IsValid(MatchManager) ||
+		MatchManager->CanHumanStartBallActionNow(this);
 }
 
 void AThirdPersonCppCharacter::UpdatePossessedBallLocation()
@@ -4136,6 +4245,12 @@ void AThirdPersonCppCharacter::HandleTackleInput()
         return;
     }
 
+	if (!IsHumanBallActionAllowedNow())
+	{
+		ClearBallActionsForMatchRestriction();
+		return;
+	}
+
     if (SoccerControlState == ESoccerPlayerControlState::ChasingBall)
     {
         CancelBallChaseByManualInput();
@@ -4223,6 +4338,12 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 		return;
 	}
 
+	if (!IsHumanBallActionAllowedNow())
+	{
+		ClearBallActionsForMatchRestriction();
+		return;
+	}
+
 	if (
 		IsValid(MatchManager) &&
 		MatchManager->IsPenaltyKickRestartActive() &&
@@ -4239,6 +4360,19 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 
 	if (SoccerControlState == ESoccerPlayerControlState::Kicking)
 	{
+		return;
+	}
+
+	// A free-kick taker is already at a dead-ball restart: the first left click
+	// must arm the actual pass/kick, not the generic "collect the loose ball"
+	// action used in open play.
+	if (
+		IsValid(MatchManager) &&
+		MatchManager->CanHumanFreeKickTakerExecuteNow(this)
+	)
+	{
+		ArmChaseCancelIgnoreForCurrentMovementInput();
+		StoreKickTarget(ESoccerPendingKickMode::KickAndFollow);
 		return;
 	}
 
@@ -4358,6 +4492,12 @@ void AThirdPersonCppCharacter::StartChargedKickRelease()
 		return;
 	}
 
+	if (!IsHumanBallActionAllowedNow())
+	{
+		ClearBallActionsForMatchRestriction();
+		return;
+	}
+
 	if (IsValid(MatchManager) && MatchManager->IsPenaltyKickRestartActive())
 	{
 		if (
@@ -4371,6 +4511,23 @@ void AThirdPersonCppCharacter::StartChargedKickRelease()
 
 		// During a penalty this button is only the normal charged shot.
 		// Do not arm the jump-header planner for the stationary ball.
+		bIsChargingKickRelease = true;
+		KickChargeStartTime = GetWorld()->GetTimeSeconds();
+		return;
+	}
+
+	if (
+		IsValid(MatchManager) &&
+		MatchManager->CanHumanFreeKickTakerExecuteNow(this)
+	)
+	{
+		if (SoccerControlState == ESoccerPlayerControlState::Kicking)
+		{
+			return;
+		}
+
+		// Same idea as the penalty: this is a stationary set piece, so right click
+		// charges a normal ground kick instead of arming aerial interception logic.
 		bIsChargingKickRelease = true;
 		KickChargeStartTime = GetWorld()->GetTimeSeconds();
 		return;
@@ -4401,6 +4558,12 @@ void AThirdPersonCppCharacter::FinishChargedKickRelease()
 {
 	if (IsTackleActive() || IsTackleFallReactionActive())
 	{
+		return;
+	}
+
+	if (!IsHumanBallActionAllowedNow())
+	{
+		ClearBallActionsForMatchRestriction();
 		return;
 	}
 
@@ -4537,6 +4700,12 @@ bool AThirdPersonCppCharacter::GetKickChargePercent(float& OutPercent) const
 
 void AThirdPersonCppCharacter::StoreKickTarget(ESoccerPendingKickMode KickMode)
 {
+	if (!IsHumanBallActionAllowedNow())
+	{
+		ClearBallActionsForMatchRestriction();
+		return;
+	}
+
 	FVector FieldLocation;
 
 	if (!GetMouseFieldLocation(FieldLocation))
@@ -4826,7 +4995,16 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		return;
 	}
 
-	if (TryStartStrongRunDribbleTurnForPendingKick())
+	const bool bHumanFreeKickExecution =
+		IsValid(MatchManager) &&
+		MatchManager->CanHumanFreeKickTakerExecuteNow(this);
+
+	// A set piece never starts a dribble-turn carry. The ball must remain on the
+	// restart spot until the actual kick impact.
+	if (
+		!bHumanFreeKickExecution &&
+		TryStartStrongRunDribbleTurnForPendingKick()
+	)
 	{
 		return;
 	}
@@ -4870,7 +5048,10 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 			return;
 		}
 
-		if (ExecutedMode == ESoccerPendingKickMode::KickAndFollow)
+		if (
+			ExecutedMode == ESoccerPendingKickMode::KickAndFollow &&
+			!bHumanFreeKickExecution
+		)
 		{
 			PrepareAutoPassBallForCleanKick(ExecutedTarget);
 		}
@@ -4898,7 +5079,10 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		bHasPendingKickHorizontalSpeedOverride = false;
 		PendingKickHorizontalSpeedOverride = 0.0f;
 
-		if (ExecutedMode == ESoccerPendingKickMode::KickAndFollow)
+		if (
+			ExecutedMode == ESoccerPendingKickMode::KickAndFollow &&
+			!bHumanFreeKickExecution
+		)
 		{
 			StartAutoPassFollow(ExecutedTarget);
 		}
@@ -4915,6 +5099,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 	ActiveKickMode = PendingKickMode;
 	bActiveKickHasImpactedBall = false;
 	bActiveKickUsesChargedTrajectory = bUseChargedTrajectory;
+	bActiveKickWasHumanFreeKickExecution = bHumanFreeKickExecution;
 
 	PendingKickMode = ESoccerPendingKickMode::None;
 
@@ -4925,8 +5110,18 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 
 	GetCharacterMovement()->StopMovementImmediately();
 
-	ControlledBall->SetPossessed(true);
-	UpdatePossessedBallLocation();
+	if (!bHumanFreeKickExecution)
+	{
+		ControlledBall->SetPossessed(true);
+		UpdatePossessedBallLocation();
+	}
+	else
+	{
+		// Preparation/Execution owns the restart spot until the impact callback.
+		// Do not attach or dribble the ball toward the human foot.
+		ControlledBall->SetPossessed(false);
+		ControlledBall->StopBallKeepingPhysics();
+	}
 
 	const float MontageDuration = PlayAnimMontage(KickMontage);
 
@@ -5006,7 +5201,10 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 		return;
 	}
 
-	if (ActiveKickMode == ESoccerPendingKickMode::KickAndFollow)
+	if (
+		ActiveKickMode == ESoccerPendingKickMode::KickAndFollow &&
+		!bActiveKickWasHumanFreeKickExecution
+	)
 	{
 		PrepareAutoPassBallForCleanKick(ActiveKickTarget);
 	}
@@ -5055,13 +5253,19 @@ void AThirdPersonCppCharacter::FinishPendingKickAnimation()
 
 	const ESoccerPendingKickMode FinishedKickMode = ActiveKickMode;
 	const FVector FinishedKickTarget = ActiveKickTarget;
+	const bool bFinishedHumanFreeKickExecution =
+		bActiveKickWasHumanFreeKickExecution;
 
 	ActiveKickMode = ESoccerPendingKickMode::None;
 	ActiveKickHorizontalSpeed = 0.0f;
 	bActiveKickHasImpactedBall = false;
 	bActiveKickUsesChargedTrajectory = false;
+	bActiveKickWasHumanFreeKickExecution = false;
 
-	if (FinishedKickMode == ESoccerPendingKickMode::KickAndFollow)
+	if (
+		FinishedKickMode == ESoccerPendingKickMode::KickAndFollow &&
+		!bFinishedHumanFreeKickExecution
+	)
 	{
 		StartAutoPassFollow(FinishedKickTarget);
 	}
@@ -5655,6 +5859,12 @@ void AThirdPersonCppCharacter::StartHumanStealAttempt(
 	ASoccerAICharacter* TargetAICharacter
 )
 {
+	if (!IsHumanBallActionAllowedNow())
+	{
+		ClearBallActionsForMatchRestriction();
+		return;
+	}
+
 	if (!IsValid(TargetAICharacter))
 	{
 		return;

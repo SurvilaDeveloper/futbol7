@@ -1834,7 +1834,10 @@ bool ASoccerMatchManager::IsBallProtectedFromCharacter(
 		IsBallSecuredByGoalkeeperHands()
 		)
 	{
-		return Goalkeeper->GetTeam() != Character->GetTeam();
+		// Nobody except the goalkeeper that is physically holding the ball may
+		// interact with it. The previous team-only check accidentally allowed a
+		// human teammate to take the ball out of his own goalkeeper's hands.
+		return Goalkeeper != Character;
 	}
 
 	// Durante el armado y la animación del lateral la pelota está
@@ -4231,6 +4234,20 @@ bool ASoccerMatchManager::IsOffsideRestartTaker(
 	return FreeKickRestart.IsTaker(*this, SoccerAICharacter);
 }
 
+bool ASoccerMatchManager::IsHumanFreeKickTaker(
+	const AThirdPersonCppCharacter* HumanCharacter
+) const
+{
+	return FreeKickRestart.IsHumanTaker(*this, HumanCharacter);
+}
+
+bool ASoccerMatchManager::CanHumanFreeKickTakerExecuteNow(
+	const AThirdPersonCppCharacter* HumanCharacter
+) const
+{
+	return FreeKickRestart.CanHumanTakerExecute(*this, HumanCharacter);
+}
+
 bool ASoccerMatchManager::IsOffsideRestartFinalRunActiveForCharacter(
 	const ASoccerAICharacter* SoccerAICharacter
 ) const
@@ -4300,12 +4317,19 @@ void ASoccerMatchManager::ReleaseAllHumanBallPossessions()
 			continue;
 		}
 
-		if (!HumanCharacter->IsPossessingBall())
-		{
-			continue;
-		}
+		const bool bWasPossessingBall =
+			HumanCharacter->IsPossessingBall();
 
-		HumanCharacter->ReleaseBallForMatchRestart();
+		if (bWasPossessingBall)
+		{
+			HumanCharacter->ReleaseBallForMatchRestart();
+		}
+		else
+		{
+			// A restart must also erase assisted actions that do not own the ball:
+			// chase, steal, aerial interception, queued kick and charged release.
+			HumanCharacter->ClearBallActionsForMatchRestriction();
+		}
 	}
 }
 
@@ -12657,7 +12681,9 @@ float ASoccerMatchManager::GetActiveRestartAcceptanceRadius(
 	case ESoccerRestartType::DirectFreeKick:
 		if (SoccerAICharacter == FreeKickRestart.GetTaker())
 		{
-			return OffsideRestartRunUpAcceptanceRadius;
+			return FreeKickRestart.IsHumanTakerClaimed()
+				? RestartDefaultBotAcceptanceRadius
+				: OffsideRestartRunUpAcceptanceRadius;
 		}
 		if (SoccerAICharacter == FreeKickRestart.GetReceiver())
 		{
@@ -15769,12 +15795,33 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 		return false;
 	}
 
+	// Human input must respect the restart phase before a touch is registered.
+	// AI takers keep their existing explicit restart paths below, while the
+	// human penalty taker remains the sole special case allowed outside Playing.
+	if (
+		const AThirdPersonCppCharacter* HumanCharacter =
+			Cast<AThirdPersonCppCharacter>(TouchingCharacter)
+		)
+	{
+		if (!CanHumanStartBallActionNow(HumanCharacter))
+		{
+			return false;
+		}
+	}
+
 	// A penalty first touch must be fully registered before we release the
 	// restart and before we install the taker's no-retouch restriction.
 	// Previously we enabled the restriction here and then the same first touch
 	// immediately failed the generic no-retouch check below. That left the ball
 	// untouched while MatchPlayState had already returned to Playing.
 	const bool bCompletingPenaltyKickTouch = IsPenaltyKickRestartActive();
+
+	const AThirdPersonCppCharacter* TouchingHuman =
+		Cast<AThirdPersonCppCharacter>(TouchingCharacter);
+
+	const bool bCompletingHumanFreeKickTouch =
+		IsValid(TouchingHuman) &&
+		FreeKickRestart.CanHumanTakerExecute(*this, TouchingHuman);
 
 	if (
 		bCompletingPenaltyKickTouch &&
@@ -15795,7 +15842,7 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 		return false;
 	}
 
-	// Regla fuerte: ningún rival puede registrar un toque sobre la
+	// Regla fuerte: ningún otro jugador puede registrar un toque sobre la
 	// pelota mientras permanezca asegurada en las manos del arquero.
 	if (IsBallProtectedFromCharacter(TouchingCharacter))
 	{
@@ -15852,6 +15899,35 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 		PenaltyKickRestart.OnFirstTouchRegistered(*this, TouchingCharacter);
 	}
 
+	if (bCompletingHumanFreeKickTouch)
+	{
+		const ESoccerRestartType CompletedRestartType =
+			FreeKickRestart.IsSupportedType(ActiveRestartType)
+			? ActiveRestartType
+			: ESoccerRestartType::DirectFreeKick;
+
+		DestroyActiveRestartHumanRestrictionIndicator();
+
+		// The real first touch is the restart boundary. From this instant the ball
+		// is live, the taker receives the normal no-retouch restriction, and the
+		// explicit state object is asked to hand control back to Playing.
+		MatchPlayState = ESoccerMatchPlayState::Playing;
+		EndRestartContext();
+		StartNoRetouchRestriction(TouchingCharacter);
+		StartAttackRunReleaseForTeam(TouchingCharacter->GetTeam());
+		ClearAssignedAI();
+		RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+
+		ASoccerDebugManager::Message(
+			this,
+			ESoccerDebugCategory::Restarts,
+			CompletedRestartType == ESoccerRestartType::DirectFreeKick
+				? TEXT("Tiro libre directo realizado por el humano")
+				: TEXT("Tiro libre por offside realizado por el humano"),
+			FColor::Green
+		);
+	}
+
 	return true;
 }
 
@@ -15898,6 +15974,72 @@ bool ASoccerMatchManager::CanCharacterTouchBallNow(
 	}
 
 	return Character != NoRetouchRestrictedCharacter;
+}
+
+bool ASoccerMatchManager::CanHumanStartBallActionNow(
+	const AThirdPersonCppCharacter* Character
+) const
+{
+	if (!IsValid(Character))
+	{
+		return false;
+	}
+
+	// Penalty execution already has a dedicated human-taker flow. Preparation
+	// stays locked; only the designated human may act once the taking phase has
+	// actually begun.
+	if (IsPenaltyKickRestartActive())
+	{
+		return
+			IsHumanPenaltyTaker(Character) &&
+			MatchPlayState == ESoccerMatchPlayState::PenaltyKickTaking &&
+			CanCharacterTouchBallNow(Character);
+	}
+
+	// Free kicks use the same strong input lock during Configuration and
+	// Preparation. Once the explicit Execution phase starts, only the human who
+	// currently owns the restart receives a temporary exception.
+	if (CanHumanFreeKickTakerExecuteNow(Character))
+	{
+		return CanCharacterTouchBallNow(Character);
+	}
+
+	// A human free-kick impact ends the restart context immediately, while the
+	// explicit state transition to Playing is applied on the manager tick. Do not
+	// clear the just-finished kick animation in that one-frame handoff.
+	if (
+		PendingMatchStateTransition == ESoccerMatchStateTransition::Playing &&
+		MatchPlayState == ESoccerMatchPlayState::Playing &&
+		!IsRestartContextActive()
+	)
+	{
+		return CanCharacterTouchBallNow(Character);
+	}
+
+	// Configuration states can exist for one tick before their Preparation
+	// helper creates the restart context. They must already be locked, otherwise
+	// a click in that narrow window can arm a chase/kick against the restart ball.
+	if (
+		ActiveMatchState &&
+		ActiveMatchState->GetStateId() != ESoccerMatchStateId::Playing
+		)
+	{
+		return false;
+	}
+
+	// All other direct human ball actions require genuine open play. Checking
+	// both bridges is intentional: some restart helpers set MatchPlayState to
+	// Playing immediately before their AI taker registers the first touch, while
+	// the restart context remains active until that touch is completed.
+	if (
+		MatchPlayState != ESoccerMatchPlayState::Playing ||
+		IsRestartContextActive()
+		)
+	{
+		return false;
+	}
+
+	return CanCharacterTouchBallNow(Character);
 }
 
 void ASoccerMatchManager::StartNoRetouchRestriction(

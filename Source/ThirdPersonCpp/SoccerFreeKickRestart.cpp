@@ -3,6 +3,7 @@
 #include "SoccerMatchManager.h"
 #include "SoccerAICharacter.h"
 #include "SoccerCharacterBase.h"
+#include "ThirdPersonCppCharacter.h"
 #include "SoccerBall.h"
 #include "SoccerDebugManager.h"
 #include "Engine/World.h"
@@ -34,8 +35,34 @@ bool FSoccerFreeKickRestart::IsTaker(
 {
 	return
 		IsActive(Manager) &&
+		!bHumanTakerClaimed &&
 		IsValid(SoccerAICharacter) &&
 		SoccerAICharacter == TakerAI;
+}
+
+bool FSoccerFreeKickRestart::IsHumanTaker(
+	const ASoccerMatchManager& Manager,
+	const AThirdPersonCppCharacter* HumanCharacter
+) const
+{
+	return
+		IsActive(Manager) &&
+		bHumanTakerClaimed &&
+		IsValid(HumanTaker) &&
+		IsValid(HumanCharacter) &&
+		HumanCharacter == HumanTaker;
+}
+
+bool FSoccerFreeKickRestart::CanHumanTakerExecute(
+	const ASoccerMatchManager& Manager,
+	const AThirdPersonCppCharacter* HumanCharacter
+) const
+{
+	return
+		IsHumanTaker(Manager, HumanCharacter) &&
+		bHumanExecutionAuthorized &&
+		!bFinalRunActive &&
+		Manager.MatchPlayState == ESoccerMatchPlayState::OffsideRestartTaking;
 }
 
 bool FSoccerFreeKickRestart::IsFinalRunActiveForCharacter(
@@ -196,6 +223,7 @@ bool FSoccerFreeKickRestart::Configure(
 	SetupStartTime = World->GetTimeSeconds();
 
 	TakerAI = FindClosestTakerForTeam(Manager, RestartTeam, RestartLocation);
+	HumanTaker = Manager.FindHumanCharacterForTeam(RestartTeam);
 	ReceiverAI = FindBestReceiverForTeam(
 		Manager,
 		RestartTeam,
@@ -246,18 +274,31 @@ bool FSoccerFreeKickRestart::EnterPreparation(ASoccerMatchManager& Manager)
 	ReceiverHoldLocation = BuildReceiverDesiredMoveLocation(Manager);
 	InitializeOpponentPositioningPlan(Manager);
 
+	Manager.MatchPlayState = ESoccerMatchPlayState::OffsideRestartSetup;
+	UpdateHumanTakerClaimDuringPreparation(Manager);
 	RecalculateRunUpGeometry(Manager);
 
-	Manager.MatchPlayState = ESoccerMatchPlayState::OffsideRestartSetup;
 	TakerWaitingLocation = BuildTakerWaitingLocation(Manager, TakerAI);
 	Manager.CaptureActiveRestartAITargetLocations(false);
 	return true;
 }
 
-bool FSoccerFreeKickRestart::IsPreparationReady(ASoccerMatchManager& Manager) const
+bool FSoccerFreeKickRestart::IsPreparationReady(ASoccerMatchManager& Manager)
 {
 	if (!IsRuntimeValid())
 	{
+		return false;
+	}
+
+	// The human may claim or release the restart while everybody is positioning.
+	// Any change invalidates the current ready hold because the fallback taker
+	// receives a different target.
+	if (UpdateHumanTakerClaimDuringPreparation(Manager))
+	{
+		RecalculateRunUpGeometry(Manager);
+		Manager.CaptureActiveRestartAITargetLocations(
+			AreOpponentsClear(Manager)
+		);
 		return false;
 	}
 
@@ -274,6 +315,31 @@ bool FSoccerFreeKickRestart::EnterExecution(ASoccerMatchManager& Manager)
 		return false;
 	}
 
+	// If the human still owns the restart when Preparation finishes, the whistle
+	// opens a genuine human execution window. The fallback AI stays parked until
+	// the human either kicks or leaves the release radius.
+	if (
+		bHumanTakerClaimed &&
+		IsValid(HumanTaker)
+	)
+	{
+		bFinalRunActive = false;
+		bHumanExecutionAuthorized = true;
+		Manager.ResetRestartKickContactTracking(ContactTracker);
+		Manager.MatchPlayState = ESoccerMatchPlayState::OffsideRestartTaking;
+		Manager.ResetActiveRestartReadyHold();
+
+		ASoccerDebugManager::Message(
+			&Manager,
+			ESoccerDebugCategory::Restarts,
+			TEXT("TIRO LIBRE: humano habilitado para ejecutar"),
+			FColor::Cyan
+		);
+
+		return true;
+	}
+
+	bHumanExecutionAuthorized = false;
 	BeginFinalRun(Manager);
 	return bFinalRunActive;
 }
@@ -283,6 +349,32 @@ bool FSoccerFreeKickRestart::TickExecutionAndCompleteIfNeeded(ASoccerMatchManage
 	if (!IsRuntimeValid())
 	{
 		return true;
+	}
+
+	if (bHumanExecutionAuthorized)
+	{
+		if (ShouldHumanKeepExecutionClaim(Manager))
+		{
+			// The human owns the live restart. Completion is triggered by the
+			// intentional first touch registered from the human kick path.
+			return false;
+		}
+
+		// The human walked away after the whistle. Hand the restart back to the
+		// preselected AI, recapture its run-up target, and wait until it settles.
+		bHumanTakerClaimed = false;
+		bHumanExecutionAuthorized = false;
+		RecalculateRunUpGeometry(Manager);
+		Manager.CaptureActiveRestartAITargetLocations(
+			AreOpponentsClear(Manager)
+		);
+
+		ASoccerDebugManager::Message(
+			&Manager,
+			ESoccerDebugCategory::Restarts,
+			TEXT("TIRO LIBRE: humano se alejo, ejecutor bot reasignado"),
+			FColor::Yellow
+		);
 	}
 
 	if (!bFinalRunActive)
@@ -954,6 +1046,11 @@ FVector FSoccerFreeKickRestart::GetMoveLocation(
 
 	if (SoccerAICharacter == TakerAI)
 	{
+		if (bHumanTakerClaimed)
+		{
+			return BuildFallbackTakerHoldLocation(Manager, SoccerAICharacter);
+		}
+
 		if (!AreOpponentsClear(Manager))
 		{
 			return !TakerWaitingLocation.IsNearlyZero()
@@ -1007,6 +1104,157 @@ FVector FSoccerFreeKickRestart::GetMoveLocation(
 	return BuildOpponentMoveLocation(Manager, SoccerAICharacter);
 }
 
+bool FSoccerFreeKickRestart::UpdateHumanTakerClaimDuringPreparation(
+	ASoccerMatchManager& Manager
+)
+{
+	AThirdPersonCppCharacter* CandidateHuman =
+		Manager.FindHumanCharacterForTeam(RestartTeam);
+
+	HumanTaker = IsValid(CandidateHuman)
+		? CandidateHuman
+		: nullptr;
+
+	const bool bPreviousClaim = bHumanTakerClaimed;
+
+	if (!IsValid(HumanTaker))
+	{
+		bHumanTakerClaimed = false;
+		return bPreviousClaim != bHumanTakerClaimed;
+	}
+
+	const float ClaimRadius =
+		FMath::Max(50.0f, Manager.FreeKickHumanTakerClaimRadius);
+	const float ReleaseRadius =
+		FMath::Max(
+			ClaimRadius,
+			Manager.FreeKickHumanTakerReleaseRadius
+		);
+
+	const float DistanceToRestart = FVector::Dist2D(
+		HumanTaker->GetActorLocation(),
+		RestartLocation
+	);
+
+	bHumanTakerClaimed =
+		bPreviousClaim
+		? DistanceToRestart <= ReleaseRadius
+		: DistanceToRestart <= ClaimRadius;
+
+	if (bPreviousClaim != bHumanTakerClaimed)
+	{
+		ASoccerDebugManager::Message(
+			&Manager,
+			ESoccerDebugCategory::Restarts,
+			bHumanTakerClaimed
+				? TEXT("TIRO LIBRE: humano reclama el saque")
+				: TEXT("TIRO LIBRE: humano cede el saque al bot"),
+			bHumanTakerClaimed ? FColor::Cyan : FColor::Yellow
+		);
+	}
+
+	return bPreviousClaim != bHumanTakerClaimed;
+}
+
+bool FSoccerFreeKickRestart::ShouldHumanKeepExecutionClaim(
+	const ASoccerMatchManager& Manager
+) const
+{
+	if (
+		!bHumanTakerClaimed ||
+		!bHumanExecutionAuthorized ||
+		!IsValid(HumanTaker)
+	)
+	{
+		return false;
+	}
+
+	const float ReleaseRadius =
+		FMath::Max(
+			FMath::Max(50.0f, Manager.FreeKickHumanTakerClaimRadius),
+			Manager.FreeKickHumanTakerReleaseRadius
+		);
+
+	return FVector::Dist2D(
+		HumanTaker->GetActorLocation(),
+		RestartLocation
+	) <= ReleaseRadius;
+}
+
+FVector FSoccerFreeKickRestart::BuildFallbackTakerHoldLocation(
+	const ASoccerMatchManager& Manager,
+	const ASoccerAICharacter* SoccerAICharacter
+) const
+{
+	if (!IsValid(SoccerAICharacter))
+	{
+		return FVector::ZeroVector;
+	}
+
+	const ESoccerAIOrder RestartAttackOrder =
+		Manager.GetDefaultRestartAttackOrderForCharacter(SoccerAICharacter);
+
+	FVector DesiredLocation = Manager.BuildAttackShapeLocation(
+		SoccerAICharacter,
+		RestartAttackOrder
+	);
+	DesiredLocation = Manager.ApplyOffsideSafetyToAttackMoveLocation(
+		SoccerAICharacter,
+		DesiredLocation,
+		RestartAttackOrder
+	);
+
+	if (DesiredLocation.IsNearlyZero())
+	{
+		DesiredLocation = SoccerAICharacter->GetActorLocation();
+	}
+
+	// Keep the fallback visibly clear of the human run-up even if the normal
+	// tactical shape happens to place this bot near the restart spot.
+	const float MinimumDistance =
+		FMath::Max(
+			500.0f,
+			FMath::Max(
+				Manager.FreeKickHumanTakerClaimRadius,
+				Manager.FreeKickHumanTakerReleaseRadius
+			) + 100.0f
+		);
+
+	FVector FromRestart = DesiredLocation - RestartLocation;
+	FromRestart.Z = 0.0f;
+
+	if (FromRestart.Size() < MinimumDistance)
+	{
+		if (!FromRestart.Normalize())
+		{
+			FVector AttackDirection =
+				Manager.GetFieldAttackDirectionForTeam(RestartTeam);
+			AttackDirection.Z = 0.0f;
+			if (!AttackDirection.Normalize())
+			{
+				AttackDirection = FVector::ForwardVector;
+			}
+
+			FromRestart =
+				FVector::CrossProduct(FVector::UpVector, AttackDirection);
+			FromRestart.Z = 0.0f;
+			if (!FromRestart.Normalize())
+			{
+				FromRestart = FVector::RightVector;
+			}
+		}
+
+		DesiredLocation =
+			RestartLocation + FromRestart * MinimumDistance;
+		DesiredLocation.Z = SoccerAICharacter->GetActorLocation().Z;
+	}
+
+	return Manager.ProjectLocationToNavigation(
+		DesiredLocation,
+		SoccerAICharacter
+	);
+}
+
 void FSoccerFreeKickRestart::RecalculateRunUpGeometry(ASoccerMatchManager& Manager)
 {
 	if (!IsValid(Manager.SoccerBall) || !IsValid(TakerAI) || !IsValid(ReceiverAI))
@@ -1049,6 +1297,9 @@ void FSoccerFreeKickRestart::BeginFinalRun(ASoccerMatchManager& Manager)
 	{
 		return;
 	}
+
+	bHumanTakerClaimed = false;
+	bHumanExecutionAuthorized = false;
 
 	const FVector BallLocation = Manager.SoccerBall->GetActorLocation();
 	const FVector ReceiverTargetLocation = BuildReceiverMoveLocation(Manager);
@@ -1124,6 +1375,9 @@ void FSoccerFreeKickRestart::ResetRuntime(ASoccerMatchManager& Manager)
 	SetupStartTime = -1000.0f;
 	TakerAI = nullptr;
 	ReceiverAI = nullptr;
+	HumanTaker = nullptr;
+	bHumanTakerClaimed = false;
+	bHumanExecutionAuthorized = false;
 	TakerWaitingLocation = FVector::ZeroVector;
 	ReceiverHoldLocation = FVector::ZeroVector;
 	OpponentHoldLocations.Empty();

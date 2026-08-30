@@ -15,7 +15,9 @@ bool FSoccerFaultExecutionState::Enter(ASoccerMatchManager& Manager)
 	ASoccerDebugManager::Message(
 		&Manager,
 		ESoccerDebugCategory::Restarts,
-		TEXT("FAULT EXECUTION: comienza la carrera del ejecutor"),
+		Manager.FreeKickRestart.IsHumanTakerClaimed()
+			? TEXT("FAULT EXECUTION: humano habilitado para sacar")
+			: TEXT("FAULT EXECUTION: comienza la carrera del ejecutor bot"),
 		FColor::Cyan
 	);
 	return true;

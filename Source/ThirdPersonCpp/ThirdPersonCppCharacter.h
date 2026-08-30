@@ -94,6 +94,12 @@ public:
 
 	void ReleaseBallForMatchRestart(bool bShowFeedback = true);
 
+	// Clears direct ball-control intent without changing ownership of the ball.
+	// Match restarts and goalkeeper hand protection use this so a click, chase,
+	// steal attempt or charged kick cannot survive the restricted window and
+	// fire later when play becomes legal again.
+	void ClearBallActionsForMatchRestriction();
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -245,6 +251,7 @@ void StartAutoPassCollectCarry();
 	float GetKickImpactDelayForMontage(UAnimMontage* KickMontage, float MontageDuration) const;
 
 	void CancelBallChaseByManualInput();
+	bool IsHumanBallActionAllowedNow();
 
 	void EnterManualControl();
 	void EnterChasingBall();
@@ -622,6 +629,10 @@ private:
 	bool bActiveKickHasImpactedBall = false;
 
 	bool bActiveKickUsesChargedTrajectory = false;
+
+	// Captured when a kick animation starts so the restart-specific behavior
+	// survives the first-touch transition that immediately ends the context.
+	bool bActiveKickWasHumanFreeKickExecution = false;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
 		float PassKickImpactDelay = 0.25f;

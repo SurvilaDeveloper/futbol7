@@ -7,6 +7,7 @@
 class ASoccerMatchManager;
 class ASoccerAICharacter;
 class ASoccerCharacterBase;
+class AThirdPersonCppCharacter;
 
 // Low-level technical helper shared temporarily by the independent Offside and
 // Fault state families. It owns reusable run-up/contact geometry, but it no
@@ -25,7 +26,7 @@ public:
 		const FVector& RestartLocation
 	);
 	bool EnterPreparation(ASoccerMatchManager& Manager);
-	bool IsPreparationReady(ASoccerMatchManager& Manager) const;
+	bool IsPreparationReady(ASoccerMatchManager& Manager);
 	bool EnterExecution(ASoccerMatchManager& Manager);
 	bool TickExecutionAndCompleteIfNeeded(ASoccerMatchManager& Manager);
 	bool IsRuntimeValid() const;
@@ -33,9 +34,13 @@ public:
 	bool IsSupportedType(ESoccerRestartType RestartType) const;
 	bool IsActive(const ASoccerMatchManager& Manager) const;
 	bool IsTaker(const ASoccerMatchManager& Manager, const ASoccerAICharacter* SoccerAICharacter) const;
+	bool IsHumanTaker(const ASoccerMatchManager& Manager, const AThirdPersonCppCharacter* HumanCharacter) const;
+	bool CanHumanTakerExecute(const ASoccerMatchManager& Manager, const AThirdPersonCppCharacter* HumanCharacter) const;
 	bool IsFinalRunActiveForCharacter(const ASoccerMatchManager& Manager, const ASoccerAICharacter* SoccerAICharacter) const;
 
 	ASoccerAICharacter* GetTaker() const { return TakerAI; }
+	AThirdPersonCppCharacter* GetHumanTaker() const { return HumanTaker; }
+	bool IsHumanTakerClaimed() const { return bHumanTakerClaimed; }
 	ASoccerAICharacter* GetReceiver() const { return ReceiverAI; }
 	ESoccerTeam GetRestartTeam() const { return RestartTeam; }
 	const FVector& GetRestartLocation() const { return RestartLocation; }
@@ -67,6 +72,13 @@ private:
 	void BeginFinalRun(ASoccerMatchManager& Manager);
 	bool IsTakerAtBallContact(ASoccerMatchManager& Manager);
 	void RecoverFinalRunAfterMiss(ASoccerMatchManager& Manager);
+
+	bool UpdateHumanTakerClaimDuringPreparation(ASoccerMatchManager& Manager);
+	bool ShouldHumanKeepExecutionClaim(const ASoccerMatchManager& Manager) const;
+	FVector BuildFallbackTakerHoldLocation(
+		const ASoccerMatchManager& Manager,
+		const ASoccerAICharacter* SoccerAICharacter
+	) const;
 
 	ASoccerAICharacter* FindClosestTakerForTeam(
 		ASoccerMatchManager& Manager,
@@ -111,6 +123,9 @@ private:
 
 	ASoccerAICharacter* TakerAI = nullptr;
 	ASoccerAICharacter* ReceiverAI = nullptr;
+	AThirdPersonCppCharacter* HumanTaker = nullptr;
+	bool bHumanTakerClaimed = false;
+	bool bHumanExecutionAuthorized = false;
 
 	// The selected receiver and these preparation targets are snapshots owned
 	// by this restart. They are not recomputed because another player moved.

@@ -472,12 +472,22 @@ public:
 		const ASoccerCharacterBase* Character
 	) const;
 
+	// Direct human ball actions are allowed only while open play is active,
+	// except for the dedicated human penalty-taker execution window. This is a
+	// stronger gate than CanCharacterTouchBallNow(): it is used before a click,
+	// chase, tackle or charged kick can arm an action that might otherwise remain
+	// pending until a restart finishes.
+	bool CanHumanStartBallActionNow(
+		const AThirdPersonCppCharacter* Character
+	) const;
+
 	// Devuelve true mientras la pelota está físicamente
 	// adjunta a las manos de un arquero que posee la pelota.
 	bool IsBallSecuredByGoalkeeperHands() const;
 
-	// Protege la pelota únicamente frente a jugadores rivales.
-	// La protección desaparece al soltarla o colocarla en el piso.
+	// Protege una pelota asegurada en las manos del arquero frente a cualquier
+	// otro jugador, incluido un compañero humano. La protección desaparece al
+	// soltarla o colocarla en el piso.
 	bool IsBallProtectedFromCharacter(
 		const ASoccerCharacterBase* Character
 	) const;
@@ -522,6 +532,14 @@ public:
 
 	bool IsOffsideRestartTaker(
 		const ASoccerAICharacter* SoccerAICharacter
+	) const;
+
+	bool IsHumanFreeKickTaker(
+		const AThirdPersonCppCharacter* HumanCharacter
+	) const;
+
+	bool CanHumanFreeKickTakerExecuteNow(
+		const AThirdPersonCppCharacter* HumanCharacter
 	) const;
 
 	bool IsOffsideRestartFinalRunActiveForCharacter(
@@ -2046,6 +2064,16 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Opponent Positioning", meta = (ClampMin = "0.0"))
 		float FreeKickOpponentPathSafetyMargin = 35.0f;
+
+	// A teammate human inside this radius claims a free kick during Preparation.
+	// The AI chosen in Configuration remains available as the fallback taker.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Human Taker", meta = (ClampMin = "50.0"))
+		float FreeKickHumanTakerClaimRadius = 300.0f;
+
+	// Hysteresis: after claiming the restart, the human must move beyond this
+	// larger radius before the fallback AI retakes responsibility.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Human Taker", meta = (ClampMin = "50.0"))
+		float FreeKickHumanTakerReleaseRadius = 380.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restart Restriction|Human Indicator")
 		bool bEnableThrowInHumanRestrictionIndicator = true;

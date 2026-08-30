@@ -2,6 +2,7 @@
 
 #include "SoccerMatchManager.h"
 #include "SoccerFreeKickRestart.h"
+#include "SoccerBall.h"
 #include "SoccerDebugManager.h"
 
 bool FSoccerOffsidePreparationState::Enter(ASoccerMatchManager& Manager)
@@ -27,6 +28,20 @@ void FSoccerOffsidePreparationState::Tick(ASoccerMatchManager& Manager, float De
 	{
 		Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
 		return;
+	}
+
+	// The human is allowed to move around the restart during Preparation so
+	// they can claim or release taker responsibility, but the ball itself remains
+	// authoritative at the restart spot until Execution.
+	if (IsValid(Manager.SoccerBall))
+	{
+		Manager.SoccerBall->StopBallKeepingPhysics();
+		Manager.SoccerBall->SetActorLocation(
+			Manager.FreeKickRestart.GetRestartLocation(),
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics
+		);
 	}
 
 	if (!Manager.FreeKickRestart.IsPreparationReady(Manager))
