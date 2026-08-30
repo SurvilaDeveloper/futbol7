@@ -1,7 +1,8 @@
-﻿#include "SoccerThrowInExecutionState.h"
+#include "SoccerThrowInExecutionState.h"
 
 #include "SoccerMatchManager.h"
 #include "SoccerAICharacter.h"
+#include "ThirdPersonCppCharacter.h"
 #include "SoccerCharacterBase.h"
 #include "SoccerBall.h"
 #include "SoccerDebugManager.h"
@@ -9,7 +10,54 @@
 
 bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 {
-	if (!IsValid(Manager.ThrowInTakerAI) || !IsValid(Manager.SoccerBall))
+	if (!IsValid(Manager.SoccerBall))
+	{
+		Manager.CancelThrowInRestart();
+		return false;
+	}
+
+	// Human path. The ball was physically picked up during Preparation, which
+	// commits the human to completing this restart. Execution now waits for the
+	// left-click target before moving to the direction-dependent outside start.
+	if (Manager.bThrowInHumanTakerCommitted)
+	{
+		if (
+			!IsValid(Manager.ThrowInHumanTaker) ||
+			!Manager.ThrowInHumanTaker->IsHoldingThrowInBall()
+		)
+		{
+			Manager.CancelThrowInRestart();
+			return false;
+		}
+
+		Manager.PossessingCharacter = Manager.ThrowInHumanTaker;
+		Manager.PossessionTeam =
+			Manager.ConvertTeamToPossessionTeam(Manager.ThrowInTeam);
+
+		Manager.bThrowInExecutionActive = true;
+		Manager.bThrowInBallReleased = false;
+		Manager.bThrowInReturningToField = false;
+		Manager.bThrowInCurveMotionInitialized = false;
+		Manager.bThrowInHumanExecutionAuthorized = true;
+		Manager.bThrowInHumanTargetSelected = false;
+		Manager.bThrowInHumanRepositioningForTarget = false;
+		Manager.bThrowInHumanMontageStarted = false;
+		Manager.ThrowInHumanTargetLocation = FVector::ZeroVector;
+		Manager.MatchPlayState = ESoccerMatchPlayState::ThrowInExecuting;
+
+		Manager.ThrowInHumanTaker->ClearThrowInScriptedMovementVelocity();
+
+		ASoccerDebugManager::Message(
+			&Manager,
+			ESoccerDebugCategory::Restarts,
+			TEXT("THROW IN EXECUTION: humano habilitado, click izquierdo para lanzar"),
+			FColor::Cyan
+		);
+		return true;
+	}
+
+	// Original AI path.
+	if (!IsValid(Manager.ThrowInTakerAI))
 	{
 		Manager.CancelThrowInRestart();
 		return false;
@@ -65,13 +113,11 @@ bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 
 	if (MontageDuration <= KINDA_SMALL_NUMBER)
 	{
-		// No montage: release immediately using the same rules as the normal
-		// release frame, then let Playing own the accessory return-to-field.
 		FVector TargetLocation =
 			Manager.GetActiveRestartExecutionTargetLocation(
 				IsValid(Manager.ThrowInReceiverAI)
-				? Manager.ThrowInReceiverAI->GetActorLocation()
-				: Manager.ThrowInReceiverMoveLocation
+					? Manager.ThrowInReceiverAI->GetActorLocation()
+					: Manager.ThrowInReceiverMoveLocation
 			);
 
 		TargetLocation.Z = Manager.SoccerBall->GetActorLocation().Z;
@@ -123,9 +169,6 @@ bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 			);
 		}
 
-		// Playing may resume immediately, but the throw-in montage is allowed to
-		// finish before return-to-field locomotion begins. Keep curve motion alive
-		// so the remaining in-place animation displacement is still reproduced.
 		Manager.bThrowInReturningToField = true;
 	}
 
@@ -159,7 +202,132 @@ void FSoccerThrowInExecutionState::Tick(
 		return;
 	}
 
-	if (!IsValid(Manager.ThrowInTakerAI) || !IsValid(Manager.SoccerBall))
+	if (!IsValid(Manager.SoccerBall))
+	{
+		Manager.CancelThrowInRestart();
+		Manager.RequestMatchStateTransition(
+			ESoccerMatchStateTransition::Playing
+		);
+		return;
+	}
+
+	// ------------------------------------------------------------
+	// HUMAN THROW-IN EXECUTION
+	// ------------------------------------------------------------
+	if (Manager.bThrowInHumanTakerCommitted)
+	{
+		AThirdPersonCppCharacter* Human = Manager.ThrowInHumanTaker;
+		if (
+			!IsValid(Human) ||
+			!Human->IsHoldingThrowInBall()
+		)
+		{
+			Manager.CancelThrowInRestart();
+			Manager.RequestMatchStateTransition(
+				ESoccerMatchStateTransition::Playing
+			);
+			return;
+		}
+
+		// Before the click, simply wait with the ball secured in the hands.
+		if (!Manager.bThrowInHumanTargetSelected)
+		{
+			Human->ClearThrowInScriptedMovementVelocity();
+			return;
+		}
+
+		// The clicked target determines the throw direction, and therefore the
+		// exact outside start needed for the in-place motion curve to reach the
+		// touchline correctly at the release frame.
+		if (!Manager.bThrowInHumanMontageStarted)
+		{
+			const FVector CurrentLocation = Human->GetActorLocation();
+			FVector ToStart = Manager.ThrowInOutsideStartLocation - CurrentLocation;
+			ToStart.Z = 0.0f;
+			const float DistanceToStart = ToStart.Size();
+
+			if (DistanceToStart > 6.0f)
+			{
+				const FVector MoveDirection = ToStart.GetSafeNormal();
+				Human->SetActorRotation(MoveDirection.Rotation());
+				Human->SetThrowInScriptedMovementVelocity(
+					MoveDirection *
+					FMath::Max(1.0f, Manager.ThrowInOutsidePositioningSpeed)
+				);
+				Manager.bThrowInHumanRepositioningForTarget = true;
+				return;
+			}
+
+			Human->ClearThrowInScriptedMovementVelocity();
+			Human->SetActorLocation(
+				Manager.ThrowInOutsideStartLocation,
+				false,
+				nullptr,
+				ETeleportType::TeleportPhysics
+			);
+			Human->SetActorRotation(Manager.ThrowInDirection.Rotation());
+			Manager.bThrowInHumanRepositioningForTarget = false;
+
+			FVector2D InitialCurveDisplacement;
+			Manager.bThrowInCurveMotionInitialized =
+				Manager.bUseThrowInCurveMotion &&
+				Manager.EvaluateThrowInLocalDisplacementNormalized(
+					0.0f,
+					InitialCurveDisplacement
+				);
+			Manager.ThrowInCurveMotionStartLocation = Human->GetActorLocation();
+
+			const float MontageDuration = Human->PlayThrowInMontage();
+			Manager.bThrowInHumanMontageStarted = true;
+
+			if (MontageDuration <= KINDA_SMALL_NUMBER)
+			{
+				// Missing montage is a safe gameplay fallback. Do not apply the full
+				// authored displacement instantaneously; release from the prepared spot.
+				Manager.bThrowInCurveMotionInitialized = false;
+				Manager.CompleteHumanThrowInRelease();
+			}
+			return;
+		}
+
+		float MontagePosition = 0.0f;
+		float MontageLength = 0.0f;
+		const bool bMontageActive = Human->GetThrowInMontagePlaybackState(
+			MontagePosition,
+			MontageLength
+		);
+
+		bool bShouldRelease = false;
+		if (!bMontageActive)
+		{
+			Manager.ApplyThrowInCurveMotionNormalized(1.0f);
+			bShouldRelease = true;
+		}
+		else
+		{
+			const float NormalizedTime = FMath::Clamp(
+				MontagePosition /
+					FMath::Max(MontageLength, KINDA_SMALL_NUMBER),
+				0.0f,
+				1.0f
+			);
+
+			Manager.ApplyThrowInCurveMotionNormalized(NormalizedTime);
+			bShouldRelease =
+				NormalizedTime >= Manager.ThrowInReleaseNormalizedTime;
+		}
+
+		if (bShouldRelease)
+		{
+			Manager.CompleteHumanThrowInRelease();
+		}
+		return;
+	}
+
+	// ------------------------------------------------------------
+	// AI THROW-IN EXECUTION (existing behavior)
+	// ------------------------------------------------------------
+	if (!IsValid(Manager.ThrowInTakerAI))
 	{
 		Manager.CancelThrowInRestart();
 		Manager.RequestMatchStateTransition(
@@ -226,8 +394,6 @@ void FSoccerThrowInExecutionState::Tick(
 		Manager.IsActiveRestartExecutionReceiverHuman();
 
 	Manager.EndRestartContext();
-
-	// A direct receiver from a throw-in is never punishable for offside.
 	Manager.ClearPendingOffsideSnapshot();
 	Manager.StartNoRetouchRestriction(Manager.ThrowInTakerAI);
 	Manager.StartAttackRunReleaseForTeam(Manager.ThrowInTeam);
@@ -260,8 +426,6 @@ void FSoccerThrowInExecutionState::Tick(
 		);
 	}
 
-	// Do not start Jog locomotion while throw_in_in_place is still playing.
-	// The Playing-state accessory updater finishes montage curve motion first.
 	Manager.bThrowInReturningToField = true;
 
 	if (GEngine)

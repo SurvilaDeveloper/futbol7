@@ -3,6 +3,7 @@
 #include "SoccerMatchManager.h"
 #include "SoccerBall.h"
 #include "SoccerAICharacter.h"
+#include "ThirdPersonCppCharacter.h"
 #include "SoccerDebugManager.h"
 
 bool FSoccerThrowInPreparationState::Enter(ASoccerMatchManager& Manager)
@@ -46,9 +47,12 @@ bool FSoccerThrowInPreparationState::Enter(ASoccerMatchManager& Manager)
     );
 
     Manager.MatchPlayState = ESoccerMatchPlayState::ThrowInSetup;
+    const bool bHumanClaimChanged =
+        Manager.UpdateHumanThrowInTakerClaimDuringPreparation();
 
     if (
         !bUseStagedRestartContext ||
+        bHumanClaimChanged ||
         Manager.ActiveRestartAITargetLocations.Num() == 0
     )
     {
@@ -79,6 +83,28 @@ void FSoccerThrowInPreparationState::Tick(ASoccerMatchManager& Manager, float De
 
     if (Manager.MatchPlayState == ESoccerMatchPlayState::ThrowInSetup)
     {
+        // Until somebody physically picks the ball up, keep it pinned to the
+        // legal touchline location. Claiming the throw-in never moves the ball.
+        if (Manager.SoccerBall->GetAttachParentActor() == nullptr)
+        {
+            Manager.SoccerBall->StopBallKeepingPhysics();
+            Manager.SoccerBall->SetActorLocation(
+                Manager.ThrowInLocation,
+                false,
+                nullptr,
+                ETeleportType::TeleportPhysics
+            );
+        }
+
+        if (Manager.UpdateHumanThrowInTakerClaimDuringPreparation())
+        {
+            Manager.RecalculateThrowInGeometry();
+            Manager.CaptureActiveRestartAITargetLocations(
+                Manager.AreActiveRestartOpponentsLegal()
+            );
+            return;
+        }
+
         if (!Manager.UpdateActiveRestartReadiness(
             Manager.ThrowInSetupStartTime,
             Manager.ThrowInMinSetupTime
@@ -89,8 +115,73 @@ void FSoccerThrowInPreparationState::Tick(ASoccerMatchManager& Manager, float De
 
         Manager.RecalculateThrowInGeometry();
 
-        // El ejecutor ya llego al punto de recogida. Toma la pelota antes
-        // de alejarse hacia el inicio exterior de throw_in_in_place.
+        if (Manager.bThrowInHumanTakerClaimed)
+        {
+            if (!IsValid(Manager.ThrowInHumanTaker))
+            {
+                Manager.bThrowInHumanTakerClaimed = false;
+                Manager.CaptureActiveRestartAITargetLocations(
+                    Manager.AreActiveRestartOpponentsLegal()
+                );
+                return;
+            }
+
+            // The claim radius decides who wants the restart. Actual pickup is
+            // stricter: the human must walk up to the same staging point used by
+            // the AI, so the ball never teleports into the player's hands.
+            if (FVector::Dist2D(
+                Manager.ThrowInHumanTaker->GetActorLocation(),
+                Manager.ThrowInStagingLocation
+            ) > FMath::Max(10.0f, Manager.ThrowInHumanPickupReadyDistance))
+            {
+                return;
+            }
+
+            FVector FaceBallDirection =
+                Manager.ThrowInLocation -
+                Manager.ThrowInHumanTaker->GetActorLocation();
+            FaceBallDirection.Z = 0.0f;
+
+            if (FaceBallDirection.Normalize())
+            {
+                Manager.ThrowInHumanTaker->SetActorRotation(
+                    FaceBallDirection.Rotation()
+                );
+            }
+
+            if (!Manager.ThrowInHumanTaker->HoldThrowInBall(Manager.SoccerBall))
+            {
+                Manager.CancelThrowInRestart();
+                Manager.RequestMatchStateTransition(
+                    ESoccerMatchStateTransition::Playing
+                );
+                return;
+            }
+
+            Manager.PossessingCharacter = Manager.ThrowInHumanTaker;
+            Manager.PossessionTeam =
+                Manager.ConvertTeamToPossessionTeam(Manager.ThrowInTeam);
+
+            // Once the ball is physically in the human's hands, the restart is
+            // committed. From here walking away no longer hands it back to AI.
+            Manager.bThrowInHumanTakerCommitted = true;
+            Manager.bThrowInHumanExecutionAuthorized = false;
+            Manager.bThrowInHumanTargetSelected = false;
+            Manager.bThrowInHumanRepositioningForTarget = false;
+            Manager.bThrowInHumanMontageStarted = false;
+            Manager.ThrowInHumanTargetLocation = FVector::ZeroVector;
+
+            Manager.ThrowInTakerAI->ClearScriptedLocomotionVelocity();
+            Manager.ThrowInHumanTaker->ClearThrowInScriptedMovementVelocity();
+
+            Manager.RequestMatchStateTransition(
+                ESoccerMatchStateTransition::ThrowInExecution
+            );
+            return;
+        }
+
+        // AI fallback path: unchanged. It picks the ball up and walks to the
+        // direction-dependent outside start before the throw-in montage begins.
         FVector FaceBallDirection =
             Manager.ThrowInLocation - Manager.ThrowInTakerAI->GetActorLocation();
         FaceBallDirection.Z = 0.0f;
@@ -188,8 +279,6 @@ void FSoccerThrowInPreparationState::Tick(ASoccerMatchManager& Manager, float De
     Manager.ThrowInTakerAI->ClearScriptedLocomotionVelocity();
     Manager.ThrowInTakerAI->SetActorRotation(Manager.ThrowInDirection.Rotation());
 
-    // Los rivales deben conservar la distancia hasta que comienza
-    // efectivamente la ejecucion del lateral.
     if (!Manager.AreActiveRestartOpponentsLegal())
     {
         return;

@@ -7872,9 +7872,81 @@ bool ASoccerMatchManager::IsThrowInTaker(
 ) const
 {
 	return
+		!bThrowInHumanTakerClaimed &&
+		!bThrowInHumanTakerCommitted &&
 		IsValid(SoccerAICharacter) &&
 		SoccerAICharacter == ThrowInTakerAI &&
 		(IsThrowInRestartActive() || bThrowInExecutionActive);
+}
+
+bool ASoccerMatchManager::IsHumanThrowInTaker(
+	const AThirdPersonCppCharacter* HumanCharacter
+) const
+{
+	return
+		IsValid(HumanCharacter) &&
+		IsValid(ThrowInHumanTaker) &&
+		HumanCharacter == ThrowInHumanTaker &&
+		(bThrowInHumanTakerClaimed || bThrowInHumanTakerCommitted);
+}
+
+bool ASoccerMatchManager::CanHumanThrowInTakerExecuteNow(
+	const AThirdPersonCppCharacter* HumanCharacter
+) const
+{
+	return
+		bThrowInHumanTakerCommitted &&
+		bThrowInHumanExecutionAuthorized &&
+		!bThrowInBallReleased &&
+		bThrowInExecutionActive &&
+		MatchPlayState == ESoccerMatchPlayState::ThrowInExecuting &&
+		IsHumanThrowInTaker(HumanCharacter) &&
+		IsValid(HumanCharacter) &&
+		HumanCharacter->IsHoldingThrowInBall();
+}
+
+bool ASoccerMatchManager::IsHumanThrowInMovementLocked(
+	const AThirdPersonCppCharacter* HumanCharacter
+) const
+{
+	return
+		IsValid(HumanCharacter) &&
+		IsValid(ThrowInHumanTaker) &&
+		HumanCharacter == ThrowInHumanTaker &&
+		bThrowInHumanTakerCommitted &&
+		bThrowInExecutionActive;
+}
+
+bool ASoccerMatchManager::TryStartHumanThrowInToTarget(
+	AThirdPersonCppCharacter* HumanCharacter,
+	const FVector& RequestedTargetLocation
+)
+{
+	if (
+		!CanHumanThrowInTakerExecuteNow(HumanCharacter) ||
+		bThrowInHumanTargetSelected ||
+		bThrowInHumanMontageStarted
+	)
+	{
+		return false;
+	}
+
+	if (!PrepareHumanThrowInDirectionAndStartLocation(RequestedTargetLocation))
+	{
+		return false;
+	}
+
+	bThrowInHumanTargetSelected = true;
+	bThrowInHumanRepositioningForTarget = true;
+
+	ASoccerDebugManager::Message(
+		this,
+		ESoccerDebugCategory::Restarts,
+		TEXT("LATERAL HUMANO: destino elegido, acomodando ejecutor"),
+		FColor::Cyan
+	);
+
+	return true;
 }
 
 float ASoccerMatchManager::GetThrowInPickupMoveAcceptanceRadius() const
@@ -7888,6 +7960,7 @@ bool ASoccerMatchManager::IsThrowInTakerAnimationLocked(
 {
 	return
 		bThrowInExecutionActive &&
+		!bThrowInHumanTakerCommitted &&
 		IsValid(SoccerAICharacter) &&
 		SoccerAICharacter == ThrowInTakerAI;
 }
@@ -8396,6 +8469,250 @@ void ASoccerMatchManager::StartThrowIn(
 	));
 }
 
+void ASoccerMatchManager::ResetHumanThrowInTakerRuntime()
+{
+	ThrowInHumanTaker = nullptr;
+	bThrowInHumanTakerClaimed = false;
+	bThrowInHumanTakerCommitted = false;
+	bThrowInHumanExecutionAuthorized = false;
+	bThrowInHumanTargetSelected = false;
+	bThrowInHumanRepositioningForTarget = false;
+	bThrowInHumanMontageStarted = false;
+	ThrowInHumanTargetLocation = FVector::ZeroVector;
+}
+
+bool ASoccerMatchManager::UpdateHumanThrowInTakerClaimDuringPreparation()
+{
+	if (
+		bThrowInHumanTakerCommitted ||
+		!IsRestartContextActive() ||
+		ActiveRestartType != ESoccerRestartType::ThrowIn ||
+		MatchPlayState != ESoccerMatchPlayState::ThrowInSetup
+	)
+	{
+		return false;
+	}
+
+	const bool bPreviousClaim = bThrowInHumanTakerClaimed;
+	AThirdPersonCppCharacter* CandidateHuman =
+		FindHumanCharacterForTeam(ThrowInTeam);
+
+	ThrowInHumanTaker = IsValid(CandidateHuman)
+		? CandidateHuman
+		: nullptr;
+	bThrowInHumanExecutionAuthorized = false;
+
+	if (!IsValid(ThrowInHumanTaker))
+	{
+		bThrowInHumanTakerClaimed = false;
+		return bPreviousClaim;
+	}
+
+	const float ClaimRadius = FMath::Max(
+		50.0f,
+		ThrowInHumanTakerClaimRadius
+	);
+	const float ReleaseRadius = FMath::Max(
+		ClaimRadius,
+		ThrowInHumanTakerReleaseRadius
+	);
+	const float DistanceToRestart = FVector::Dist2D(
+		ThrowInHumanTaker->GetActorLocation(),
+		ThrowInLocation
+	);
+
+	bThrowInHumanTakerClaimed = bPreviousClaim
+		? DistanceToRestart <= ReleaseRadius
+		: DistanceToRestart <= ClaimRadius;
+
+	if (bPreviousClaim != bThrowInHumanTakerClaimed)
+	{
+		ASoccerDebugManager::Message(
+			this,
+			ESoccerDebugCategory::Restarts,
+			bThrowInHumanTakerClaimed
+				? TEXT("LATERAL: humano reclama el saque")
+				: TEXT("LATERAL: humano cede el saque al bot"),
+			bThrowInHumanTakerClaimed
+				? FColor::Cyan
+				: FColor::Yellow
+		);
+	}
+
+	return bPreviousClaim != bThrowInHumanTakerClaimed;
+}
+
+bool ASoccerMatchManager::PrepareHumanThrowInDirectionAndStartLocation(
+	const FVector& RequestedTargetLocation
+)
+{
+	if (
+		!bThrowInHumanTakerCommitted ||
+		!IsValid(ThrowInHumanTaker)
+	)
+	{
+		return false;
+	}
+
+	FVector TargetLocation = RequestedTargetLocation;
+	if (IsValid(SoccerField))
+	{
+		TargetLocation = SoccerField->ClampWorldLocationInsidePitch(
+			TargetLocation,
+			80.0f
+		);
+	}
+	else
+	{
+		TargetLocation = SoccerFieldDimensions::ClampLocationInsidePitch(
+			TargetLocation,
+			80.0f
+		);
+	}
+
+	FVector RawDirection = TargetLocation - ThrowInLocation;
+	RawDirection.Z = 0.0f;
+
+	if (RawDirection.Size2D() < 120.0f)
+	{
+		RawDirection = ThrowInInwardDirection;
+		TargetLocation = ThrowInLocation + ThrowInInwardDirection * 700.0f;
+	}
+	RawDirection = RawDirection.GetSafeNormal();
+
+	const FVector AlongTouchline = IsValid(SoccerField)
+		? SoccerField->GetPitchLengthWorldDirection()
+		: FVector::ForwardVector;
+
+	const float InwardComponent = FMath::Max(
+		0.05f,
+		FVector::DotProduct(RawDirection, ThrowInInwardDirection)
+	);
+	float AlongComponent = FVector::DotProduct(
+		RawDirection,
+		AlongTouchline
+	);
+	const float MaximumSideTangent = FMath::Tan(
+		FMath::DegreesToRadians(
+			FMath::Clamp(ThrowInMaximumSideAngleDegrees, 0.0f, 85.0f)
+		)
+	);
+	AlongComponent = FMath::Clamp(
+		AlongComponent,
+		-InwardComponent * MaximumSideTangent,
+		InwardComponent * MaximumSideTangent
+	);
+
+	ThrowInDirection = (
+		ThrowInInwardDirection * InwardComponent +
+		AlongTouchline * AlongComponent
+	).GetSafeNormal();
+	if (ThrowInDirection.IsNearlyZero())
+	{
+		ThrowInDirection = ThrowInInwardDirection;
+	}
+	ThrowInRightDirection = FVector::CrossProduct(
+		FVector::UpVector,
+		ThrowInDirection
+	).GetSafeNormal();
+
+	FVector WorldMotionAtRelease = FVector::ZeroVector;
+	FVector2D ReleaseLocalDisplacement = FVector2D::ZeroVector;
+	const bool bHasReleaseCurveDisplacement =
+		bUseThrowInCurveMotion &&
+		EvaluateThrowInLocalDisplacementNormalized(
+			ThrowInReleaseNormalizedTime,
+			ReleaseLocalDisplacement
+		);
+
+	if (bHasReleaseCurveDisplacement)
+	{
+		WorldMotionAtRelease =
+			ThrowInDirection *
+			(ReleaseLocalDisplacement.X * ThrowInForwardMotionScale) +
+			ThrowInRightDirection *
+			(ReleaseLocalDisplacement.Y * ThrowInLateralMotionScale);
+	}
+
+	FVector DesiredReleaseLocation =
+		ThrowInLocation -
+		ThrowInInwardDirection * ThrowInDesiredCapsuleOutsideOffsetAtRelease;
+
+	ThrowInOutsideStartLocation = bHasReleaseCurveDisplacement
+		? DesiredReleaseLocation - WorldMotionAtRelease
+		: ThrowInLocation -
+			ThrowInInwardDirection * ThrowInFallbackOutsideDistance;
+	ThrowInOutsideStartLocation.Z = ThrowInHumanTaker->GetActorLocation().Z;
+
+	TargetLocation.Z = IsValid(SoccerBall)
+		? SoccerBall->GetActorLocation().Z
+		: TargetLocation.Z;
+	ThrowInHumanTargetLocation = TargetLocation;
+	return true;
+}
+
+bool ASoccerMatchManager::CompleteHumanThrowInRelease()
+{
+	if (
+		!IsValid(ThrowInHumanTaker) ||
+		!IsValid(SoccerBall) ||
+		!CanHumanThrowInTakerExecuteNow(ThrowInHumanTaker) ||
+		!bThrowInHumanTargetSelected
+	)
+	{
+		return false;
+	}
+
+	FVector TargetLocation = ThrowInHumanTargetLocation;
+	TargetLocation.Z = SoccerBall->GetActorLocation().Z;
+
+	// Throw-ins never create an offside offence directly.
+	ClearPendingOffsideSnapshot();
+
+	if (!TryRegisterIntentionalBallTouch(ThrowInHumanTaker))
+	{
+		return false;
+	}
+
+	if (!ThrowInHumanTaker->ReleaseHeldThrowInBallToAirTarget(
+		TargetLocation,
+		ThrowInPassHorizontalSpeed,
+		ThrowInPassMinTravelTime,
+		ThrowInPassMaxTravelTime
+	))
+	{
+		return false;
+	}
+
+	AThirdPersonCppCharacter* CompletedThrower = ThrowInHumanTaker;
+
+	// The release frame is the restart boundary. Keep the throw-in accessory
+	// runtime alive for montage completion/return-to-field, but end the legal
+	// restart context immediately so normal open play can resume.
+	EndRestartContext();
+	ClearPendingOffsideSnapshot();
+	StartNoRetouchRestriction(CompletedThrower);
+	StartAttackRunReleaseForTeam(ThrowInTeam);
+
+	bThrowInBallReleased = true;
+	bThrowInHumanExecutionAuthorized = false;
+	PossessingCharacter = nullptr;
+	PossessionTeam = ESoccerPossessionTeam::None;
+	MatchPlayState = ESoccerMatchPlayState::Playing;
+	ClearAssignedAI();
+	bThrowInReturningToField = true;
+
+	ASoccerDebugManager::Message(
+		this,
+		ESoccerDebugCategory::Restarts,
+		TEXT("Saque lateral realizado por el humano"),
+		FColor::Green
+	);
+
+	RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
+	return true;
+}
+
 bool ASoccerMatchManager::ConfigureThrowInRestart(
 	ESoccerTeam RestartTeam,
 	const FVector& TouchlineLocation,
@@ -8408,6 +8725,8 @@ bool ASoccerMatchManager::ConfigureThrowInRestart(
 	{
 		return false;
 	}
+
+	ResetHumanThrowInTakerRuntime();
 
 	ThrowInTeam = RestartTeam;
 	ThrowInLocation = TouchlineLocation;
@@ -8794,6 +9113,11 @@ FVector ASoccerMatchManager::GetThrowInMoveLocation(
 
 	if (SoccerAICharacter == ThrowInTakerAI)
 	{
+		if (bThrowInHumanTakerClaimed || bThrowInHumanTakerCommitted)
+		{
+			return BuildNonFreeKickFallbackTakerMoveLocation(SoccerAICharacter);
+		}
+
 		return
 			(MatchPlayState == ESoccerMatchPlayState::ThrowInSetup ||
 			 IsThrowInDelayPositioningActive())
@@ -8873,43 +9197,64 @@ bool ASoccerMatchManager::ApplyThrowInCurveMotionNormalized(
 	float NormalizedTime
 )
 {
-	if (
-		!bThrowInCurveMotionInitialized ||
-		!IsValid(ThrowInTakerAI)
-		)
+	if (!bThrowInCurveMotionInitialized)
+	{
+		return false;
+	}
+
+	ASoccerCharacterBase* ActiveThrower = nullptr;
+	if (bThrowInHumanTakerCommitted && IsValid(ThrowInHumanTaker))
+	{
+		ActiveThrower = ThrowInHumanTaker;
+	}
+	else if (IsValid(ThrowInTakerAI))
+	{
+		ActiveThrower = ThrowInTakerAI;
+	}
+
+	if (!IsValid(ActiveThrower))
 	{
 		return false;
 	}
 
 	FVector2D LocalDisplacement;
-
-	if (
-		!EvaluateThrowInLocalDisplacementNormalized(
-			NormalizedTime,
-			LocalDisplacement
-		)
-		)
+	if (!EvaluateThrowInLocalDisplacementNormalized(
+		NormalizedTime,
+		LocalDisplacement
+	))
 	{
 		return false;
 	}
 
 	const FVector DesiredHorizontalOffset =
 		ThrowInDirection *
-		(LocalDisplacement.X * ThrowInForwardMotionScale)
-		+
+		(LocalDisplacement.X * ThrowInForwardMotionScale) +
 		ThrowInRightDirection *
 		(LocalDisplacement.Y * ThrowInLateralMotionScale);
 
 	FVector DesiredLocation =
 		ThrowInCurveMotionStartLocation + DesiredHorizontalOffset;
-	DesiredLocation.Z = ThrowInTakerAI->GetActorLocation().Z;
+	DesiredLocation.Z = ActiveThrower->GetActorLocation().Z;
 
-	FVector Delta = DesiredLocation - ThrowInTakerAI->GetActorLocation();
+	FVector Delta = DesiredLocation - ActiveThrower->GetActorLocation();
 	Delta.Z = 0.0f;
 
-	ThrowInTakerAI->MoveThrowInByWorldDelta(Delta);
+	if (bThrowInHumanTakerCommitted && ActiveThrower == ThrowInHumanTaker)
+	{
+		ThrowInHumanTaker->MoveThrowInByWorldDelta(Delta);
+	}
+	else if (IsValid(ThrowInTakerAI))
+	{
+		ThrowInTakerAI->MoveThrowInByWorldDelta(Delta);
+	}
 
-	if (ASoccerDebugManager::IsWorldDrawingEnabled(this, ESoccerDebugCategory::Restarts) && GetWorld() != nullptr)
+	if (
+		ASoccerDebugManager::IsWorldDrawingEnabled(
+			this,
+			ESoccerDebugCategory::Restarts
+		) &&
+		GetWorld() != nullptr
+	)
 	{
 		DrawDebugLine(
 			GetWorld(),
@@ -8928,20 +9273,23 @@ bool ASoccerMatchManager::ApplyThrowInCurveMotionNormalized(
 
 void ASoccerMatchManager::UpdateThrowInReturnToField(float DeltaTime)
 {
-	if (!IsValid(ThrowInTakerAI))
+	const bool bHumanThrower =
+		bThrowInHumanTakerCommitted && IsValid(ThrowInHumanTaker);
+
+	if (!bHumanThrower && !IsValid(ThrowInTakerAI))
 	{
 		CancelThrowInRestart();
 		return;
 	}
 
-	// The ball is already live and the match may be in Playing, but the thrower
-	// must be allowed to finish throw_in_in_place before ordinary locomotion
-	// takes control. Otherwise SetScriptedLocomotionVelocity(Jog) interrupts the
-	// montage visually and produces a short slide immediately after release.
 	float MontagePosition = 0.0f;
 	float MontageLength = 0.0f;
-	const bool bThrowInMontageStillActive =
-		ThrowInTakerAI->GetThrowInMontagePlaybackState(
+	const bool bThrowInMontageStillActive = bHumanThrower
+		? ThrowInHumanTaker->GetThrowInMontagePlaybackState(
+			MontagePosition,
+			MontageLength
+		)
+		: ThrowInTakerAI->GetThrowInMontagePlaybackState(
 			MontagePosition,
 			MontageLength
 		);
@@ -8956,17 +9304,20 @@ void ASoccerMatchManager::UpdateThrowInReturnToField(float DeltaTime)
 				0.0f,
 				1.0f
 			);
-
 			ApplyThrowInCurveMotionNormalized(NormalizedTime);
 		}
 
-		// Important: do not request Jog/Run locomotion while the montage is alive.
-		ThrowInTakerAI->ClearScriptedLocomotionVelocity();
+		if (bHumanThrower)
+		{
+			ThrowInHumanTaker->ClearThrowInScriptedMovementVelocity();
+		}
+		else
+		{
+			ThrowInTakerAI->ClearScriptedLocomotionVelocity();
+		}
 		return;
 	}
 
-	// Ensure the final horizontal displacement encoded by the animation is
-	// applied once before switching to normal return-to-field locomotion.
 	if (bThrowInCurveMotionInitialized)
 	{
 		ApplyThrowInCurveMotionNormalized(1.0f);
@@ -8977,15 +9328,43 @@ void ASoccerMatchManager::UpdateThrowInReturnToField(float DeltaTime)
 		ThrowInLocation +
 		ThrowInInwardDirection * ThrowInStagingInsideDistance;
 
+	if (bHumanThrower)
+	{
+		ReturnLocation.Z = ThrowInHumanTaker->GetActorLocation().Z;
+		const FVector CurrentLocation = ThrowInHumanTaker->GetActorLocation();
+		FVector ToReturn = ReturnLocation - CurrentLocation;
+		ToReturn.Z = 0.0f;
+		const float DistanceToReturn = ToReturn.Size();
+
+		if (DistanceToReturn > 4.0f)
+		{
+			const FVector MoveDirection = ToReturn.GetSafeNormal();
+			ThrowInHumanTaker->SetActorRotation(MoveDirection.Rotation());
+			ThrowInHumanTaker->SetThrowInScriptedMovementVelocity(
+				MoveDirection * FMath::Max(1.0f, ThrowInReturnToFieldSpeed)
+			);
+			return;
+		}
+
+		ThrowInHumanTaker->ClearThrowInScriptedMovementVelocity();
+		ThrowInHumanTaker->SetActorLocation(
+			ReturnLocation,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics
+		);
+		bThrowInReturningToField = false;
+		FinishThrowInExecution();
+		return;
+	}
+
 	ReturnLocation.Z = ThrowInTakerAI->GetActorLocation().Z;
 	ReturnLocation = ProjectLocationToNavigation(
 		ReturnLocation,
 		ThrowInTakerAI
 	);
 
-	const FVector CurrentLocation =
-		ThrowInTakerAI->GetActorLocation();
-
+	const FVector CurrentLocation = ThrowInTakerAI->GetActorLocation();
 	const FVector NewLocation = FMath::VInterpConstantTo(
 		CurrentLocation,
 		ReturnLocation,
@@ -9012,7 +9391,6 @@ void ASoccerMatchManager::UpdateThrowInReturnToField(float DeltaTime)
 		nullptr,
 		ETeleportType::None
 	);
-
 	ThrowInTakerAI->SetScriptedLocomotionVelocity(
 		ScriptedVelocity,
 		ESoccerAIMovementMode::Jog,
@@ -9027,7 +9405,6 @@ void ASoccerMatchManager::UpdateThrowInReturnToField(float DeltaTime)
 			nullptr,
 			ETeleportType::TeleportPhysics
 		);
-
 		ThrowInTakerAI->ClearScriptedLocomotionVelocity();
 		bThrowInReturningToField = false;
 		FinishThrowInExecution();
@@ -9054,6 +9431,11 @@ void ASoccerMatchManager::FinishThrowInExecution()
 		ThrowInTakerAI->ClearScriptedLocomotionVelocity();
 	}
 
+	if (IsValid(ThrowInHumanTaker))
+	{
+		ThrowInHumanTaker->ClearThrowInScriptedMovementVelocity();
+	}
+
 	bThrowInExecutionActive = false;
 	bThrowInReturningToField = false;
 	bThrowInCurveMotionInitialized = false;
@@ -9066,6 +9448,7 @@ void ASoccerMatchManager::FinishThrowInExecution()
 
 	ThrowInTakerAI = nullptr;
 	ThrowInReceiverAI = nullptr;
+	ResetHumanThrowInTakerRuntime();
 }
 
 void ASoccerMatchManager::CancelThrowInRestart()
@@ -9087,6 +9470,12 @@ void ASoccerMatchManager::CancelThrowInRestart()
 		}
 	}
 
+	if (IsValid(ThrowInHumanTaker))
+	{
+		ThrowInHumanTaker->CancelHeldThrowInBall();
+		ThrowInHumanTaker->ClearThrowInScriptedMovementVelocity();
+	}
+
 	if (IsValid(SoccerBall))
 	{
 		if (SoccerBall->GetAttachParentActor() != nullptr)
@@ -9106,6 +9495,7 @@ void ASoccerMatchManager::CancelThrowInRestart()
 	bThrowInCurveMotionInitialized = false;
 	ThrowInTakerAI = nullptr;
 	ThrowInReceiverAI = nullptr;
+	ResetHumanThrowInTakerRuntime();
 
 	if (
 		MatchPlayState == ESoccerMatchPlayState::ThrowInSetup ||
@@ -13023,7 +13413,10 @@ float ASoccerMatchManager::GetActiveRestartAcceptanceRadius(
 	case ESoccerRestartType::ThrowIn:
 		if (SoccerAICharacter == ThrowInTakerAI)
 		{
-			return ThrowInPickupReadyDistance;
+			return
+				(bThrowInHumanTakerClaimed || bThrowInHumanTakerCommitted)
+				? RestartDefaultBotAcceptanceRadius
+				: ThrowInPickupReadyDistance;
 		}
 		if (SoccerAICharacter == ThrowInReceiverAI)
 		{
@@ -16128,19 +16521,24 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 		return false;
 	}
 
+	const AThirdPersonCppCharacter* TouchingHuman =
+		Cast<AThirdPersonCppCharacter>(TouchingCharacter);
+
+	const bool bCompletingHumanThrowInTouch =
+		IsValid(TouchingHuman) &&
+		CanHumanThrowInTakerExecuteNow(TouchingHuman);
+
 	// Human input must respect the restart phase before a touch is registered.
-	// AI takers keep their existing explicit restart paths below. Human penalties
-	// and authorized stationary-foot restart takers are the intentional exceptions
-	// that may register their first touch outside ordinary open play.
+	// Throw-ins are the one hand-possession exception: ordinary human ball input
+	// remains locked, but the execution state may explicitly register the legal
+	// release touch once the montage reaches its release frame.
 	if (
-		const AThirdPersonCppCharacter* HumanCharacter =
-			Cast<AThirdPersonCppCharacter>(TouchingCharacter)
-		)
+		IsValid(TouchingHuman) &&
+		!CanHumanStartBallActionNow(TouchingHuman) &&
+		!bCompletingHumanThrowInTouch
+	)
 	{
-		if (!CanHumanStartBallActionNow(HumanCharacter))
-		{
-			return false;
-		}
+		return false;
 	}
 
 	// A penalty first touch must be fully registered before we release the
@@ -16149,9 +16547,6 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 	// immediately failed the generic no-retouch check below. That left the ball
 	// untouched while MatchPlayState had already returned to Playing.
 	const bool bCompletingPenaltyKickTouch = IsPenaltyKickRestartActive();
-
-	const AThirdPersonCppCharacter* TouchingHuman =
-		Cast<AThirdPersonCppCharacter>(TouchingCharacter);
 
 	const bool bCompletingHumanFreeKickTouch =
 		IsValid(TouchingHuman) &&
@@ -16180,7 +16575,8 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 	if (
 		IsThrowInRestartActive() &&
 		!bThrowInBallReleased &&
-		TouchingCharacter != ThrowInTakerAI
+		TouchingCharacter != ThrowInTakerAI &&
+		!bCompletingHumanThrowInTouch
 		)
 	{
 		return false;

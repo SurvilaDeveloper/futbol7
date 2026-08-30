@@ -17,6 +17,7 @@
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
+#include "Animation/AnimInstance.h"
 
 #include "SoccerAICharacter.h"
 #include "SoccerMatchManager.h"
@@ -316,6 +317,14 @@ void AThirdPersonCppCharacter::MoveForward(float Value)
 		return;
 	}
 
+	if (
+		IsValid(MatchManager) &&
+		MatchManager->IsHumanThrowInMovementLocked(this)
+	)
+	{
+		return;
+	}
+
 	LastMoveForwardInputValue = Value;
 	UpdateChaseCancelIgnoreAfterInputChanged();
 
@@ -382,6 +391,14 @@ void AThirdPersonCppCharacter::MoveForward(float Value)
 void AThirdPersonCppCharacter::MoveRight(float Value)
 {
 	if (IsTackleActive() || IsTackleFallReactionActive() || IsAerialActionLocked())
+	{
+		return;
+	}
+
+	if (
+		IsValid(MatchManager) &&
+		MatchManager->IsHumanThrowInMovementLocked(this)
+	)
 	{
 		return;
 	}
@@ -1023,6 +1040,13 @@ float AThirdPersonCppCharacter::GetEnergyAdjustedFastRunSpeed() const
 void AThirdPersonCppCharacter::UpdateEnergyAdjustedMovementSpeed()
 {
 	if (GetCharacterMovement() == nullptr)
+	{
+		return;
+	}
+
+	// Throw-in return/setup movement is scripted by the match manager. Do not
+	// overwrite the temporary speed while that controlled movement is active.
+	if (bHumanThrowInScriptedMovementActive)
 	{
 		return;
 	}
@@ -2274,6 +2298,248 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 	}
 
 	UpdateEnergyAdjustedMovementSpeed();
+}
+
+bool AThirdPersonCppCharacter::HoldThrowInBall(ASoccerBall* SoccerBall)
+{
+	if (!IsValid(SoccerBall) || GetMesh() == nullptr)
+	{
+		return false;
+	}
+
+	if (
+		ThrowInBallHoldSocketName.IsNone() ||
+		!GetMesh()->DoesSocketExist(ThrowInBallHoldSocketName)
+	)
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(
+				-1,
+				3.0f,
+				FColor::Red,
+				FString::Printf(
+					TEXT("Lateral humano: no existe socket/hueso %s"),
+					*ThrowInBallHoldSocketName.ToString()
+				)
+			);
+		}
+		return false;
+	}
+
+	// Any ordinary ball action must die before the restart ball is attached to
+	// the hands. The throw-in runtime below is deliberately separate from the
+	// normal PossessingBall/dribble state.
+	ClearBallActionsForMatchRestriction();
+
+	ControlledBall = SoccerBall;
+	ControlledBall->StopBallKeepingPhysics();
+	ControlledBall->SetPossessed(true);
+	ControlledBall->SetActorEnableCollision(false);
+	ControlledBall->AttachToComponent(
+		GetMesh(),
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		ThrowInBallHoldSocketName
+	);
+
+	bHumanThrowInHoldingBall =
+		ControlledBall->GetAttachParentActor() == this;
+
+	if (!bHumanThrowInHoldingBall)
+	{
+		ControlledBall->SetActorEnableCollision(true);
+		ControlledBall->SetPossessed(false);
+		return false;
+	}
+
+	SoccerControlState = ESoccerPlayerControlState::Manual;
+	return true;
+}
+
+bool AThirdPersonCppCharacter::IsHoldingThrowInBall() const
+{
+	return
+		bHumanThrowInHoldingBall &&
+		IsValid(ControlledBall) &&
+		ControlledBall->GetAttachParentActor() == this;
+}
+
+void AThirdPersonCppCharacter::CancelHeldThrowInBall()
+{
+	ClearThrowInScriptedMovementVelocity();
+
+	if (ThrowInMontage != nullptr)
+	{
+		StopAnimMontage(ThrowInMontage);
+	}
+
+	if (IsValid(ControlledBall))
+	{
+		if (ControlledBall->GetAttachParentActor() == this)
+		{
+			ControlledBall->DetachFromActor(
+				FDetachmentTransformRules::KeepWorldTransform
+			);
+		}
+
+		ControlledBall->SetActorEnableCollision(true);
+		ControlledBall->SetPossessed(false);
+		ControlledBall->StopBallKeepingPhysics();
+	}
+
+	bHumanThrowInHoldingBall = false;
+	HideAutoPassTargetMarker();
+	HideReleaseTargetMarker();
+}
+
+float AThirdPersonCppCharacter::PlayThrowInMontage()
+{
+	if (ThrowInMontage == nullptr || GetMesh() == nullptr)
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(
+				-1,
+				2.5f,
+				FColor::Red,
+				TEXT("Lateral humano: Throw In Montage no asignado")
+			);
+		}
+		return 0.0f;
+	}
+
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (AnimInstance == nullptr)
+	{
+		return 0.0f;
+	}
+
+	ClearThrowInScriptedMovementVelocity();
+	return AnimInstance->Montage_Play(ThrowInMontage, 1.0f);
+}
+
+bool AThirdPersonCppCharacter::GetThrowInMontagePlaybackState(
+	float& OutMontagePosition,
+	float& OutMontageLength
+) const
+{
+	OutMontagePosition = 0.0f;
+	OutMontageLength = 0.0f;
+
+	if (ThrowInMontage == nullptr || GetMesh() == nullptr)
+	{
+		return false;
+	}
+
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (
+		AnimInstance == nullptr ||
+		!AnimInstance->Montage_IsActive(ThrowInMontage)
+	)
+	{
+		return false;
+	}
+
+	OutMontagePosition = AnimInstance->Montage_GetPosition(ThrowInMontage);
+	OutMontageLength = ThrowInMontage->GetPlayLength();
+	return OutMontageLength > KINDA_SMALL_NUMBER;
+}
+
+bool AThirdPersonCppCharacter::MoveThrowInByWorldDelta(
+	const FVector& WorldDelta
+)
+{
+	FVector HorizontalDelta = WorldDelta;
+	HorizontalDelta.Z = 0.0f;
+
+	if (HorizontalDelta.IsNearlyZero())
+	{
+		return true;
+	}
+
+	FHitResult MovementHit;
+	AddActorWorldOffset(
+		HorizontalDelta,
+		true,
+		&MovementHit,
+		ETeleportType::None
+	);
+	return !MovementHit.bStartPenetrating;
+}
+
+bool AThirdPersonCppCharacter::ReleaseHeldThrowInBallToAirTarget(
+	const FVector& TargetLocation,
+	float HorizontalSpeed,
+	float MinTravelTime,
+	float MaxTravelTime
+)
+{
+	if (!IsHoldingThrowInBall())
+	{
+		return false;
+	}
+
+	ASoccerBall* BallToRelease = ControlledBall;
+	BallToRelease->DetachFromActor(
+		FDetachmentTransformRules::KeepWorldTransform
+	);
+	BallToRelease->SetActorEnableCollision(true);
+	BallToRelease->SetPossessed(false);
+	BallToRelease->StopBallKeepingPhysics();
+	bHumanThrowInHoldingBall = false;
+
+	BallToRelease->KickToAirTarget(
+		TargetLocation,
+		HorizontalSpeed,
+		MinTravelTime,
+		MaxTravelTime
+	);
+
+	HideAutoPassTargetMarker();
+	HideReleaseTargetMarker();
+	return true;
+}
+
+void AThirdPersonCppCharacter::SetThrowInScriptedMovementVelocity(
+	const FVector& WorldVelocity
+)
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (Movement == nullptr)
+	{
+		return;
+	}
+
+	FVector HorizontalVelocity = WorldVelocity;
+	HorizontalVelocity.Z = Movement->Velocity.Z;
+
+	if (!bHumanThrowInScriptedMovementActive)
+	{
+		HumanThrowInSavedMaxWalkSpeed = Movement->MaxWalkSpeed;
+		bHumanThrowInScriptedMovementActive = true;
+	}
+
+	Movement->MaxWalkSpeed = FMath::Max(
+		HumanThrowInSavedMaxWalkSpeed,
+		HorizontalVelocity.Size2D()
+	);
+	Movement->Velocity = HorizontalVelocity;
+}
+
+void AThirdPersonCppCharacter::ClearThrowInScriptedMovementVelocity()
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (Movement != nullptr)
+	{
+		Movement->StopMovementImmediately();
+		if (bHumanThrowInScriptedMovementActive)
+		{
+			Movement->MaxWalkSpeed = HumanThrowInSavedMaxWalkSpeed;
+		}
+	}
+
+	bHumanThrowInScriptedMovementActive = false;
+	HumanThrowInSavedMaxWalkSpeed = 0.0f;
 }
 
 bool AThirdPersonCppCharacter::IsHumanBallActionAllowedNow()
@@ -4186,6 +4452,14 @@ bool AThirdPersonCppCharacter::FindHumanRunningJumpTackleThreat(
 
 void AThirdPersonCppCharacter::HandleHumanRunningJump()
 {
+    if (
+        IsValid(MatchManager) &&
+        MatchManager->IsHumanThrowInMovementLocked(this)
+    )
+    {
+        return;
+    }
+
     if (bHumanJumpHeaderRequestActive)
     {
         ClearHumanJumpHeaderRequest(true, true);
@@ -4351,6 +4625,14 @@ void AThirdPersonCppCharacter::RequestPassFromTeammate(
 		return;
 	}
 
+	if (
+		IsValid(MatchManager) &&
+		MatchManager->IsHumanThrowInMovementLocked(this)
+	)
+	{
+		return;
+	}
+
 	MatchManager->ToggleHumanPassRequest(this, RequestType);
 }
 
@@ -4358,6 +4640,31 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 {
 	if (IsTackleActive() || IsTackleFallReactionActive())
 	{
+		return;
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	// Throw-ins are deliberately not ordinary ball actions. During the human
+	// execution window the left click only selects the throw target; all normal
+	// chase/kick/tackle input remains locked by the restart system.
+	if (
+		IsValid(MatchManager) &&
+		MatchManager->CanHumanThrowInTakerExecuteNow(this)
+	)
+	{
+		FVector ThrowTarget;
+		if (
+			GetMouseFieldLocation(ThrowTarget) &&
+			MatchManager->TryStartHumanThrowInToTarget(this, ThrowTarget)
+		)
+		{
+			HideAutoPassTargetMarker();
+			ShowReleaseTargetMarker(ThrowTarget);
+		}
 		return;
 	}
 

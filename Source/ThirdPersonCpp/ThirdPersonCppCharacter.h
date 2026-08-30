@@ -100,6 +100,27 @@ public:
 	// fire later when play becomes legal again.
 	void ClearBallActionsForMatchRestriction();
 
+	// Human throw-in support. This is deliberately owned by the human class
+	// instead of sharing the AI throw-in implementation, so player input and
+	// AI execution can evolve independently.
+	bool HoldThrowInBall(ASoccerBall* SoccerBall);
+	bool IsHoldingThrowInBall() const;
+	void CancelHeldThrowInBall();
+	float PlayThrowInMontage();
+	bool GetThrowInMontagePlaybackState(
+		float& OutMontagePosition,
+		float& OutMontageLength
+	) const;
+	bool MoveThrowInByWorldDelta(const FVector& WorldDelta);
+	bool ReleaseHeldThrowInBallToAirTarget(
+		const FVector& TargetLocation,
+		float HorizontalSpeed,
+		float MinTravelTime,
+		float MaxTravelTime
+	);
+	void SetThrowInScriptedMovementVelocity(const FVector& WorldVelocity);
+	void ClearThrowInScriptedMovementVelocity();
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -601,6 +622,20 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Animations")
 		UAnimMontage* StrikeRightLegForwardJogMontage = nullptr;
+
+	// Human throw-in uses the same authored throw_in_in_place montage as the AI,
+	// but keeps a separate Blueprint assignment and runtime.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Throw In|Animation")
+		UAnimMontage* ThrowInMontage = nullptr;
+
+	// May be either a socket or a bone. The default matches the socket already
+	// used by the goalkeeper/AI throw-in setup in this project.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Throw In|Ball")
+		FName ThrowInBallHoldSocketName = TEXT("GK_BallHold_R");
+
+	bool bHumanThrowInHoldingBall = false;
+	bool bHumanThrowInScriptedMovementActive = false;
+	float HumanThrowInSavedMaxWalkSpeed = 0.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Selection")
 		float ShortKickMaxDistance = 2000.0f;

@@ -573,6 +573,23 @@ public:
 		const ASoccerAICharacter* SoccerAICharacter
 	) const;
 
+	bool IsHumanThrowInTaker(
+		const AThirdPersonCppCharacter* HumanCharacter
+	) const;
+
+	bool CanHumanThrowInTakerExecuteNow(
+		const AThirdPersonCppCharacter* HumanCharacter
+	) const;
+
+	bool IsHumanThrowInMovementLocked(
+		const AThirdPersonCppCharacter* HumanCharacter
+	) const;
+
+	bool TryStartHumanThrowInToTarget(
+		AThirdPersonCppCharacter* HumanCharacter,
+		const FVector& RequestedTargetLocation
+	);
+
 	float GetThrowInPickupMoveAcceptanceRadius() const;
 
 	bool IsThrowInTakerAnimationLocked(
@@ -1636,6 +1653,13 @@ bool IsPenaltyMatchStateActive() const;
 		const FVector& TouchlineLocation,
 		const FVector& InwardDirection
 	);
+
+	bool UpdateHumanThrowInTakerClaimDuringPreparation();
+	void ResetHumanThrowInTakerRuntime();
+	bool PrepareHumanThrowInDirectionAndStartLocation(
+		const FVector& RequestedTargetLocation
+	);
+	bool CompleteHumanThrowInRelease();
 
 	bool StageThrowInDuringBallOutOfPlayDelay(
 		ESoccerTeam RestartTeam,
@@ -3516,6 +3540,19 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Throw In")
 		float ThrowInReceiverReadyDistance = 420.0f;
 
+	// Human claim/release uses hysteresis like the foot restarts, but stays
+	// throw-in-specific because hand possession has different input rules.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Throw In|Human Taker", meta = (ClampMin = "50.0"))
+		float ThrowInHumanTakerClaimRadius = 300.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Throw In|Human Taker", meta = (ClampMin = "50.0"))
+		float ThrowInHumanTakerReleaseRadius = 380.0f;
+
+	// Claiming does not teleport the ball: the human must actually walk up to
+	// the pickup staging point before the restart becomes committed.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Throw In|Human Taker", meta = (ClampMin = "10.0"))
+		float ThrowInHumanPickupReadyDistance = 90.0f;
+
 	// Conservado para compatibilidad. Ya no define el punto previo.
 	UPROPERTY(EditAnywhere, Category = "Soccer|Throw In", meta = (AdvancedDisplay))
 		float ThrowInStagingInsideDistance = 90.0f;
@@ -3600,6 +3637,19 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY()
 		ASoccerAICharacter* ThrowInReceiverAI = nullptr;
+
+	// The configured AI remains the fallback taker. The human claim is kept
+	// separate so walking away before pickup can hand responsibility back cleanly.
+	UPROPERTY()
+		AThirdPersonCppCharacter* ThrowInHumanTaker = nullptr;
+
+	bool bThrowInHumanTakerClaimed = false;
+	bool bThrowInHumanTakerCommitted = false;
+	bool bThrowInHumanExecutionAuthorized = false;
+	bool bThrowInHumanTargetSelected = false;
+	bool bThrowInHumanRepositioningForTarget = false;
+	bool bThrowInHumanMontageStarted = false;
+	FVector ThrowInHumanTargetLocation = FVector::ZeroVector;
 
 	ESoccerTeam ThrowInTeam = ESoccerTeam::PlayerTeam;
 	FVector ThrowInLocation = FVector::ZeroVector;
