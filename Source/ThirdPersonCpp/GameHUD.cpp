@@ -6,6 +6,7 @@
 #include "Kismet/GameplayStatics.h"
 
 #include "SoccerMatchManager.h"
+#include "SoccerInstantReplayManager.h"
 #include "SoccerTeamTypes.h"
 
 #include "SoccerDebugManager.h"
@@ -268,9 +269,117 @@ void AGameHUD::DrawQuickTacticsFeedback()
 	);
 }
 
+void AGameHUD::DrawInstantReplayOverlay()
+{
+	if (Canvas == nullptr)
+	{
+		return;
+	}
+
+	ASoccerInstantReplayManager* ReplayManager =
+		IsValid(MatchManager)
+			? MatchManager->GetInstantReplayManager()
+			: nullptr;
+
+	if (!IsValid(ReplayManager) || !ReplayManager->IsReplayPlaying())
+	{
+		return;
+	}
+
+	UFont* ReplayFont =
+		GEngine != nullptr ? GEngine->GetLargeFont() : nullptr;
+	UFont* HintFont =
+		GEngine != nullptr ? GEngine->GetSmallFont() : nullptr;
+
+	if (ReplayFont == nullptr || HintFont == nullptr)
+	{
+		return;
+	}
+
+	const FString ReplayText = TEXT("REPLAY");
+	const FString SkipHint = ReplayManager->GetSkipReplayInputHintText();
+
+	const float ReplayScale = 1.15f;
+	const float HintScale = 1.0f;
+	const float PaddingX = 18.0f;
+	const float PaddingY = 10.0f;
+	const float Gap = 6.0f;
+
+	float ReplayWidth = 0.0f;
+	float ReplayHeight = 0.0f;
+	GetTextSize(
+		ReplayText,
+		ReplayWidth,
+		ReplayHeight,
+		ReplayFont,
+		ReplayScale
+	);
+
+	float HintWidth = 0.0f;
+	float HintHeight = 0.0f;
+	GetTextSize(
+		SkipHint,
+		HintWidth,
+		HintHeight,
+		HintFont,
+		HintScale
+	);
+
+	const float BoxWidth =
+		FMath::Max(ReplayWidth, HintWidth) + PaddingX * 2.0f;
+	const float BoxHeight =
+		ReplayHeight + HintHeight + Gap + PaddingY * 2.0f;
+
+	const float BoxX =
+		FMath::Max(24.0f, Canvas->SizeX - BoxWidth - 34.0f);
+	const float BoxY = 28.0f;
+
+	DrawRect(
+		FLinearColor(0.0f, 0.0f, 0.0f, 0.72f),
+		BoxX,
+		BoxY,
+		BoxWidth,
+		BoxHeight
+	);
+
+	DrawText(
+		ReplayText,
+		FLinearColor::White,
+		BoxX + PaddingX,
+		BoxY + PaddingY,
+		ReplayFont,
+		ReplayScale
+	);
+
+	DrawText(
+		SkipHint,
+		FLinearColor(0.82f, 0.82f, 0.82f, 1.0f),
+		BoxX + PaddingX,
+		BoxY + PaddingY + ReplayHeight + Gap,
+		HintFont,
+		HintScale
+	);
+}
+
 void AGameHUD::DrawHUD()
 {
 	Super::DrawHUD();
+
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	ASoccerInstantReplayManager* ReplayManager =
+		IsValid(MatchManager)
+			? MatchManager->GetInstantReplayManager()
+			: nullptr;
+
+	if (IsValid(ReplayManager) && ReplayManager->IsReplayPlaying())
+	{
+		DrawInstantReplayOverlay();
+		return;
+	}
 
 	DrawMatchScoreboard();
 	DrawMatchClock();

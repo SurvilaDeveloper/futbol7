@@ -35,6 +35,7 @@ private:
 	void FindMatchManager();
 	void EnsureTacticalPresetManager();
 	void DrawQuickTacticsFeedback();
+	void DrawInstantReplayOverlay();
 
 	void DrawMatchScoreboard();
 

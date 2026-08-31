@@ -10954,13 +10954,35 @@ void ASoccerMatchManager::InitializeInstantReplayRecorder()
 		InstantReplayManualPlaybackSeconds
 	);
 
-	InstantReplayManager->ConfigureGoalReplayCameras(
-		InstantReplayGoalSideCameraDistance,
-		InstantReplayGoalSideCameraInfieldOffset,
-		InstantReplayGoalFrontCameraDistance,
-		InstantReplayGoalBehindCameraDistance,
-		InstantReplayGoalCameraHeight,
-		InstantReplayGoalCameraFOV
+	FSoccerGoalReplayCameraConfig LeftCamera;
+	LeftCamera.Distance = InstantReplayGoalLeftCameraDistance;
+	LeftCamera.InfieldOffset = InstantReplayGoalLeftCameraInfieldOffset;
+	LeftCamera.Height = InstantReplayGoalLeftCameraHeight;
+	LeftCamera.FOV = InstantReplayGoalLeftCameraFOV;
+
+	FSoccerGoalReplayCameraConfig RightCamera;
+	RightCamera.Distance = InstantReplayGoalRightCameraDistance;
+	RightCamera.InfieldOffset = InstantReplayGoalRightCameraInfieldOffset;
+	RightCamera.Height = InstantReplayGoalRightCameraHeight;
+	RightCamera.FOV = InstantReplayGoalRightCameraFOV;
+
+	FSoccerGoalReplayCameraConfig FrontCamera;
+	FrontCamera.Distance = InstantReplayGoalFrontCameraDistance;
+	FrontCamera.Height = InstantReplayGoalFrontCameraHeight;
+	FrontCamera.FOV = InstantReplayGoalFrontCameraFOV;
+
+	FSoccerGoalReplayCameraConfig BehindCamera;
+	BehindCamera.Distance = InstantReplayGoalBehindCameraDistance;
+	BehindCamera.Height = InstantReplayGoalBehindCameraHeight;
+	BehindCamera.FOV = InstantReplayGoalBehindCameraFOV;
+
+	InstantReplayManager->ConfigureGoalReplayPresentation(
+		LeftCamera,
+		RightCamera,
+		FrontCamera,
+		BehindCamera,
+		InstantReplayGoalCameraFadeSeconds,
+		InstantReplayGoalCameraCollisionPadding
 	);
 }
 

@@ -2435,27 +2435,58 @@ bool IsPenaltyMatchStateActive() const;
 		bool bEnableInstantReplayAfterGoal = true;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback", meta = (ClampMin = "1.0", ClampMax = "10.0", UIMin = "1.0", UIMax = "10.0", DisplayName = "Goal Clip Seconds Per Camera"))
-		float InstantReplayGoalPlaybackSeconds = 5.0f;
+		float InstantReplayGoalPlaybackSeconds = 3.0f;
 
-	// Stage 4: four TV-style goal replay viewpoints. Distances are measured
-	// from the actual scored goal and follow SoccerField world directions.
-	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "500.0", UIMin = "500.0"))
-		float InstantReplayGoalSideCameraDistance = 2600.0f;
+	// Stage 4/6: four TV-style goal replay viewpoints. Every take has its
+	// own tuning because side/front/behind cameras usually need different
+	// framing in a real stadium.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Left", meta = (ClampMin = "500.0", UIMin = "500.0"))
+		float InstantReplayGoalLeftCameraDistance = 2600.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "0.0", UIMin = "0.0"))
-		float InstantReplayGoalSideCameraInfieldOffset = 700.0f;
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Left", meta = (ClampMin = "0.0", UIMin = "0.0"))
+		float InstantReplayGoalLeftCameraInfieldOffset = 700.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "500.0", UIMin = "500.0"))
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Left", meta = (ClampMin = "200.0", UIMin = "200.0"))
+		float InstantReplayGoalLeftCameraHeight = 1100.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Left", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
+		float InstantReplayGoalLeftCameraFOV = 78.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Right", meta = (ClampMin = "500.0", UIMin = "500.0"))
+		float InstantReplayGoalRightCameraDistance = 2600.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Right", meta = (ClampMin = "0.0", UIMin = "0.0"))
+		float InstantReplayGoalRightCameraInfieldOffset = 700.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Right", meta = (ClampMin = "200.0", UIMin = "200.0"))
+		float InstantReplayGoalRightCameraHeight = 1100.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Right", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
+		float InstantReplayGoalRightCameraFOV = 78.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Front", meta = (ClampMin = "500.0", UIMin = "500.0"))
 		float InstantReplayGoalFrontCameraDistance = 3200.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "500.0", UIMin = "500.0"))
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Front", meta = (ClampMin = "200.0", UIMin = "200.0"))
+		float InstantReplayGoalFrontCameraHeight = 1100.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Front", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
+		float InstantReplayGoalFrontCameraFOV = 78.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Behind", meta = (ClampMin = "500.0", UIMin = "500.0"))
 		float InstantReplayGoalBehindCameraDistance = 1800.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "200.0", UIMin = "200.0"))
-		float InstantReplayGoalCameraHeight = 1100.0f;
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Behind", meta = (ClampMin = "200.0", UIMin = "200.0"))
+		float InstantReplayGoalBehindCameraHeight = 950.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
-		float InstantReplayGoalCameraFOV = 78.0f;
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera|Behind", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
+		float InstantReplayGoalBehindCameraFOV = 82.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Presentation", meta = (ClampMin = "0.0", ClampMax = "0.5", UIMin = "0.0", UIMax = "0.5", DisplayName = "Camera Fade Seconds"))
+		float InstantReplayGoalCameraFadeSeconds = 0.12f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Presentation", meta = (ClampMin = "0.0", UIMin = "0.0", DisplayName = "Camera Collision Padding"))
+		float InstantReplayGoalCameraCollisionPadding = 80.0f;
 
 	UPROPERTY()
 		ASoccerInstantReplayManager* InstantReplayManager = nullptr;

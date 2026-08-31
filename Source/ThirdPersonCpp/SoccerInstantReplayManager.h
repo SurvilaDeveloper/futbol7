@@ -77,6 +77,14 @@ enum class ESoccerInstantReplayPlaybackReason : uint8
     Offside
 };
 
+struct FSoccerGoalReplayCameraConfig
+{
+    float Distance = 2600.0f;
+    float InfieldOffset = 0.0f;
+    float Height = 1100.0f;
+    float FOV = 78.0f;
+};
+
 UCLASS()
 class THIRDPERSONCPP_API ASoccerInstantReplayManager : public AActor
 {
@@ -126,16 +134,17 @@ public:
         float GoalLineSign = 0.0f
     );
 
-    void ConfigureGoalReplayCameras(
-        float InSideDistance,
-        float InSideInfieldOffset,
-        float InFrontDistance,
-        float InBehindDistance,
-        float InCameraHeight,
-        float InCameraFOV
+    void ConfigureGoalReplayPresentation(
+        const FSoccerGoalReplayCameraConfig& InLeftCamera,
+        const FSoccerGoalReplayCameraConfig& InRightCamera,
+        const FSoccerGoalReplayCameraConfig& InFrontCamera,
+        const FSoccerGoalReplayCameraConfig& InBehindCamera,
+        float InCameraFadeDuration,
+        float InCameraCollisionPadding
     );
 
     bool IsReplayPlaying() const;
+    FString GetSkipReplayInputHintText() const;
 
 protected:
     virtual void BeginPlay() override;
@@ -207,6 +216,18 @@ private:
     bool BuildGoalReplayCamera(float GoalLineSign);
     bool ConfigureCurrentGoalReplayCamera();
     bool AdvanceGoalReplayCameraTake();
+    bool HasNextGoalReplayCameraTake() const;
+    void BeginGoalReplayCameraTransition();
+    void TickGoalReplayCameraTransition(
+        double CurrentRealTimeSeconds,
+        float RealDeltaSeconds
+    );
+    void ClearReplayCameraFade();
+    FVector ResolveGoalReplayCameraCollision(
+        const FVector& AimLocation,
+        const FVector& DesiredCameraLocation
+    ) const;
+    const FSoccerGoalReplayCameraConfig& GetCurrentGoalReplayCameraConfig() const;
     void UpdateReplayCameraAim();
     void RefreshReplayCameraView(float RealDeltaSeconds);
     const TCHAR* GetCurrentGoalReplayCameraName() const;
@@ -232,23 +253,16 @@ private:
     UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Manual Playback", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
     float FixedCameraFOV = 75.0f;
 
-    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "500.0", UIMin = "500.0"))
-    float GoalReplaySideDistance = 2600.0f;
+    // Runtime copies of MatchManager camera tuning. The editable settings live
+    // in SoccerMatchManager so an automatically spawned replay manager needs no
+    // level setup.
+    FSoccerGoalReplayCameraConfig GoalReplayLeftCamera;
+    FSoccerGoalReplayCameraConfig GoalReplayRightCamera;
+    FSoccerGoalReplayCameraConfig GoalReplayFrontCamera;
+    FSoccerGoalReplayCameraConfig GoalReplayBehindCamera;
 
-    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "0.0", UIMin = "0.0"))
-    float GoalReplaySideInfieldOffset = 700.0f;
-
-    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "500.0", UIMin = "500.0"))
-    float GoalReplayFrontDistance = 3200.0f;
-
-    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "500.0", UIMin = "500.0"))
-    float GoalReplayBehindDistance = 1800.0f;
-
-    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "200.0", UIMin = "200.0"))
-    float GoalReplayCameraHeight = 1100.0f;
-
-    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
-    float GoalReplayCameraFOV = 78.0f;
+    float GoalReplayCameraFadeDuration = 0.12f;
+    float GoalReplayCameraCollisionPadding = 80.0f;
 
     /* Characters are refreshed occasionally so later spawned/replaced actors join recording. */
     UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording", meta = (ClampMin = "0.25", UIMin = "0.25"))
@@ -286,6 +300,10 @@ private:
     float ActiveGoalLineSign = 0.0f;
     int32 ActiveGoalReplayCameraTakeIndex = 0;
     int32 GoalReplayCameraTakeCount = 4;
+
+    bool bGoalReplayCameraTransitionActive = false;
+    bool bGoalReplayCameraTransitionSwitched = false;
+    double GoalReplayCameraTransitionPhaseStartRealTimeSeconds = 0.0;
 
     TWeakObjectPtr<APlayerController> ReplayPlayerController;
     TWeakObjectPtr<AActor> PreviousViewTarget;
