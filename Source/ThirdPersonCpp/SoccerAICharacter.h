@@ -805,6 +805,7 @@ private:
 	float LastAIMovementDecisionTime = -1000.0f;
 
 	void UpdateAIPlayerEnergy(float DeltaTime);
+	void ApplyPlayerProfilePhysicalTuning();
 
 	void UpdateAIMovementSpeed();
 

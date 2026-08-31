@@ -22,6 +22,7 @@
 #include "SoccerAICharacter.h"
 #include "SoccerMatchManager.h"
 #include "SoccerDebugManager.h"
+#include "SoccerPlayerProfile.h"
 #include "GameHUD.h"
 
 AThirdPersonCppCharacter::AThirdPersonCppCharacter()
@@ -989,6 +990,42 @@ void AThirdPersonCppCharacter::SelectFastRunSpeed()
 	SetSelectedMovementSpeed(FastRunSpeed, TEXT("Correr fuerte"));
 }
 
+void AThirdPersonCppCharacter::ApplyPlayerProfilePhysicalTuning()
+{
+	if (!HasPlayerProfile())
+	{
+		return;
+	}
+
+	WalkSpeed = GetProfileAdjustedPaceSpeed(WalkSpeed);
+	JogSpeed = GetProfileAdjustedPaceSpeed(JogSpeed);
+	RunSpeed = GetProfileAdjustedPaceSpeed(RunSpeed);
+	FastRunSpeed = GetProfileAdjustedPaceSpeed(FastRunSpeed);
+	FastRunMinimumSpeed = GetProfileAdjustedPaceSpeed(FastRunMinimumSpeed);
+
+	// Human starts in Jog. Keep the selected tier synchronized with the
+	// profile-adjusted speed values used by IsSelectedMovementSpeed().
+	SelectedMovementSpeed = JogSpeed;
+
+	if (UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement())
+	{
+		ProfileCharacterMovement->MaxWalkSpeed = SelectedMovementSpeed;
+	}
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[PlayerProfile] Human %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
+		*GetPlayerProfileId().ToString(),
+		GetPlayerProfile()->Attributes.Physical.Pace,
+		GetPlayerProfile()->Attributes.Physical.Acceleration,
+		GetPlayerProfile()->Attributes.Physical.Stamina,
+		GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
+		FastRunSpeed,
+		GetCharacterMovement() != nullptr ? GetCharacterMovement()->MaxAcceleration : 0.0f
+	);
+}
+
 float AThirdPersonCppCharacter::GetPlayerEnergyPercent() const
 {
 	if (MaxPlayerEnergy <= 0.0f)
@@ -1106,6 +1143,15 @@ void AThirdPersonCppCharacter::UpdatePlayerEnergy(float DeltaTime)
 		EnergyChangePerSecond = IdleEnergyRecoveryPerSecond;
 	}
 
+	if (EnergyChangePerSecond < 0.0f)
+	{
+		EnergyChangePerSecond *= GetPlayerProfileStaminaDrainMultiplier();
+	}
+	else if (EnergyChangePerSecond > 0.0f)
+	{
+		EnergyChangePerSecond *= GetPlayerProfileStaminaRecoveryMultiplier();
+	}
+
 	PlayerEnergy = FMath::Clamp(
 		PlayerEnergy + EnergyChangePerSecond * DeltaTime,
 		0.0f,
@@ -1118,6 +1164,8 @@ void AThirdPersonCppCharacter::UpdatePlayerEnergy(float DeltaTime)
 void AThirdPersonCppCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	ApplyPlayerProfilePhysicalTuning();
 
 	for (TActorIterator<ASoccerBall> It(GetWorld()); It; ++It)
 	{

@@ -1,5 +1,6 @@
-﻿//SoccerCharacterBase.cpp
+//SoccerCharacterBase.cpp
 #include "SoccerCharacterBase.h"
+#include "SoccerPlayerProfile.h"
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -315,6 +316,17 @@ ASoccerCharacterBase::ASoccerCharacterBase()
 void ASoccerCharacterBase::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Acceleration is shared by human and AI CharacterMovement. Pace and
+	// fatigue remain in their existing class-specific movement systems.
+	if (HasPlayerProfile())
+	{
+		if (UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement())
+		{
+			ProfileCharacterMovement->MaxAcceleration *=
+				GetPlayerProfileAccelerationMultiplier();
+		}
+	}
 
 	ApplyTeamUniform();
 }
@@ -2408,6 +2420,97 @@ ESoccerTeam ASoccerCharacterBase::GetTeam() const
 ESoccerPlayerRole ASoccerCharacterBase::GetPlayerRole() const
 {
 	return PlayerRole;
+}
+
+USoccerPlayerProfile* ASoccerCharacterBase::GetPlayerProfile() const
+{
+	return PlayerProfile;
+}
+
+bool ASoccerCharacterBase::HasPlayerProfile() const
+{
+	return IsValid(PlayerProfile);
+}
+
+FName ASoccerCharacterBase::GetPlayerProfileId() const
+{
+	return HasPlayerProfile()
+		? PlayerProfile->Identity.PlayerId
+		: NAME_None;
+}
+
+float ASoccerCharacterBase::GetPlayerProfilePaceSpeedMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	const float AttributeAlpha =
+		FMath::Clamp(PlayerProfile->Attributes.Physical.Pace, 0, 100) / 100.0f;
+
+	return FMath::Lerp(
+		PaceSpeedMultiplierAtZero,
+		PaceSpeedMultiplierAtHundred,
+		AttributeAlpha
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileAccelerationMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	const float AttributeAlpha =
+		FMath::Clamp(PlayerProfile->Attributes.Physical.Acceleration, 0, 100) / 100.0f;
+
+	return FMath::Lerp(
+		AccelerationMultiplierAtZero,
+		AccelerationMultiplierAtHundred,
+		AttributeAlpha
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileStaminaDrainMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	const float AttributeAlpha =
+		FMath::Clamp(PlayerProfile->Attributes.Physical.Stamina, 0, 100) / 100.0f;
+
+	return FMath::Lerp(
+		StaminaDrainMultiplierAtZero,
+		StaminaDrainMultiplierAtHundred,
+		AttributeAlpha
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileStaminaRecoveryMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	const float AttributeAlpha =
+		FMath::Clamp(PlayerProfile->Attributes.Physical.StaminaRecovery, 0, 100) / 100.0f;
+
+	return FMath::Lerp(
+		StaminaRecoveryMultiplierAtZero,
+		StaminaRecoveryMultiplierAtHundred,
+		AttributeAlpha
+	);
+}
+
+float ASoccerCharacterBase::GetProfileAdjustedPaceSpeed(float BaseSpeed) const
+{
+	return FMath::Max(0.0f, BaseSpeed) *
+		GetPlayerProfilePaceSpeedMultiplier();
 }
 
 void ASoccerCharacterBase::ApplyTeamUniform()

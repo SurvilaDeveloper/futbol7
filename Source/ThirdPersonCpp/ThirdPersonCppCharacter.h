@@ -374,6 +374,7 @@ void StartAutoPassCollectCarry();
 
 	void UpdatePlayerEnergy(float DeltaTime);
 	void UpdateEnergyAdjustedMovementSpeed();
+	void ApplyPlayerProfilePhysicalTuning();
 
 	float GetEnergyAdjustedFastRunSpeed() const;
 	bool IsSelectedMovementSpeed(float Speed) const;

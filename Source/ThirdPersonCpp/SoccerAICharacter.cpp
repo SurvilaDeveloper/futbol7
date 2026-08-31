@@ -15,6 +15,7 @@
 #include "Curves/RealCurve.h"
 #include "DrawDebugHelpers.h"
 #include "SoccerMatchManager.h"
+#include "SoccerPlayerProfile.h"
 #include "EngineUtils.h"
 
 ASoccerAICharacter::ASoccerAICharacter()
@@ -183,6 +184,8 @@ void ASoccerAICharacter::UpdateGoalkeeperRetreatBackpedalAnimationFromVelocity()
 void ASoccerAICharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	ApplyPlayerProfilePhysicalTuning();
 
 	GetCharacterMovement()->MaxWalkSpeed = RunSpeed;
 
@@ -3337,6 +3340,41 @@ ESoccerAIMovementMode ASoccerAICharacter::LimitAIMovementModeByEnergy(
 	return ESoccerAIMovementMode::FastRun;
 }
 
+void ASoccerAICharacter::ApplyPlayerProfilePhysicalTuning()
+{
+	if (!HasPlayerProfile())
+	{
+		return;
+	}
+
+	WalkSpeed = GetProfileAdjustedPaceSpeed(WalkSpeed);
+	JogSpeed = GetProfileAdjustedPaceSpeed(JogSpeed);
+	RunSpeed = GetProfileAdjustedPaceSpeed(RunSpeed);
+	FastRunSpeed = GetProfileAdjustedPaceSpeed(FastRunSpeed);
+	AIFastRunMinimumSpeed = GetProfileAdjustedPaceSpeed(AIFastRunMinimumSpeed);
+
+	if (UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement())
+	{
+		// UE path following otherwise tends to request an immediate velocity.
+		// Enabling requested-move acceleration makes the profile's Acceleration
+		// value observable for bots as well as for the human player.
+		ProfileCharacterMovement->bRequestedMoveUseAcceleration = true;
+	}
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[PlayerProfile] AI %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
+		*GetPlayerProfileId().ToString(),
+		GetPlayerProfile()->Attributes.Physical.Pace,
+		GetPlayerProfile()->Attributes.Physical.Acceleration,
+		GetPlayerProfile()->Attributes.Physical.Stamina,
+		GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
+		FastRunSpeed,
+		GetCharacterMovement() != nullptr ? GetCharacterMovement()->MaxAcceleration : 0.0f
+	);
+}
+
 float ASoccerAICharacter::GetAIBaseSpeedForMode(
 	ESoccerAIMovementMode MovementMode
 ) const
@@ -3469,6 +3507,15 @@ void ASoccerAICharacter::UpdateAIPlayerEnergy(float DeltaTime)
 		default:
 			break;
 		}
+	}
+
+	if (EnergyChangePerSecond < 0.0f)
+	{
+		EnergyChangePerSecond *= GetPlayerProfileStaminaDrainMultiplier();
+	}
+	else if (EnergyChangePerSecond > 0.0f)
+	{
+		EnergyChangePerSecond *= GetPlayerProfileStaminaRecoveryMultiplier();
 	}
 
 	AIPlayerEnergy =

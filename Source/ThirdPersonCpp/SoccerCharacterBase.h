@@ -1,4 +1,4 @@
-﻿//SoccerCharacterBase.h
+//SoccerCharacterBase.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -15,6 +15,7 @@ class ASoccerBall;
 class UAnimMontage;
 class UCurveTable;
 class UCurveFloat;
+class USoccerPlayerProfile;
 
 UCLASS(Blueprintable)
 class THIRDPERSONCPP_API ASoccerCharacterBase : public ACharacter
@@ -32,6 +33,16 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Team")
 		ESoccerPlayerRole GetPlayerRole() const;
+
+	/** Content-side profile assigned to this match character. */
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile")
+		USoccerPlayerProfile* GetPlayerProfile() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile")
+		bool HasPlayerProfile() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile")
+		FName GetPlayerProfileId() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Uniform")
 		void ApplyTeamUniform();
@@ -330,6 +341,14 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+
+	// Stage 3 player-profile physical tuning. Derived human/AI classes keep
+	// their own movement/energy logic and consume these shared multipliers.
+	float GetPlayerProfilePaceSpeedMultiplier() const;
+	float GetPlayerProfileAccelerationMultiplier() const;
+	float GetPlayerProfileStaminaDrainMultiplier() const;
+	float GetPlayerProfileStaminaRecoveryMultiplier() const;
+	float GetProfileAdjustedPaceSpeed(float BaseSpeed) const;
 
 	virtual void UpdateSoccerAnimationState();
 
@@ -1205,6 +1224,41 @@ protected:
 	float AerialSimultaneousBodyReactionScale = 0.60f;
 
 private:
+	/**
+	 * Optional immutable player definition. Formation slot and current fatigue
+	 * intentionally do not live in this asset. If null, legacy gameplay values
+	 * are preserved exactly.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer|Player Profile", meta = (AllowPrivateAccess = "true"))
+		USoccerPlayerProfile* PlayerProfile = nullptr;
+
+	// A profile value of 50 maps to the legacy/default behavior with the
+	// default endpoints below. These endpoints are deliberately class-default
+	// tuning so balance can change without editing every player Data Asset.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float PaceSpeedMultiplierAtZero = 0.80f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float PaceSpeedMultiplierAtHundred = 1.20f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float AccelerationMultiplierAtZero = 0.65f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float AccelerationMultiplierAtHundred = 1.35f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float StaminaDrainMultiplierAtZero = 1.50f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float StaminaDrainMultiplierAtHundred = 0.50f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float StaminaRecoveryMultiplierAtZero = 0.50f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float StaminaRecoveryMultiplierAtHundred = 1.50f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer|Team", meta = (AllowPrivateAccess = "true"))
 		ESoccerTeam Team = ESoccerTeam::PlayerTeam;
 
