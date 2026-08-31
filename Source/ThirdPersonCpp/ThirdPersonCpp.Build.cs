@@ -8,7 +8,7 @@ public class ThirdPersonCpp : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "HeadMountedDisplay", "AIModule", "NavigationSystem", "UMG", "Slate", "SlateCore" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "HeadMountedDisplay", "AIModule", "NavigationSystem", "UMG", "Slate", "SlateCore", "AssetRegistry" });
 		PrivateDependencyModuleNames.AddRange(new string[] { "Json", "JsonUtilities" });
 	}
 }

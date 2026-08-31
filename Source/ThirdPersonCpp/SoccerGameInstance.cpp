@@ -246,6 +246,98 @@ bool USoccerGameInstance::SetSlotTacticalInstruction(
     return PersistIfNeeded();
 }
 
+bool USoccerGameInstance::SynchronizeSquadWithPlayerIds(
+    const TArray<FName>& AuthoritativePlayerIds
+)
+{
+    TArray<FName> NormalizedAuthoritativeIds;
+    NormalizedAuthoritativeIds.Reserve(AuthoritativePlayerIds.Num());
+    for (const FName CandidatePlayerId : AuthoritativePlayerIds)
+    {
+        AddUniqueValidPlayerId(NormalizedAuthoritativeIds, CandidatePlayerId);
+    }
+
+    // Never erase a persisted team just because a catalog failed to resolve.
+    if (NormalizedAuthoritativeIds.Num() == 0)
+    {
+        return false;
+    }
+
+    const TArray<FName> PreviousSquad = CurrentTeamSetup.SquadPlayerIds;
+    const TArray<FName> PreviousBench = CurrentTeamSetup.BenchPlayerIds;
+    const TMap<FName, FName> PreviousLineup = CurrentTeamSetup.StartingLineupBySlot;
+
+    // Content catalog is authoritative for squad membership. Keep the user's
+    // tactical decisions only for player IDs that still exist in that catalog.
+    TArray<FName> StaleStartingSlotIds;
+    for (const TPair<FName, FName>& LineupEntry : CurrentTeamSetup.StartingLineupBySlot)
+    {
+        if (!NormalizedAuthoritativeIds.Contains(LineupEntry.Value))
+        {
+            StaleStartingSlotIds.Add(LineupEntry.Key);
+        }
+    }
+    for (const FName StaleStartingSlotId : StaleStartingSlotIds)
+    {
+        CurrentTeamSetup.StartingLineupBySlot.Remove(StaleStartingSlotId);
+    }
+
+    TArray<FName> PreservedBench;
+    PreservedBench.Reserve(NormalizedAuthoritativeIds.Num());
+    for (const FName ExistingBenchPlayerId : CurrentTeamSetup.BenchPlayerIds)
+    {
+        if (
+            NormalizedAuthoritativeIds.Contains(ExistingBenchPlayerId) &&
+            FindStartingSlotForPlayer(ExistingBenchPlayerId).IsNone()
+        )
+        {
+            AddUniqueValidPlayerId(PreservedBench, ExistingBenchPlayerId);
+        }
+    }
+
+    // New catalog members enter the bench in catalog order. Starters remain in
+    // their existing slots whenever both the player and slot are still valid.
+    for (const FName CatalogPlayerId : NormalizedAuthoritativeIds)
+    {
+        if (FindStartingSlotForPlayer(CatalogPlayerId).IsNone())
+        {
+            AddUniqueValidPlayerId(PreservedBench, CatalogPlayerId);
+        }
+    }
+
+    CurrentTeamSetup.SquadPlayerIds = NormalizedAuthoritativeIds;
+    CurrentTeamSetup.BenchPlayerIds = MoveTemp(PreservedBench);
+    NormalizeLoadedTeamSetup(CurrentTeamSetup);
+
+    bool bLineupChanged = PreviousLineup.Num() != CurrentTeamSetup.StartingLineupBySlot.Num();
+    if (!bLineupChanged)
+    {
+        for (const TPair<FName, FName>& PreviousLineupEntry : PreviousLineup)
+        {
+            const FName* CurrentPlayerId =
+                CurrentTeamSetup.StartingLineupBySlot.Find(PreviousLineupEntry.Key);
+            if (CurrentPlayerId == nullptr || *CurrentPlayerId != PreviousLineupEntry.Value)
+            {
+                bLineupChanged = true;
+                break;
+            }
+        }
+    }
+
+    const bool bChanged =
+        PreviousSquad != CurrentTeamSetup.SquadPlayerIds ||
+        PreviousBench != CurrentTeamSetup.BenchPlayerIds ||
+        bLineupChanged;
+
+    if (!bChanged)
+    {
+        return true;
+    }
+
+    MarkTeamSetupChanged();
+    return PersistIfNeeded();
+}
+
 bool USoccerGameInstance::AddPlayerToSquad(FName NewPlayerId)
 {
     if (NewPlayerId.IsNone())

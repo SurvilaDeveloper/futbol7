@@ -50,6 +50,14 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Tactics")
     bool SetSlotTacticalInstruction(const FSoccerSlotTacticalInstruction& NewInstruction);
 
+    /**
+     * Synchronizes the content-side roster with persistent IDs. Existing lineup
+     * and bench choices are preserved for players that still exist; removed
+     * content players are discarded and newly added players enter the bench.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Squad")
+    bool SynchronizeSquadWithPlayerIds(const TArray<FName>& AuthoritativePlayerIds);
+
     /** Adds a profile ID to the persistent squad if it is not already present. */
     UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Squad")
     bool AddPlayerToSquad(FName NewPlayerId);

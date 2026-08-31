@@ -9,6 +9,7 @@
 
 class ASoccerMatchManager;
 class USoccerTacticalPresetManager;
+class USoccerDirectorTechnicalWidget;
 class UBorder;
 class UButton;
 class UCanvasPanel;
@@ -66,7 +67,8 @@ private:
 		Presets,
 		Formation,
 		Tactics,
-		Instructions
+		Instructions,
+		Squad
 	};
 
 	enum class ECoachMenuInputDevice : uint8
@@ -163,6 +165,9 @@ private:
 	void OpenPresetDeleteConfirmation();
 	void ClosePresetDeleteConfirmation();
 	void ConfirmPendingPresetDeletion();
+
+	UFUNCTION()
+	void HandleSquadTabClicked();
 
 	UFUNCTION()
 	void HandlePresetsTabClicked();
@@ -292,6 +297,14 @@ private:
 	UWidgetSwitcher* PageSwitcher = nullptr;
 
 	UPROPERTY()
+	USoccerDirectorTechnicalWidget* DirectorTechnicalWidget = nullptr;
+
+	UPROPERTY()
+	UVerticalBox* DirectorTechnicalHost = nullptr;
+
+	UPROPERTY()
+	UButton* SquadTabButton = nullptr;
+	UPROPERTY()
 	UButton* PresetsTabButton = nullptr;
 	UPROPERTY()
 	UButton* FormationTabButton = nullptr;
@@ -406,7 +419,7 @@ private:
 	FSelectorRow IndividualDefenseSelector;
 	FSelectorRow MarkingTargetSelector;
 
-	ECoachMenuTab ActiveTab = ECoachMenuTab::Formation;
+	ECoachMenuTab ActiveTab = ECoachMenuTab::Squad;
 	FGuid SelectedPresetId;
 	FGuid SelectedBuiltInPresetId;
 	FGuid SelectedUserPresetId;

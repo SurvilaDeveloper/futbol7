@@ -1,6 +1,7 @@
 ﻿#include "SoccerFormationMenuWidget.h"
 
 #include "SoccerFormationLibrary.h"
+#include "SoccerDirectorTechnicalWidget.h"
 #include "SoccerMatchManager.h"
 #include "SoccerTacticalPresetManager.h"
 #include "SoccerCharacterBase.h"
@@ -359,7 +360,38 @@ void USoccerFormationMenuWidget::NativeOnInitialized()
 void USoccerFormationMenuWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+
+	if (
+		!IsValid(DirectorTechnicalWidget) &&
+		DirectorTechnicalHost != nullptr &&
+		GetOwningPlayer() != nullptr
+	)
+	{
+		DirectorTechnicalWidget = CreateWidget<USoccerDirectorTechnicalWidget>(
+			GetOwningPlayer(),
+			USoccerDirectorTechnicalWidget::StaticClass()
+		);
+
+		if (IsValid(DirectorTechnicalWidget))
+		{
+			UVerticalBoxSlot* DirectorTechnicalSlot =
+				DirectorTechnicalHost->AddChildToVerticalBox(DirectorTechnicalWidget);
+			if (DirectorTechnicalSlot != nullptr)
+			{
+				DirectorTechnicalSlot->SetSize(
+					FSlateChildSize(ESlateSizeRule::Fill)
+				);
+				DirectorTechnicalSlot->SetHorizontalAlignment(HAlign_Fill);
+			}
+		}
+	}
+
 	RefreshFromMatchManager();
+
+	if (IsValid(DirectorTechnicalWidget))
+	{
+		DirectorTechnicalWidget->RefreshFromPersistentTeamSetup(true);
+	}
 }
 
 FReply USoccerFormationMenuWidget::NativeOnPreviewKeyDown(
@@ -441,7 +473,7 @@ FReply USoccerFormationMenuWidget::NativeOnPreviewKeyDown(
 	if (Key == EKeys::Gamepad_LeftShoulder || Key == EKeys::PageUp)
 	{
 		const int32 CurrentTabIndex = static_cast<int32>(ActiveTab);
-		const int32 NewTabIndex = (CurrentTabIndex + 3) % 4;
+		const int32 NewTabIndex = (CurrentTabIndex + 4) % 5;
 		SetActiveTab(static_cast<ECoachMenuTab>(NewTabIndex));
 		return FReply::Handled();
 	}
@@ -449,7 +481,7 @@ FReply USoccerFormationMenuWidget::NativeOnPreviewKeyDown(
 	if (Key == EKeys::Gamepad_RightShoulder || Key == EKeys::PageDown)
 	{
 		const int32 CurrentTabIndex = static_cast<int32>(ActiveTab);
-		const int32 NewTabIndex = (CurrentTabIndex + 1) % 4;
+		const int32 NewTabIndex = (CurrentTabIndex + 1) % 5;
 		SetActiveTab(static_cast<ECoachMenuTab>(NewTabIndex));
 		return FReply::Handled();
 	}
@@ -487,7 +519,14 @@ FReply USoccerFormationMenuWidget::NativeOnPreviewKeyDown(
 		Key == EKeys::SpaceBar
 	)
 	{
-		if (ActiveTab == ECoachMenuTab::Presets)
+		if (ActiveTab == ECoachMenuTab::Squad)
+		{
+			if (IsValid(DirectorTechnicalWidget))
+			{
+				DirectorTechnicalWidget->ConfirmFocusedSlotAssignment();
+			}
+		}
+		else if (ActiveTab == ECoachMenuTab::Presets)
 		{
 			if (FocusedControlIndex == 2)
 			{
@@ -675,9 +714,10 @@ void USoccerFormationMenuWidget::ActivateMenu(bool bPauseGame)
 	LastAnalogHorizontalActionTime = -1000.0;
 	LastAnalogVerticalActionTime = -1000.0;
 
-	UButton* ActiveTabButton = FormationTabButton;
+	UButton* ActiveTabButton = SquadTabButton;
 	switch (ActiveTab)
 	{
+	case ECoachMenuTab::Squad: ActiveTabButton = SquadTabButton; break;
 	case ECoachMenuTab::Presets: ActiveTabButton = PresetsTabButton; break;
 	case ECoachMenuTab::Formation: ActiveTabButton = FormationTabButton; break;
 	case ECoachMenuTab::Tactics: ActiveTabButton = TacticsTabButton; break;
@@ -760,7 +800,7 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 
 	UTextBlock* TitleText = MakeTextBlock(
 		WidgetTree,
-		TEXT("SISTEMA Y TÁCTICA"),
+		TEXT("DIRECCIÓN TÉCNICA"),
 		FLinearColor(0.97f, 0.98f, 1.0f, 1.0f),
 		31
 	);
@@ -802,17 +842,20 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 	UHorizontalBox* TabRow = WidgetTree->ConstructWidget<UHorizontalBox>();
 	AddVerticalChild(MainColumn, TabRow, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
+	SquadTabButton = MakeButton(WidgetTree, TEXT("PLANTEL"), 19);
 	PresetsTabButton = MakeButton(WidgetTree, TEXT("PRESETS"), 19);
 	FormationTabButton = MakeButton(WidgetTree, TEXT("FORMACIÓN"), 19);
 	TacticsTabButton = MakeButton(WidgetTree, TEXT("TÁCTICA"), 19);
 	InstructionsTabButton = MakeButton(WidgetTree, TEXT("INSTRUCCIONES"), 19);
 
+	SquadTabButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleSquadTabClicked);
 	PresetsTabButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandlePresetsTabClicked);
 	FormationTabButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleFormationTabClicked);
 	TacticsTabButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleTacticsTabClicked);
 	InstructionsTabButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleInstructionsTabClicked);
 
-	AddHorizontalChild(TabRow, PresetsTabButton, FMargin(0.0f, 0.0f, 8.0f, 0.0f), ESlateSizeRule::Fill);
+	AddHorizontalChild(TabRow, SquadTabButton, FMargin(0.0f, 0.0f, 8.0f, 0.0f), ESlateSizeRule::Fill);
+	AddHorizontalChild(TabRow, PresetsTabButton, FMargin(8.0f), ESlateSizeRule::Fill);
 	AddHorizontalChild(TabRow, FormationTabButton, FMargin(8.0f), ESlateSizeRule::Fill);
 	AddHorizontalChild(TabRow, TacticsTabButton, FMargin(8.0f), ESlateSizeRule::Fill);
 	AddHorizontalChild(TabRow, InstructionsTabButton, FMargin(8.0f, 0.0f, 0.0f, 0.0f), ESlateSizeRule::Fill);
@@ -846,6 +889,9 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 	PageSwitcher->AddChild(FormationPage);
 	PageSwitcher->AddChild(TacticsPage);
 	PageSwitcher->AddChild(InstructionsPage);
+
+	DirectorTechnicalHost = WidgetTree->ConstructWidget<UVerticalBox>();
+	PageSwitcher->AddChild(DirectorTechnicalHost);
 
 	BuildPresetsPage(PresetsPage);
 	BuildFormationPage(FormationPage);
@@ -2898,6 +2944,14 @@ void USoccerFormationMenuWidget::RefreshInstructionsPage()
 
 void USoccerFormationMenuWidget::RefreshTabVisuals()
 {
+	if (SquadTabButton != nullptr)
+	{
+		SquadTabButton->SetBackgroundColor(
+			ActiveTab == ECoachMenuTab::Squad
+			? Accent
+			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
+		);
+	}
 	if (PresetsTabButton != nullptr)
 	{
 		PresetsTabButton->SetBackgroundColor(
@@ -3039,7 +3093,14 @@ void USoccerFormationMenuWidget::RefreshControlHints()
 	}
 
 	FString Hint;
-	if (ActiveTab == ECoachMenuTab::Presets)
+	if (ActiveTab == ECoachMenuTab::Squad)
+	{
+		Hint =
+			LastInputDevice == ECoachMenuInputDevice::Gamepad
+			? TEXT("LB/RB: sección   Arr/Ab: jugador   Izq/Der: puesto   A: asignar   Mouse: formación/banco   Menu/Options: cerrar")
+			: TEXT("Mouse: seleccionar/asignar   Arr/Ab: jugador   Izq/Der: puesto   Enter: asignar   PgUp/PgDn: sección   M/Esc: cerrar");
+	}
+	else if (ActiveTab == ECoachMenuTab::Presets)
 	{
 		Hint =
 			LastInputDevice == ECoachMenuInputDevice::Gamepad
@@ -3074,6 +3135,12 @@ void USoccerFormationMenuWidget::SetTabGuidanceMessage()
 {
 	switch (ActiveTab)
 	{
+	case ECoachMenuTab::Squad:
+		SetStatusMessage(
+			TEXT("Plantel: elegí futbolistas, formación guardada, titulares y suplentes. Cada cambio se guarda automáticamente.")
+		);
+		break;
+
 	case ECoachMenuTab::Presets:
 		SetStatusMessage(
 			TEXT("Presets: aplicá o duplicá plantillas DEL JUEGO; administrá MIS PRESETS y copias portables en JSON.")
@@ -3124,6 +3191,11 @@ void USoccerFormationMenuWidget::SetActiveTab(
 		PageSwitcher->SetActiveWidgetIndex(static_cast<int32>(ActiveTab));
 	}
 
+	if (ActiveTab == ECoachMenuTab::Squad && IsValid(DirectorTechnicalWidget))
+	{
+		DirectorTechnicalWidget->RefreshFromPersistentTeamSetup(false);
+	}
+
 	RefreshTabVisuals();
 	RefreshFocusVisuals();
 	RefreshControlHints();
@@ -3132,6 +3204,15 @@ void USoccerFormationMenuWidget::SetActiveTab(
 
 void USoccerFormationMenuWidget::MoveFocus(int32 Direction)
 {
+	if (ActiveTab == ECoachMenuTab::Squad)
+	{
+		if (IsValid(DirectorTechnicalWidget))
+		{
+			DirectorTechnicalWidget->NavigatePlayer(Direction);
+		}
+		return;
+	}
+
 	TArray<FSelectorRow*> Rows = GetActiveSelectorRows();
 	if (Rows.Num() <= 0)
 	{
@@ -3166,6 +3247,13 @@ void USoccerFormationMenuWidget::CycleFocusedValue(int32 Direction)
 {
 	switch (ActiveTab)
 	{
+	case ECoachMenuTab::Squad:
+		if (IsValid(DirectorTechnicalWidget))
+		{
+			DirectorTechnicalWidget->NavigateFormationSlot(Direction);
+		}
+		break;
+
 	case ECoachMenuTab::Presets:
 		if (FocusedControlIndex == 0)
 		{
@@ -3221,6 +3309,9 @@ USoccerFormationMenuWidget::GetActiveSelectorRows()
 
 	switch (ActiveTab)
 	{
+	case ECoachMenuTab::Squad:
+		break;
+
 	case ECoachMenuTab::Presets:
 		Result.Add(&BuiltInPresetSelector);
 		Result.Add(&PresetSelector);
@@ -3748,6 +3839,11 @@ void USoccerFormationMenuWidget::SetStatusMessage(const FString& Message)
 	{
 		StatusText->SetText(FText::FromString(Message));
 	}
+}
+
+void USoccerFormationMenuWidget::HandleSquadTabClicked()
+{
+	SetActiveTab(ECoachMenuTab::Squad);
 }
 
 void USoccerFormationMenuWidget::HandlePresetsTabClicked()
