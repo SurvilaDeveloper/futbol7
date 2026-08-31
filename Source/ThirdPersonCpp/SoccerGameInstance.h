@@ -1,0 +1,111 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/GameInstance.h"
+#include "SoccerTeamSetupTypes.h"
+#include "SoccerGameInstance.generated.h"
+
+/**
+ * Session owner for the persistent coach/team configuration.
+ *
+ * Init() loads (or creates) the SaveGame. Mutating functions autosave by default,
+ * so future manager UI code only needs to call this API and does not write files.
+ */
+UCLASS(BlueprintType)
+class THIRDPERSONCPP_API USoccerGameInstance : public UGameInstance
+{
+    GENERATED_BODY()
+
+public:
+    USoccerGameInstance();
+
+    virtual void Init() override;
+    virtual void Shutdown() override;
+
+    /** Copy of the currently loaded team setup for Blueprint/UI consumers. */
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup")
+    FSoccerTeamSetup GetCurrentTeamSetup() const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup")
+    bool HasLoadedTeamSetup() const;
+
+    /** Explicit disk operations. Normal UI changes use autosave automatically. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Persistence")
+    bool SaveTeamSetup();
+
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Persistence")
+    bool ReloadTeamSetup();
+
+    /** Restores a clean default formation/tactic and persists it. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Persistence")
+    bool ResetTeamSetupToDefaults();
+
+    /** Formation changes preserve compatible assignments; removed slots go to the bench. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Formation")
+    bool SetFormationSystem(ESoccerFormationSystem NewFormationSystem);
+
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Tactics")
+    bool SetTacticalPlan(const FSoccerTeamTacticalPlan& NewTacticalPlan);
+
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Tactics")
+    bool SetSlotTacticalInstruction(const FSoccerSlotTacticalInstruction& NewInstruction);
+
+    /** Adds a profile ID to the persistent squad if it is not already present. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Squad")
+    bool AddPlayerToSquad(FName NewPlayerId);
+
+    /** Removes the player from squad, lineup and bench. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Squad")
+    bool RemovePlayerFromSquad(FName ExistingPlayerId);
+
+    /**
+     * Assigns a player to a legal slot in the current formation.
+     * If the slot already has a player, that displaced player moves to the bench.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Lineup")
+    bool AssignPlayerToStartingSlot(FName PlayerIdToAssign, FName FormationSlotId);
+
+    /** Removes the player from any starting slot and places them on the bench. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Lineup")
+    bool MovePlayerToBench(FName PlayerIdToBench);
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
+    FName GetPlayerInStartingSlot(FName FormationSlotId) const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
+    FName FindStartingSlotForPlayer(FName PlayerIdToFind) const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
+    bool IsPlayerOnBench(FName PlayerIdToFind) const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Squad")
+    bool IsPlayerInSquad(FName PlayerIdToFind) const;
+
+    static FString GetTeamSaveSlotName();
+    static int32 GetCurrentSaveFormatVersion();
+    static int32 GetCurrentTeamSetupDataVersion();
+
+protected:
+    /** Autosave is intentionally on from the first persistence stage. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Soccer|Team Setup|Persistence")
+    bool bAutoSaveTeamChanges = true;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Soccer|Team Setup")
+    FSoccerTeamSetup CurrentTeamSetup;
+
+private:
+    bool LoadOrCreateTeamSetup();
+    bool PersistIfNeeded();
+    void MarkTeamSetupChanged();
+    void BuildDefaultTeamSetup(FSoccerTeamSetup& OutTeamSetup) const;
+    void NormalizeLoadedTeamSetup(FSoccerTeamSetup& InOutTeamSetup) const;
+    void RebuildSlotInstructionsForCurrentFormation(FSoccerTeamSetup& InOutTeamSetup) const;
+    bool IsValidSlotForFormation(FName FormationSlotId, ESoccerFormationSystem FormationSystem) const;
+    void AddPlayerToBenchIfNeeded(FSoccerTeamSetup& InOutTeamSetup, FName PlayerIdToAdd) const;
+    void RemovePlayerFromBench(FSoccerTeamSetup& InOutTeamSetup, FName PlayerIdToRemove) const;
+    void RemovePlayerFromStartingLineup(FSoccerTeamSetup& InOutTeamSetup, FName PlayerIdToRemove) const;
+    void EnsurePlayerExistsInSquad(FSoccerTeamSetup& InOutTeamSetup, FName PlayerIdToEnsure) const;
+
+    bool bTeamSetupLoaded = false;
+    bool bTeamSetupDirty = false;
+};
