@@ -338,6 +338,140 @@ bool USoccerGameInstance::MovePlayerToBench(FName PlayerIdToBench)
     return PersistIfNeeded();
 }
 
+bool USoccerGameInstance::MoveStartingSlotPlayerToBench(FName FormationSlotId)
+{
+    if (!IsValidSlotForFormation(FormationSlotId, CurrentTeamSetup.FormationSystem))
+    {
+        return false;
+    }
+
+    const FName PlayerIdToBench = GetPlayerInStartingSlot(FormationSlotId);
+    if (PlayerIdToBench.IsNone())
+    {
+        return false;
+    }
+
+    CurrentTeamSetup.StartingLineupBySlot.Remove(FormationSlotId);
+    AddPlayerToBenchIfNeeded(CurrentTeamSetup, PlayerIdToBench);
+    NormalizeLoadedTeamSetup(CurrentTeamSetup);
+    MarkTeamSetupChanged();
+    return PersistIfNeeded();
+}
+
+bool USoccerGameInstance::SwapStartingSlots(
+    FName FirstFormationSlotId,
+    FName SecondFormationSlotId
+)
+{
+    if (
+        FirstFormationSlotId.IsNone() ||
+        SecondFormationSlotId.IsNone() ||
+        FirstFormationSlotId == SecondFormationSlotId ||
+        !IsValidSlotForFormation(FirstFormationSlotId, CurrentTeamSetup.FormationSystem) ||
+        !IsValidSlotForFormation(SecondFormationSlotId, CurrentTeamSetup.FormationSystem)
+    )
+    {
+        return false;
+    }
+
+    const FName FirstPlayerId = GetPlayerInStartingSlot(FirstFormationSlotId);
+    const FName SecondPlayerId = GetPlayerInStartingSlot(SecondFormationSlotId);
+
+    if (FirstPlayerId.IsNone() && SecondPlayerId.IsNone())
+    {
+        return true;
+    }
+
+    // Clear both sources first so the one-occupied / one-empty case cannot duplicate a player.
+    CurrentTeamSetup.StartingLineupBySlot.Remove(FirstFormationSlotId);
+    CurrentTeamSetup.StartingLineupBySlot.Remove(SecondFormationSlotId);
+
+    if (!SecondPlayerId.IsNone())
+    {
+        CurrentTeamSetup.StartingLineupBySlot.Add(FirstFormationSlotId, SecondPlayerId);
+    }
+
+    if (!FirstPlayerId.IsNone())
+    {
+        CurrentTeamSetup.StartingLineupBySlot.Add(SecondFormationSlotId, FirstPlayerId);
+    }
+
+    // Normalize is kept as a defensive invariant check before autosave.
+    NormalizeLoadedTeamSetup(CurrentTeamSetup);
+    MarkTeamSetupChanged();
+    return PersistIfNeeded();
+}
+
+bool USoccerGameInstance::SwapStarterWithBench(
+    FName FormationSlotId,
+    FName BenchPlayerId
+)
+{
+    if (
+        BenchPlayerId.IsNone() ||
+        !IsValidSlotForFormation(FormationSlotId, CurrentTeamSetup.FormationSystem)
+    )
+    {
+        return false;
+    }
+
+    const int32 BenchIndex = CurrentTeamSetup.BenchPlayerIds.IndexOfByKey(BenchPlayerId);
+    if (BenchIndex == INDEX_NONE)
+    {
+        return false;
+    }
+
+    EnsurePlayerExistsInSquad(CurrentTeamSetup, BenchPlayerId);
+
+    const FName OutgoingStarterId = GetPlayerInStartingSlot(FormationSlotId);
+    CurrentTeamSetup.BenchPlayerIds.RemoveAt(BenchIndex);
+
+    if (!OutgoingStarterId.IsNone() && OutgoingStarterId != BenchPlayerId)
+    {
+        EnsurePlayerExistsInSquad(CurrentTeamSetup, OutgoingStarterId);
+        CurrentTeamSetup.BenchPlayerIds.Insert(OutgoingStarterId, BenchIndex);
+    }
+
+    RemovePlayerFromStartingLineup(CurrentTeamSetup, BenchPlayerId);
+    CurrentTeamSetup.StartingLineupBySlot.Add(FormationSlotId, BenchPlayerId);
+
+    NormalizeLoadedTeamSetup(CurrentTeamSetup);
+    MarkTeamSetupChanged();
+    return PersistIfNeeded();
+}
+
+bool USoccerGameInstance::ReorderBenchPlayer(FName BenchPlayerId, int32 NewBenchIndex)
+{
+    if (BenchPlayerId.IsNone())
+    {
+        return false;
+    }
+
+    const int32 CurrentBenchIndex = CurrentTeamSetup.BenchPlayerIds.IndexOfByKey(BenchPlayerId);
+    if (CurrentBenchIndex == INDEX_NONE || CurrentTeamSetup.BenchPlayerIds.Num() <= 0)
+    {
+        return false;
+    }
+
+    const int32 SafeNewBenchIndex = FMath::Clamp(
+        NewBenchIndex,
+        0,
+        CurrentTeamSetup.BenchPlayerIds.Num() - 1
+    );
+
+    if (CurrentBenchIndex == SafeNewBenchIndex)
+    {
+        return true;
+    }
+
+    CurrentTeamSetup.BenchPlayerIds.RemoveAt(CurrentBenchIndex);
+    CurrentTeamSetup.BenchPlayerIds.Insert(BenchPlayerId, SafeNewBenchIndex);
+
+    NormalizeLoadedTeamSetup(CurrentTeamSetup);
+    MarkTeamSetupChanged();
+    return PersistIfNeeded();
+}
+
 FName USoccerGameInstance::GetPlayerInStartingSlot(FName FormationSlotId) const
 {
     const FName* FoundPlayerId = CurrentTeamSetup.StartingLineupBySlot.Find(FormationSlotId);
@@ -370,6 +504,110 @@ bool USoccerGameInstance::IsPlayerOnBench(FName PlayerIdToFind) const
 bool USoccerGameInstance::IsPlayerInSquad(FName PlayerIdToFind) const
 {
     return !PlayerIdToFind.IsNone() && CurrentTeamSetup.SquadPlayerIds.Contains(PlayerIdToFind);
+}
+
+TArray<FName> USoccerGameInstance::GetSquadPlayerIds() const
+{
+    return CurrentTeamSetup.SquadPlayerIds;
+}
+
+TArray<FName> USoccerGameInstance::GetBenchPlayerIds() const
+{
+    return CurrentTeamSetup.BenchPlayerIds;
+}
+
+TArray<FName> USoccerGameInstance::GetStartingPlayerIdsInFormationOrder() const
+{
+    TArray<FName> OrderedPlayerIds;
+
+    const FSoccerFormationDefinition& FormationDefinition =
+        SoccerFormationLibrary::GetDefinition(CurrentTeamSetup.FormationSystem);
+
+    if (!SoccerFormationLibrary::IsValidSevenASideDefinition(FormationDefinition))
+    {
+        return OrderedPlayerIds;
+    }
+
+    OrderedPlayerIds.Reserve(FormationDefinition.Slots.Num());
+
+    for (const FSoccerFormationSlot& FormationSlot : FormationDefinition.Slots)
+    {
+        OrderedPlayerIds.Add(GetPlayerInStartingSlot(FormationSlot.SlotId));
+    }
+
+    return OrderedPlayerIds;
+}
+
+TArray<FName> USoccerGameInstance::GetEmptyStartingSlotIds() const
+{
+    TArray<FName> EmptySlotIds;
+
+    const FSoccerFormationDefinition& FormationDefinition =
+        SoccerFormationLibrary::GetDefinition(CurrentTeamSetup.FormationSystem);
+
+    if (!SoccerFormationLibrary::IsValidSevenASideDefinition(FormationDefinition))
+    {
+        return EmptySlotIds;
+    }
+
+    for (const FSoccerFormationSlot& FormationSlot : FormationDefinition.Slots)
+    {
+        if (GetPlayerInStartingSlot(FormationSlot.SlotId).IsNone())
+        {
+            EmptySlotIds.Add(FormationSlot.SlotId);
+        }
+    }
+
+    return EmptySlotIds;
+}
+
+int32 USoccerGameInstance::GetStartingPlayerCount() const
+{
+    int32 StartingPlayerCount = 0;
+
+    const FSoccerFormationDefinition& FormationDefinition =
+        SoccerFormationLibrary::GetDefinition(CurrentTeamSetup.FormationSystem);
+
+    if (!SoccerFormationLibrary::IsValidSevenASideDefinition(FormationDefinition))
+    {
+        return 0;
+    }
+
+    for (const FSoccerFormationSlot& FormationSlot : FormationDefinition.Slots)
+    {
+        if (!GetPlayerInStartingSlot(FormationSlot.SlotId).IsNone())
+        {
+            ++StartingPlayerCount;
+        }
+    }
+
+    return StartingPlayerCount;
+}
+
+bool USoccerGameInstance::HasCompleteStartingLineup() const
+{
+    const FSoccerFormationDefinition& FormationDefinition =
+        SoccerFormationLibrary::GetDefinition(CurrentTeamSetup.FormationSystem);
+
+    if (!SoccerFormationLibrary::IsValidSevenASideDefinition(FormationDefinition))
+    {
+        return false;
+    }
+
+    if (FormationDefinition.Slots.Num() != 7)
+    {
+        return false;
+    }
+
+    for (const FSoccerFormationSlot& FormationSlot : FormationDefinition.Slots)
+    {
+        if (GetPlayerInStartingSlot(FormationSlot.SlotId).IsNone())
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 FString USoccerGameInstance::GetTeamSaveSlotName()

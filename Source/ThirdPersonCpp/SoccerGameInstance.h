@@ -69,6 +69,28 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Lineup")
     bool MovePlayerToBench(FName PlayerIdToBench);
 
+    /** Moves the current occupant of a starting slot to the bench. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Lineup")
+    bool MoveStartingSlotPlayerToBench(FName FormationSlotId);
+
+    /**
+     * Swaps the occupants of two legal starting slots. Empty slots are allowed,
+     * so this can also move one starter without involving the bench.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Lineup")
+    bool SwapStartingSlots(FName FirstFormationSlotId, FName SecondFormationSlotId);
+
+    /**
+     * Replaces a starter with a bench player. The outgoing starter occupies the
+     * incoming substitute's previous bench index so bench ordering remains stable.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Lineup")
+    bool SwapStarterWithBench(FName FormationSlotId, FName BenchPlayerId);
+
+    /** Persists user-selected substitute ordering for the future coach UI. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Lineup")
+    bool ReorderBenchPlayer(FName BenchPlayerId, int32 NewBenchIndex);
+
     UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
     FName GetPlayerInStartingSlot(FName FormationSlotId) const;
 
@@ -80,6 +102,27 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Squad")
     bool IsPlayerInSquad(FName PlayerIdToFind) const;
+
+    /** Ordered persistent squad/bench views for the future manager UI. */
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Squad")
+    TArray<FName> GetSquadPlayerIds() const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
+    TArray<FName> GetBenchPlayerIds() const;
+
+    /** Seven entries in formation-slot order; empty positions are NAME_None. */
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
+    TArray<FName> GetStartingPlayerIdsInFormationOrder() const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
+    TArray<FName> GetEmptyStartingSlotIds() const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
+    int32 GetStartingPlayerCount() const;
+
+    /** True only when every one of the seven legal formation slots is occupied. */
+    UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
+    bool HasCompleteStartingLineup() const;
 
     static FString GetTeamSaveSlotName();
     static int32 GetCurrentSaveFormatVersion();
