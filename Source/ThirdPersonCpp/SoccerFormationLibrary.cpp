@@ -1,5 +1,8 @@
 #include "SoccerFormationLibrary.h"
 
+#include "SoccerField.h"
+#include "SoccerFieldDimensions.h"
+
 #include <initializer_list>
 
 namespace
@@ -271,4 +274,218 @@ bool SoccerFormationLibrary::IsValidSevenASideDefinition(
 	}
 
 	return GoalkeeperCount == 1;
+}
+
+
+const TArray<ESoccerFormationSystem>& SoccerFormationLibrary::GetAllSystems()
+{
+	static const TArray<ESoccerFormationSystem> Systems =
+	{
+		ESoccerFormationSystem::OneThreeTwoOne,
+		ESoccerFormationSystem::OneTwoThreeOne,
+		ESoccerFormationSystem::OneThreeThree,
+		ESoccerFormationSystem::OneTwoTwoTwo,
+		ESoccerFormationSystem::OneThreeOneTwo,
+		ESoccerFormationSystem::OneTwoOneTwoOne,
+		ESoccerFormationSystem::OneTwoOneThree,
+		ESoccerFormationSystem::OneFourOneOne,
+		ESoccerFormationSystem::OneFiveOne
+	};
+
+	return Systems;
+}
+
+bool SoccerFormationLibrary::IsBuiltInCatalogValid()
+{
+	for (const ESoccerFormationSystem FormationSystem : GetAllSystems())
+	{
+		const FSoccerFormationDefinition& Definition = GetDefinition(FormationSystem);
+
+		if (
+			Definition.System != FormationSystem ||
+			!IsValidSevenASideDefinition(Definition)
+		)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+const FSoccerFormationSlot* SoccerFormationLibrary::FindSlotById(
+	const FSoccerFormationDefinition& Definition,
+	FName SlotId
+)
+{
+	if (SlotId.IsNone())
+	{
+		return nullptr;
+	}
+
+	return Definition.Slots.FindByPredicate(
+		[SlotId](const FSoccerFormationSlot& CandidateSlot)
+		{
+			return CandidateSlot.SlotId == SlotId;
+		}
+	);
+}
+
+bool SoccerFormationLibrary::IsSlotValidForFormation(
+	ESoccerFormationSystem System,
+	FName SlotId
+)
+{
+	return FindSlotById(GetDefinition(System), SlotId) != nullptr;
+}
+
+FText SoccerFormationLibrary::GetSlotDisplayName(
+	const FSoccerFormationSlot& Slot
+)
+{
+	if (Slot.PlayerRole == ESoccerPlayerRole::Goalkeeper)
+	{
+		return FText::FromString(TEXT("Goalkeeper"));
+	}
+
+	FString LanePrefix;
+
+	switch (Slot.FormationLane)
+	{
+	case ESoccerFormationLane::Left:
+		LanePrefix = TEXT("Left ");
+		break;
+	case ESoccerFormationLane::LeftCenter:
+		LanePrefix = TEXT("Left-Center ");
+		break;
+	case ESoccerFormationLane::RightCenter:
+		LanePrefix = TEXT("Right-Center ");
+		break;
+	case ESoccerFormationLane::Right:
+		LanePrefix = TEXT("Right ");
+		break;
+	case ESoccerFormationLane::Center:
+	default:
+		LanePrefix = TEXT("Central ");
+		break;
+	}
+
+	FString PositionName;
+
+	switch (Slot.FormationLine)
+	{
+	case ESoccerFormationLine::Defense:
+		PositionName = TEXT("Defender");
+		break;
+	case ESoccerFormationLine::DefensiveMidfield:
+		PositionName = TEXT("Defensive Midfielder");
+		break;
+	case ESoccerFormationLine::AttackingMidfield:
+		PositionName = TEXT("Attacking Midfielder");
+		break;
+	case ESoccerFormationLine::Attack:
+		PositionName = TEXT("Forward");
+		break;
+	case ESoccerFormationLine::Midfield:
+	default:
+		PositionName = TEXT("Midfielder");
+		break;
+	}
+
+	return FText::FromString(LanePrefix + PositionName);
+}
+
+ESoccerPlayerNaturalPosition SoccerFormationLibrary::GetNaturalPositionForSlot(
+	const FSoccerFormationSlot& Slot
+)
+{
+	if (Slot.PlayerRole == ESoccerPlayerRole::Goalkeeper)
+	{
+		return ESoccerPlayerNaturalPosition::Goalkeeper;
+	}
+
+	if (Slot.PlayerRole == ESoccerPlayerRole::Defender)
+	{
+		switch (Slot.FormationLane)
+		{
+		case ESoccerFormationLane::Left:
+			return ESoccerPlayerNaturalPosition::LeftDefender;
+		case ESoccerFormationLane::Right:
+			return ESoccerPlayerNaturalPosition::RightDefender;
+		case ESoccerFormationLane::LeftCenter:
+		case ESoccerFormationLane::Center:
+		case ESoccerFormationLane::RightCenter:
+		default:
+			return ESoccerPlayerNaturalPosition::CentralDefender;
+		}
+	}
+
+	if (Slot.PlayerRole == ESoccerPlayerRole::Forward)
+	{
+		switch (Slot.FormationLane)
+		{
+		case ESoccerFormationLane::Left:
+			return ESoccerPlayerNaturalPosition::LeftForward;
+		case ESoccerFormationLane::Right:
+			return ESoccerPlayerNaturalPosition::RightForward;
+		case ESoccerFormationLane::LeftCenter:
+		case ESoccerFormationLane::Center:
+		case ESoccerFormationLane::RightCenter:
+		default:
+			return ESoccerPlayerNaturalPosition::CenterForward;
+		}
+	}
+
+	switch (Slot.FormationLane)
+	{
+	case ESoccerFormationLane::Left:
+		return ESoccerPlayerNaturalPosition::LeftMidfielder;
+	case ESoccerFormationLane::Right:
+		return ESoccerPlayerNaturalPosition::RightMidfielder;
+	case ESoccerFormationLane::LeftCenter:
+	case ESoccerFormationLane::Center:
+	case ESoccerFormationLane::RightCenter:
+	default:
+		return ESoccerPlayerNaturalPosition::CentralMidfielder;
+	}
+}
+
+bool SoccerFormationLibrary::TryResolveSlotWorldLocation(
+	const ASoccerField* SoccerField,
+	float OwnGoalLineSign,
+	const FSoccerFormationSlot& Slot,
+	FVector& OutWorldLocation,
+	float LocalZ
+)
+{
+	OutWorldLocation = FVector::ZeroVector;
+
+	if (!IsValid(SoccerField))
+	{
+		return false;
+	}
+
+	const float NormalizedOwnGoalLineSign =
+		SoccerFieldDimensions::NormalizeGoalLineSign(OwnGoalLineSign);
+
+	const float SafeDepthAlpha = FMath::Clamp(Slot.DepthAlpha, 0.0f, 1.0f);
+	const float SafeLateralAlpha = FMath::Clamp(Slot.LateralAlpha, -1.0f, 1.0f);
+
+	// DepthAlpha is measured from own goal to opponent goal.
+	const float LocalX =
+		NormalizedOwnGoalLineSign *
+		SoccerFieldDimensions::HalfPitchLengthCm *
+		(1.0f - 2.0f * SafeDepthAlpha);
+
+	// LateralAlpha is team-relative. Team-right flips when the team changes ends.
+	const float LocalY =
+		-NormalizedOwnGoalLineSign *
+		SafeLateralAlpha *
+		SoccerFieldDimensions::HalfPitchWidthCm;
+
+	OutWorldLocation = SoccerField->PitchLocalToWorld(
+		FVector(LocalX, LocalY, LocalZ)
+	);
+
+	return true;
 }

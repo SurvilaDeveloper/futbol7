@@ -44,6 +44,27 @@ void USoccerGameInstance::Init()
 {
     Super::Init();
 
+    const bool bFormationCatalogValid =
+        SoccerFormationLibrary::IsBuiltInCatalogValid();
+
+    if (bFormationCatalogValid)
+    {
+        UE_LOG(
+            LogSoccerTeamPersistence,
+            Display,
+            TEXT("[TeamSetup] Formation catalog ready: %d valid seven-a-side systems."),
+            SoccerFormationLibrary::GetAllSystems().Num()
+        );
+    }
+    else
+    {
+        UE_LOG(
+            LogSoccerTeamPersistence,
+            Error,
+            TEXT("[TeamSetup] Built-in formation catalog validation failed.")
+        );
+    }
+
     bTeamSetupLoaded = LoadOrCreateTeamSetup();
 
     if (bTeamSetupLoaded)
@@ -564,25 +585,15 @@ bool USoccerGameInstance::IsValidSlotForFormation(
     ESoccerFormationSystem FormationSystem
 ) const
 {
-    if (FormationSlotId.IsNone())
-    {
-        return false;
-    }
-
     const FSoccerFormationDefinition& FormationDefinition =
         SoccerFormationLibrary::GetDefinition(FormationSystem);
 
-    if (!SoccerFormationLibrary::IsValidSevenASideDefinition(FormationDefinition))
-    {
-        return false;
-    }
-
-    return FormationDefinition.Slots.ContainsByPredicate(
-        [FormationSlotId](const FSoccerFormationSlot& FormationSlot)
-        {
-            return FormationSlot.SlotId == FormationSlotId;
-        }
-    );
+    return
+        SoccerFormationLibrary::IsValidSevenASideDefinition(FormationDefinition) &&
+        SoccerFormationLibrary::IsSlotValidForFormation(
+            FormationSystem,
+            FormationSlotId
+        );
 }
 
 void USoccerGameInstance::AddPlayerToBenchIfNeeded(

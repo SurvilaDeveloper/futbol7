@@ -1,4 +1,4 @@
-﻿//SoccerMatchManager.cpp
+//SoccerMatchManager.cpp
 
 #include "SoccerMatchManager.h"
 #include "SoccerPenaltyKickRestart.h"
@@ -15674,6 +15674,28 @@ FVector ASoccerMatchManager::GetFormationSlotWorldLocation(
 	const FSoccerFormationSlot& Slot
 ) const
 {
+	// Prefer the authoritative SoccerField conversion so normalized formation
+	// coordinates automatically follow pitch size, translation, rotation and
+	// the team's current field end.
+	if (IsValid(SoccerField))
+	{
+		FVector ResolvedWorldLocation = FVector::ZeroVector;
+
+		if (
+			SoccerFormationLibrary::TryResolveSlotWorldLocation(
+				SoccerField,
+				GetOwnGoalLineSign(Team),
+				Slot,
+				ResolvedWorldLocation,
+				0.0f
+			)
+		)
+		{
+			return ResolvedWorldLocation;
+		}
+	}
+
+	// Legacy-safe fallback for levels that temporarily have no ASoccerField.
 	const FVector OwnGoalLocation =
 		GetOwnGoalReferenceLocation(Team);
 
@@ -15704,17 +15726,15 @@ FVector ASoccerMatchManager::GetFormationSlotWorldLocation(
 	const float SafeLateralAlpha =
 		FMath::Clamp(Slot.LateralAlpha, -1.0f, 1.0f);
 
-	FVector Location =
+	FVector FallbackLocation =
 		OwnGoalLocation +
 		AttackDirection * (SafeDepthAlpha * FieldLength) +
 		RightDirection *
 			(SafeLateralAlpha * SoccerFieldDimensions::HalfPitchWidthCm);
 
-	// Structural coordinates are 2D. Stage 3 uses them as open-play anchors;
-	// the actual character Z/navigation projection is applied by the movement layer.
-	Location.Z = GetActorLocation().Z;
+	FallbackLocation.Z = GetActorLocation().Z;
 
-	return Location;
+	return FallbackLocation;
 }
 
 FName ASoccerMatchManager::GetAssignedFormationSlotId(
