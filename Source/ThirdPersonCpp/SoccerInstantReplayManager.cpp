@@ -9,6 +9,7 @@
 #include "Animation/AnimMontage.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/InputComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -85,6 +86,12 @@ void ASoccerInstantReplayManager::InitializeRecorder(
         TEXT("[InstantReplay] Manual replay: NumPad 8 plays the most recent %.1f seconds (press again to stop)."),
         ManualReplaySeconds
     );
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("[InstantReplay] NumPad 9 skips any replay and immediately returns to the live match.")
+    );
 }
 
 void ASoccerInstantReplayManager::ApplyRecorderConfiguration(
@@ -98,6 +105,23 @@ void ASoccerInstantReplayManager::ApplyRecorderConfiguration(
     ManualReplaySeconds = FMath::Clamp(InManualReplaySeconds, 1.0f, 10.0f);
 
     RebuildRingBuffer();
+}
+
+void ASoccerInstantReplayManager::ConfigureGoalReplayCameras(
+    float InSideDistance,
+    float InSideInfieldOffset,
+    float InFrontDistance,
+    float InBehindDistance,
+    float InCameraHeight,
+    float InCameraFOV
+)
+{
+    GoalReplaySideDistance = FMath::Max(500.0f, InSideDistance);
+    GoalReplaySideInfieldOffset = FMath::Max(0.0f, InSideInfieldOffset);
+    GoalReplayFrontDistance = FMath::Max(500.0f, InFrontDistance);
+    GoalReplayBehindDistance = FMath::Max(500.0f, InBehindDistance);
+    GoalReplayCameraHeight = FMath::Max(200.0f, InCameraHeight);
+    GoalReplayCameraFOV = FMath::Clamp(InCameraFOV, 30.0f, 120.0f);
 }
 
 void ASoccerInstantReplayManager::RebuildRingBuffer()
@@ -359,6 +383,17 @@ void ASoccerInstantReplayManager::TryBindManualReplayInput()
 
     ReplayBinding.bExecuteWhenPaused = true;
     ReplayBinding.bConsumeInput = true;
+
+    FInputKeyBinding& SkipReplayBinding = InputComponent->BindKey(
+        EKeys::NumPadNine,
+        IE_Pressed,
+        this,
+        &ASoccerInstantReplayManager::HandleSkipReplayInput
+    );
+
+    SkipReplayBinding.bExecuteWhenPaused = true;
+    SkipReplayBinding.bConsumeInput = true;
+
     bManualReplayInputBound = true;
 }
 
@@ -366,8 +401,6 @@ void ASoccerInstantReplayManager::HandleManualReplayInput()
 {
     if (bReplayPlaying)
     {
-        // Stage 3 keeps automatic event replays non-skippable. A dedicated
-        // replay-skip input belongs to the later presentation/polish stage.
         if (ActivePlaybackReason == ESoccerInstantReplayPlaybackReason::Manual)
         {
             StopManualReplay();
@@ -377,6 +410,22 @@ void ASoccerInstantReplayManager::HandleManualReplayInput()
     }
 
     StartManualReplay(ManualReplaySeconds);
+}
+
+void ASoccerInstantReplayManager::HandleSkipReplayInput()
+{
+    if (!bReplayPlaying)
+    {
+        return;
+    }
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("[InstantReplay] Replay skipped by player input (NumPad 9).")
+    );
+
+    FinishReplay(true);
 }
 
 void ASoccerInstantReplayManager::Tick(float DeltaTime)
@@ -602,13 +651,15 @@ bool ASoccerInstantReplayManager::StartManualReplay(float RequestedSeconds)
     return StartReplayInternal(
         RequestedClipSeconds,
         ESoccerInstantReplayPlaybackReason::Manual,
-        true
+        true,
+        0.0f
     );
 }
 
 bool ASoccerInstantReplayManager::StartEventReplay(
     ESoccerInstantReplayPlaybackReason PlaybackReason,
-    float RequestedSeconds
+    float RequestedSeconds,
+    float GoalLineSign
 )
 {
     if (
@@ -622,14 +673,16 @@ bool ASoccerInstantReplayManager::StartEventReplay(
     return StartReplayInternal(
         RequestedSeconds,
         PlaybackReason,
-        true
+        true,
+        GoalLineSign
     );
 }
 
 bool ASoccerInstantReplayManager::StartReplayInternal(
     float RequestedSeconds,
     ESoccerInstantReplayPlaybackReason PlaybackReason,
-    bool bAppendImmediateEndpoint
+    bool bAppendImmediateEndpoint,
+    float GoalLineSign
 )
 {
     if (bReplayPlaying)
@@ -708,11 +761,19 @@ bool ASoccerInstantReplayManager::StartReplayInternal(
     ReplayPlayerController = PlayerController;
     PreviousViewTarget = PlayerController->GetViewTarget();
 
-    if (!BuildFixedReplayCamera())
+    ActiveGoalLineSign =
+        PlaybackReason == ESoccerInstantReplayPlaybackReason::Goal
+            ? GoalLineSign
+            : 0.0f;
+    ActiveGoalReplayCameraTakeIndex = 0;
+
+    if (!BuildReplayCameraForReason(PlaybackReason, ActiveGoalLineSign))
     {
         PlaybackFrames.Reset();
         ReplayPlayerController.Reset();
         PreviousViewTarget.Reset();
+        ActiveGoalLineSign = 0.0f;
+        ActiveGoalReplayCameraTakeIndex = 0;
         return false;
     }
 
@@ -739,6 +800,7 @@ bool ASoccerInstantReplayManager::StartReplayInternal(
     PrepareActorsForReplay();
 
     PlayerController->SetViewTarget(ReplayCamera.Get());
+    RefreshReplayCameraView(0.0f);
 
     ApplyPlaybackTime(
         PlaybackClipStartTimeSeconds,
@@ -773,6 +835,18 @@ bool ASoccerInstantReplayManager::StartReplayInternal(
         PlaybackClipEndTimeSeconds - PlaybackClipStartTimeSeconds,
         PlaybackFrames.Num()
     );
+
+    if (ActivePlaybackReason == ESoccerInstantReplayPlaybackReason::Goal)
+    {
+        UE_LOG(
+            LogTemp,
+            Log,
+            TEXT("[InstantReplay] Goal camera %d/%d: %s. NumPad 9 skips the replay."),
+            ActiveGoalReplayCameraTakeIndex + 1,
+            GoalReplayCameraTakeCount,
+            GetCurrentGoalReplayCameraName()
+        );
+    }
 
     return true;
 }
@@ -844,6 +918,12 @@ void ASoccerInstantReplayManager::TickReplayPlayback()
             PlaybackClipEndTimeSeconds,
             static_cast<float>(SafeRealDelta)
         );
+
+        if (AdvanceGoalReplayCameraTake())
+        {
+            return;
+        }
+
         FinishReplay(true);
         return;
     }
@@ -964,6 +1044,9 @@ void ASoccerInstantReplayManager::ApplyPlaybackTime(
         Alpha,
         false
     );
+
+    UpdateReplayCameraAim();
+    RefreshReplayCameraView(VisualDeltaSeconds);
 }
 
 const FSoccerReplayCharacterSample*
@@ -1298,6 +1381,28 @@ void ASoccerInstantReplayManager::ApplyBallPlaybackSample(
     }
 }
 
+bool ASoccerInstantReplayManager::BuildReplayCameraForReason(
+    ESoccerInstantReplayPlaybackReason PlaybackReason,
+    float GoalLineSign
+)
+{
+    if (PlaybackReason == ESoccerInstantReplayPlaybackReason::Goal)
+    {
+        if (BuildGoalReplayCamera(GoalLineSign))
+        {
+            return true;
+        }
+
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("[InstantReplay] Goal camera setup failed; falling back to the fixed replay camera.")
+        );
+    }
+
+    return BuildFixedReplayCamera();
+}
+
 bool ASoccerInstantReplayManager::BuildFixedReplayCamera()
 {
     UWorld* World = GetWorld();
@@ -1399,6 +1504,346 @@ bool ASoccerInstantReplayManager::BuildFixedReplayCamera()
     return true;
 }
 
+bool ASoccerInstantReplayManager::BuildGoalReplayCamera(float GoalLineSign)
+{
+    UWorld* World = GetWorld();
+    const ASoccerMatchManager* Manager = MatchManager.Get();
+    const ASoccerField* Field =
+        IsValid(Manager) ? Manager->GetSoccerField() : nullptr;
+
+    if (
+        World == nullptr ||
+        !IsValid(Field) ||
+        PlaybackFrames.Num() <= 0
+    )
+    {
+        return false;
+    }
+
+    float SafeGoalLineSign = 0.0f;
+
+    if (FMath::Abs(GoalLineSign) >= 0.5f)
+    {
+        SafeGoalLineSign = GoalLineSign >= 0.0f ? 1.0f : -1.0f;
+    }
+    else if (PlaybackFrames.Last().Ball.Ball.IsValid())
+    {
+        SafeGoalLineSign = Field->GetNearestGoalLineSign(
+            PlaybackFrames.Last().Ball.ActorTransform.GetLocation()
+        );
+    }
+    else
+    {
+        return false;
+    }
+
+    ActiveGoalLineSign = SafeGoalLineSign;
+    ActiveGoalReplayCameraTakeIndex = 0;
+
+    if (ReplayCamera.IsValid())
+    {
+        ReplayCamera->Destroy();
+        ReplayCamera.Reset();
+    }
+
+    const FVector GoalCenter =
+        Field->GetGoalCenterWorldLocation(ActiveGoalLineSign, 0.0f);
+
+    FActorSpawnParameters SpawnParameters;
+    SpawnParameters.Owner = this;
+    SpawnParameters.SpawnCollisionHandlingOverride =
+        ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+    ACameraActor* ReplayCameraActor = World->SpawnActor<ACameraActor>(
+        GoalCenter + FVector::UpVector * GoalReplayCameraHeight,
+        FRotator::ZeroRotator,
+        SpawnParameters
+    );
+
+    if (!IsValid(ReplayCameraActor))
+    {
+        return false;
+    }
+
+    if (UCameraComponent* ReplayCameraComponent =
+        ReplayCameraActor->GetCameraComponent())
+    {
+        ReplayCameraComponent->SetFieldOfView(
+            FMath::Clamp(GoalReplayCameraFOV, 30.0f, 120.0f)
+        );
+    }
+
+    ReplayCamera = ReplayCameraActor;
+
+    if (!ConfigureCurrentGoalReplayCamera())
+    {
+        ReplayCameraActor->Destroy();
+        ReplayCamera.Reset();
+        return false;
+    }
+
+    return true;
+}
+
+bool ASoccerInstantReplayManager::ConfigureCurrentGoalReplayCamera()
+{
+    ACameraActor* ReplayCameraActor = ReplayCamera.Get();
+    const ASoccerMatchManager* Manager = MatchManager.Get();
+    const ASoccerField* Field =
+        IsValid(Manager) ? Manager->GetSoccerField() : nullptr;
+
+    if (
+        !IsValid(ReplayCameraActor) ||
+        !IsValid(Field) ||
+        FMath::Abs(ActiveGoalLineSign) < 0.5f
+    )
+    {
+        return false;
+    }
+
+    const FVector GoalCenter =
+        Field->GetGoalCenterWorldLocation(ActiveGoalLineSign, 0.0f);
+
+    FVector TowardGoalDirection = Field->GetPitchLengthWorldDirection();
+    TowardGoalDirection.Z = 0.0f;
+
+    if (!TowardGoalDirection.Normalize())
+    {
+        return false;
+    }
+
+    TowardGoalDirection *= ActiveGoalLineSign >= 0.0f ? 1.0f : -1.0f;
+
+    const FVector InfieldDirection = -TowardGoalDirection;
+
+    FVector AttackerRightDirection = FVector::CrossProduct(
+        FVector::UpVector,
+        TowardGoalDirection
+    );
+    AttackerRightDirection.Z = 0.0f;
+
+    if (!AttackerRightDirection.Normalize())
+    {
+        AttackerRightDirection = Field->GetPitchWidthWorldDirection();
+        AttackerRightDirection.Z = 0.0f;
+
+        if (!AttackerRightDirection.Normalize())
+        {
+            return false;
+        }
+    }
+
+    const FVector AttackerLeftDirection = -AttackerRightDirection;
+    const float SafeHeight = FMath::Max(200.0f, GoalReplayCameraHeight);
+
+    FVector ReplayCameraLocation = GoalCenter;
+
+    switch (ActiveGoalReplayCameraTakeIndex)
+    {
+    case 0: // Left side from the attacker's perspective.
+        ReplayCameraLocation +=
+            AttackerLeftDirection * FMath::Max(500.0f, GoalReplaySideDistance);
+        ReplayCameraLocation +=
+            InfieldDirection * FMath::Max(0.0f, GoalReplaySideInfieldOffset);
+        ReplayCameraLocation += FVector::UpVector * SafeHeight;
+        break;
+
+    case 1: // Right side from the attacker's perspective.
+        ReplayCameraLocation +=
+            AttackerRightDirection * FMath::Max(500.0f, GoalReplaySideDistance);
+        ReplayCameraLocation +=
+            InfieldDirection * FMath::Max(0.0f, GoalReplaySideInfieldOffset);
+        ReplayCameraLocation += FVector::UpVector * SafeHeight;
+        break;
+
+    case 2: // In front of the goal, inside the pitch.
+        ReplayCameraLocation +=
+            InfieldDirection * FMath::Max(500.0f, GoalReplayFrontDistance);
+        ReplayCameraLocation += FVector::UpVector * SafeHeight;
+        break;
+
+    case 3: // Behind the goal, outside the pitch.
+    default:
+        ReplayCameraLocation +=
+            TowardGoalDirection * FMath::Max(500.0f, GoalReplayBehindDistance);
+        ReplayCameraLocation += FVector::UpVector * (SafeHeight * 0.85f);
+        break;
+    }
+
+    ReplayCameraActor->SetActorLocation(
+        ReplayCameraLocation,
+        false,
+        nullptr,
+        ETeleportType::TeleportPhysics
+    );
+
+    const FVector InitialAimLocation =
+        GoalCenter + FVector::UpVector * 120.0f;
+
+    ReplayCameraActor->SetActorRotation(
+        (InitialAimLocation - ReplayCameraLocation).Rotation()
+    );
+
+    if (UCameraComponent* ReplayCameraComponent =
+        ReplayCameraActor->GetCameraComponent())
+    {
+        ReplayCameraComponent->SetFieldOfView(
+            FMath::Clamp(GoalReplayCameraFOV, 30.0f, 120.0f)
+        );
+    }
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("[InstantReplay] Goal camera transform %d/%d (%s): Location=(%.1f, %.1f, %.1f)."),
+        ActiveGoalReplayCameraTakeIndex + 1,
+        GoalReplayCameraTakeCount,
+        GetCurrentGoalReplayCameraName(),
+        ReplayCameraLocation.X,
+        ReplayCameraLocation.Y,
+        ReplayCameraLocation.Z
+    );
+
+    return true;
+}
+
+bool ASoccerInstantReplayManager::AdvanceGoalReplayCameraTake()
+{
+    if (
+        ActivePlaybackReason != ESoccerInstantReplayPlaybackReason::Goal ||
+        ActiveGoalReplayCameraTakeIndex + 1 >= GoalReplayCameraTakeCount
+    )
+    {
+        return false;
+    }
+
+    ++ActiveGoalReplayCameraTakeIndex;
+
+    if (!ConfigureCurrentGoalReplayCamera())
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("[InstantReplay] Could not configure goal replay camera take %d/%d."),
+            ActiveGoalReplayCameraTakeIndex + 1,
+            GoalReplayCameraTakeCount
+        );
+        return false;
+    }
+
+    PlaybackFrameCursor = 0;
+    PlaybackElapsedSeconds = 0.0;
+    LastPlaybackRealTimeSeconds = FPlatformTime::Seconds();
+
+    ApplyPlaybackTime(
+        PlaybackClipStartTimeSeconds,
+        0.0f
+    );
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("[InstantReplay] Goal camera %d/%d: %s."),
+        ActiveGoalReplayCameraTakeIndex + 1,
+        GoalReplayCameraTakeCount,
+        GetCurrentGoalReplayCameraName()
+    );
+
+    return true;
+}
+
+void ASoccerInstantReplayManager::UpdateReplayCameraAim()
+{
+    if (
+        ActivePlaybackReason != ESoccerInstantReplayPlaybackReason::Goal ||
+        !ReplayCamera.IsValid()
+    )
+    {
+        return;
+    }
+
+    const ASoccerMatchManager* Manager = MatchManager.Get();
+    const ASoccerField* Field =
+        IsValid(Manager) ? Manager->GetSoccerField() : nullptr;
+
+    if (!IsValid(Field) || FMath::Abs(ActiveGoalLineSign) < 0.5f)
+    {
+        return;
+    }
+
+    const FVector GoalAimLocation =
+        Field->GetGoalCenterWorldLocation(ActiveGoalLineSign, 120.0f);
+
+    FVector ReplayAimLocation = GoalAimLocation;
+
+    const ASoccerBall* Ball = SoccerBall.Get();
+    if (IsValid(Ball))
+    {
+        const FVector BallAimLocation =
+            Ball->GetActorLocation() + FVector::UpVector * 60.0f;
+
+        // Keep the goal in the composition while still following the ball.
+        ReplayAimLocation = FMath::Lerp(
+            GoalAimLocation,
+            BallAimLocation,
+            0.58f
+        );
+    }
+
+    ACameraActor* ReplayCameraActor = ReplayCamera.Get();
+    const FVector ReplayCameraLocation = ReplayCameraActor->GetActorLocation();
+    const FVector AimDelta = ReplayAimLocation - ReplayCameraLocation;
+
+    if (!AimDelta.IsNearlyZero())
+    {
+        ReplayCameraActor->SetActorRotation(AimDelta.Rotation());
+    }
+}
+
+void ASoccerInstantReplayManager::RefreshReplayCameraView(float RealDeltaSeconds)
+{
+    APlayerController* PlayerController = ReplayPlayerController.Get();
+    ACameraActor* ReplayCameraActor = ReplayCamera.Get();
+
+    if (!IsValid(PlayerController) || !IsValid(ReplayCameraActor))
+    {
+        return;
+    }
+
+    // The replay world is intentionally paused. The replay manager itself ticks
+    // while paused, but PlayerCameraManager may otherwise keep the POV cached
+    // from the first take. Force its camera cache to be rebuilt from the current
+    // replay-camera transform on every visual replay step.
+    if (PlayerController->GetViewTarget() != ReplayCameraActor)
+    {
+        PlayerController->SetViewTarget(ReplayCameraActor);
+    }
+
+    APlayerCameraManager* CameraManager = PlayerController->PlayerCameraManager;
+
+    if (IsValid(CameraManager))
+    {
+        CameraManager->UpdateCamera(FMath::Max(0.0f, RealDeltaSeconds));
+    }
+}
+
+const TCHAR* ASoccerInstantReplayManager::GetCurrentGoalReplayCameraName() const
+{
+    switch (ActiveGoalReplayCameraTakeIndex)
+    {
+    case 0:
+        return TEXT("Left");
+    case 1:
+        return TEXT("Right");
+    case 2:
+        return TEXT("Front");
+    case 3:
+        return TEXT("Behind");
+    default:
+        return TEXT("Unknown");
+    }
+}
+
 void ASoccerInstantReplayManager::RestoreLiveStateAfterReplay()
 {
     for (const FSoccerReplayCharacterSample& LiveSample : LiveResumeFrame.Characters)
@@ -1484,6 +1929,8 @@ void ASoccerInstantReplayManager::FinishReplay(bool bRestoreLiveState)
     PlaybackClipEndTimeSeconds = 0.0;
     PlaybackElapsedSeconds = 0.0;
     LastPlaybackRealTimeSeconds = 0.0;
+    ActiveGoalLineSign = 0.0f;
+    ActiveGoalReplayCameraTakeIndex = 0;
     ReplayPlayerController.Reset();
     PreviousViewTarget.Reset();
 

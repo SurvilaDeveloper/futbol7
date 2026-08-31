@@ -122,7 +122,17 @@ public:
      */
     bool StartEventReplay(
         ESoccerInstantReplayPlaybackReason PlaybackReason,
-        float RequestedSeconds
+        float RequestedSeconds,
+        float GoalLineSign = 0.0f
+    );
+
+    void ConfigureGoalReplayCameras(
+        float InSideDistance,
+        float InSideInfieldOffset,
+        float InFrontDistance,
+        float InBehindDistance,
+        float InCameraHeight,
+        float InCameraFOV
     );
 
     bool IsReplayPlaying() const;
@@ -148,11 +158,13 @@ private:
 
     void TryBindManualReplayInput();
     void HandleManualReplayInput();
+    void HandleSkipReplayInput();
 
     bool StartReplayInternal(
         float RequestedSeconds,
         ESoccerInstantReplayPlaybackReason PlaybackReason,
-        bool bAppendImmediateEndpoint
+        bool bAppendImmediateEndpoint,
+        float GoalLineSign
     );
     void AppendImmediatePlaybackEndpoint();
     void TickReplayPlayback();
@@ -187,7 +199,17 @@ private:
         bool bResumeLivePlayback
     );
 
+    bool BuildReplayCameraForReason(
+        ESoccerInstantReplayPlaybackReason PlaybackReason,
+        float GoalLineSign
+    );
     bool BuildFixedReplayCamera();
+    bool BuildGoalReplayCamera(float GoalLineSign);
+    bool ConfigureCurrentGoalReplayCamera();
+    bool AdvanceGoalReplayCameraTake();
+    void UpdateReplayCameraAim();
+    void RefreshReplayCameraView(float RealDeltaSeconds);
+    const TCHAR* GetCurrentGoalReplayCameraName() const;
 
     UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording", meta = (ClampMin = "2.0", UIMin = "2.0"))
     float HistorySeconds = 10.0f;
@@ -209,6 +231,24 @@ private:
 
     UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Manual Playback", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
     float FixedCameraFOV = 75.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "500.0", UIMin = "500.0"))
+    float GoalReplaySideDistance = 2600.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "0.0", UIMin = "0.0"))
+    float GoalReplaySideInfieldOffset = 700.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "500.0", UIMin = "500.0"))
+    float GoalReplayFrontDistance = 3200.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "500.0", UIMin = "500.0"))
+    float GoalReplayBehindDistance = 1800.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "200.0", UIMin = "200.0"))
+    float GoalReplayCameraHeight = 1100.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback|Camera", meta = (ClampMin = "30.0", ClampMax = "120.0", UIMin = "30.0", UIMax = "120.0"))
+    float GoalReplayCameraFOV = 78.0f;
 
     /* Characters are refreshed occasionally so later spawned/replaced actors join recording. */
     UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Recording", meta = (ClampMin = "0.25", UIMin = "0.25"))
@@ -242,6 +282,10 @@ private:
     double PlaybackClipEndTimeSeconds = 0.0;
     double PlaybackElapsedSeconds = 0.0;
     double LastPlaybackRealTimeSeconds = 0.0;
+
+    float ActiveGoalLineSign = 0.0f;
+    int32 ActiveGoalReplayCameraTakeIndex = 0;
+    int32 GoalReplayCameraTakeCount = 4;
 
     TWeakObjectPtr<APlayerController> ReplayPlayerController;
     TWeakObjectPtr<AActor> PreviousViewTarget;

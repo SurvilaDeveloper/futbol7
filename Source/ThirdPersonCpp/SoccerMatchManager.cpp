@@ -10953,6 +10953,15 @@ void ASoccerMatchManager::InitializeInstantReplayRecorder()
 		InstantReplaySamplesPerSecond,
 		InstantReplayManualPlaybackSeconds
 	);
+
+	InstantReplayManager->ConfigureGoalReplayCameras(
+		InstantReplayGoalSideCameraDistance,
+		InstantReplayGoalSideCameraInfieldOffset,
+		InstantReplayGoalFrontCameraDistance,
+		InstantReplayGoalBehindCameraDistance,
+		InstantReplayGoalCameraHeight,
+		InstantReplayGoalCameraFOV
+	);
 }
 
 void ASoccerMatchManager::ShutdownInstantReplayRecorder()
@@ -10975,7 +10984,7 @@ void ASoccerMatchManager::ShutdownInstantReplayRecorder()
 	bOwnsInstantReplayManager = false;
 }
 
-void ASoccerMatchManager::TryStartGoalInstantReplay()
+void ASoccerMatchManager::TryStartGoalInstantReplay(ESoccerTeam ScoringTeam)
 {
     if (
         !bEnableInstantReplayAfterGoal ||
@@ -10991,9 +11000,12 @@ void ASoccerMatchManager::TryStartGoalInstantReplay()
         FMath::Max(1.0f, InstantReplayHistorySeconds)
     );
 
+    const float ScoredGoalLineSign = GetOpponentGoalLineSign(ScoringTeam);
+
     if (!InstantReplayManager->StartEventReplay(
         ESoccerInstantReplayPlaybackReason::Goal,
-        RequestedSeconds
+        RequestedSeconds,
+        ScoredGoalLineSign
     ))
     {
         UE_LOG(
@@ -16238,7 +16250,7 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 	 * If replay cannot start (for example very early in the match), nothing
 	 * special is required: the existing goal flow simply continues.
 	 */
-	TryStartGoalInstantReplay();
+	TryStartGoalInstantReplay(ScoringTeam);
 }
 
 void ASoccerMatchManager::ResetAfterGoal()
