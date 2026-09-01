@@ -368,6 +368,26 @@ protected:
 		float BaseHorizontalSpeed,
 		bool bShot
 	) const;
+
+	// Stage 8B dribbling execution. BallControl governs touch consistency/
+	// closeness, Dribbling governs directional precision, Agility governs how
+	// quickly the body completes a dribble turn, and Balance governs how much
+	// running speed survives a sharp change of direction.
+	FVector GetProfileAdjustedDribbleDirection(
+		const FVector& IntendedDirection,
+		bool bAutoPass
+	) const;
+	FVector GetProfileAdjustedAutoPassTarget(
+		const FVector& BallLocation,
+		const FVector& IntendedTarget
+	) const;
+	float GetProfileAdjustedDribbleTouchSpeed(
+		float BaseTouchSpeed,
+		bool bAutoPass
+	) const;
+	float GetPlayerProfileAgilityTurnDurationMultiplier() const;
+	float GetPlayerProfileBalanceTurnSpeedRetention(float TurnAngleDegrees) const;
+
 	bool IsPlayerProfileShotTarget(const FVector& IntendedTarget) const;
 	float GetPlayerProfileTechnicalPressureAlpha() const;
 
@@ -1331,6 +1351,59 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "100.0", ClampMax = "2500.0"))
 		float ShotTargetRecognitionRadius = 600.0f;
+
+	// Stage 8B. These values define what BallControl/Dribbling/Agility/Balance
+	// mean globally. Individual Data Assets remain simple 0-100 ratings.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.0", ClampMax = "30.0"))
+		float DribbleMaxAngularErrorDegreesAtZero = 7.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.0", ClampMax = "30.0"))
+		float DribbleMaxAngularErrorDegreesAtHundred = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.0", ClampMax = "30.0"))
+		float AutoPassMaxAngularErrorDegreesAtZero = 5.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.0", ClampMax = "30.0"))
+		float AutoPassMaxAngularErrorDegreesAtHundred = 0.20f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.50", ClampMax = "2.00"))
+		float DribbleTouchSpeedMultiplierAtZero = 1.12f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.50", ClampMax = "2.00"))
+		float DribbleTouchSpeedMultiplierAtHundred = 0.94f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float DribbleTouchSpeedVariationAtZero = 0.10f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float DribbleTouchSpeedVariationAtHundred = 0.01f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float AutoPassSpeedVariationAtZero = 0.08f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float AutoPassSpeedVariationAtHundred = 0.01f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "1.0", ClampMax = "4.0"))
+		float BallControlPressureErrorMultiplierAtZero = 1.45f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "1.0", ClampMax = "4.0"))
+		float BallControlPressureErrorMultiplierAtHundred = 1.00f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.25", ClampMax = "3.00"))
+		float AgilityTurnDurationMultiplierAtZero = 1.00f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.25", ClampMax = "3.00"))
+		float AgilityTurnDurationMultiplierAtHundred = 0.70f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.10", ClampMax = "1.00"))
+		float BalanceSharpTurnSpeedRetentionAtZero = 0.70f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "0.10", ClampMax = "1.00"))
+		float BalanceSharpTurnSpeedRetentionAtHundred = 0.98f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "30.0", ClampMax = "180.0"))
+		float BalanceFullEffectTurnAngleDegrees = 120.0f;
 
 	// Runtime baseline makes profile application idempotent. Without this, changing
 	// a profile after BeginPlay would multiply an already adjusted acceleration.

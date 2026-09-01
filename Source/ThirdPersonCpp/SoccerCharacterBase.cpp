@@ -2693,6 +2693,209 @@ float ASoccerCharacterBase::GetProfileAdjustedTechnicalKickSpeed(
 	return SafeBaseSpeed * SpeedFactor;
 }
 
+FVector ASoccerCharacterBase::GetProfileAdjustedDribbleDirection(
+	const FVector& IntendedDirection,
+	bool bAutoPass
+) const
+{
+	FVector SafeDirection = IntendedDirection;
+	SafeDirection.Z = 0.0f;
+	SafeDirection = SafeDirection.GetSafeNormal();
+
+	if (SafeDirection.IsNearlyZero() || !HasPlayerProfile())
+	{
+		return SafeDirection;
+	}
+
+	const float DribblingAlpha = SoccerClampProfileAttributeAlpha(
+		PlayerProfile->Attributes.Technical.Dribbling
+	);
+
+	const float BaseMaxAngularError = bAutoPass
+		? FMath::Lerp(
+			AutoPassMaxAngularErrorDegreesAtZero,
+			AutoPassMaxAngularErrorDegreesAtHundred,
+			DribblingAlpha
+		)
+		: FMath::Lerp(
+			DribbleMaxAngularErrorDegreesAtZero,
+			DribbleMaxAngularErrorDegreesAtHundred,
+			DribblingAlpha
+		);
+
+	const float BallControlAlpha = SoccerClampProfileAttributeAlpha(
+		PlayerProfile->Attributes.Technical.BallControl
+	);
+
+	const float FullPressureErrorMultiplier = FMath::Lerp(
+		BallControlPressureErrorMultiplierAtZero,
+		BallControlPressureErrorMultiplierAtHundred,
+		BallControlAlpha
+	);
+
+	const float EffectiveMaxAngularError =
+		FMath::Max(0.0f, BaseMaxAngularError) *
+		FMath::Lerp(
+			1.0f,
+			FullPressureErrorMultiplier,
+			GetPlayerProfileTechnicalPressureAlpha()
+		);
+
+	if (EffectiveMaxAngularError <= KINDA_SMALL_NUMBER)
+	{
+		return SafeDirection;
+	}
+
+	const float SignedErrorDegrees = FMath::FRandRange(
+		-EffectiveMaxAngularError,
+		EffectiveMaxAngularError
+	);
+
+	FVector AdjustedDirection = SafeDirection.RotateAngleAxis(
+		SignedErrorDegrees,
+		FVector::UpVector
+	);
+	AdjustedDirection.Z = 0.0f;
+
+	return AdjustedDirection.GetSafeNormal();
+}
+
+FVector ASoccerCharacterBase::GetProfileAdjustedAutoPassTarget(
+	const FVector& BallLocation,
+	const FVector& IntendedTarget
+) const
+{
+	FVector BallToTarget = IntendedTarget - BallLocation;
+	const float IntendedHeightDelta = BallToTarget.Z;
+	BallToTarget.Z = 0.0f;
+
+	const float HorizontalDistance = BallToTarget.Size2D();
+	if (HorizontalDistance <= KINDA_SMALL_NUMBER)
+	{
+		return IntendedTarget;
+	}
+
+	const FVector AdjustedDirection = GetProfileAdjustedDribbleDirection(
+		BallToTarget,
+		true
+	);
+
+	if (AdjustedDirection.IsNearlyZero())
+	{
+		return IntendedTarget;
+	}
+
+	FVector AdjustedTarget =
+		BallLocation + AdjustedDirection * HorizontalDistance;
+	AdjustedTarget.Z = BallLocation.Z + IntendedHeightDelta;
+
+	return AdjustedTarget;
+}
+
+float ASoccerCharacterBase::GetProfileAdjustedDribbleTouchSpeed(
+	float BaseTouchSpeed,
+	bool bAutoPass
+) const
+{
+	const float SafeBaseSpeed = FMath::Max(0.0f, BaseTouchSpeed);
+
+	if (!HasPlayerProfile())
+	{
+		return SafeBaseSpeed;
+	}
+
+	const float BallControlAlpha = SoccerClampProfileAttributeAlpha(
+		PlayerProfile->Attributes.Technical.BallControl
+	);
+
+	const float BaseMultiplier = bAutoPass
+		? 1.0f
+		: FMath::Lerp(
+			DribbleTouchSpeedMultiplierAtZero,
+			DribbleTouchSpeedMultiplierAtHundred,
+			BallControlAlpha
+		);
+
+	const float BaseVariation = bAutoPass
+		? FMath::Lerp(
+			AutoPassSpeedVariationAtZero,
+			AutoPassSpeedVariationAtHundred,
+			BallControlAlpha
+		)
+		: FMath::Lerp(
+			DribbleTouchSpeedVariationAtZero,
+			DribbleTouchSpeedVariationAtHundred,
+			BallControlAlpha
+		);
+
+	const float FullPressureErrorMultiplier = FMath::Lerp(
+		BallControlPressureErrorMultiplierAtZero,
+		BallControlPressureErrorMultiplierAtHundred,
+		BallControlAlpha
+	);
+
+	const float EffectiveVariation = FMath::Max(0.0f, BaseVariation) *
+		FMath::Lerp(
+			1.0f,
+			FullPressureErrorMultiplier,
+			GetPlayerProfileTechnicalPressureAlpha()
+		);
+
+	const float VariationFactor = FMath::Max(
+		0.10f,
+		1.0f + FMath::FRandRange(-EffectiveVariation, EffectiveVariation)
+	);
+
+	return SafeBaseSpeed * FMath::Max(0.10f, BaseMultiplier) * VariationFactor;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileAgilityTurnDurationMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	const float AgilityAlpha = SoccerClampProfileAttributeAlpha(
+		PlayerProfile->Attributes.Physical.Agility
+	);
+
+	return FMath::Lerp(
+		AgilityTurnDurationMultiplierAtZero,
+		AgilityTurnDurationMultiplierAtHundred,
+		AgilityAlpha
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileBalanceTurnSpeedRetention(
+	float TurnAngleDegrees
+) const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	const float BalanceAlpha = SoccerClampProfileAttributeAlpha(
+		PlayerProfile->Attributes.Physical.Balance
+	);
+
+	const float FullEffectRetention = FMath::Lerp(
+		BalanceSharpTurnSpeedRetentionAtZero,
+		BalanceSharpTurnSpeedRetentionAtHundred,
+		BalanceAlpha
+	);
+
+	const float SafeFullEffectAngle = FMath::Max(1.0f, BalanceFullEffectTurnAngleDegrees);
+	const float TurnEffectAlpha = FMath::Clamp(
+		FMath::Abs(TurnAngleDegrees) / SafeFullEffectAngle,
+		0.0f,
+		1.0f
+	);
+
+	return FMath::Lerp(1.0f, FullEffectRetention, TurnEffectAlpha);
+}
+
 float ASoccerCharacterBase::GetPlayerProfileTechnicalPressureAlpha() const
 {
 	UWorld* ProfileWorld = GetWorld();

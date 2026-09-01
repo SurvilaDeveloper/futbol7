@@ -2143,18 +2143,31 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 
 	bPendingAIKickHasImpactedBall = true;
 
+	FVector ExecutedKickTarget = PendingAIKickTarget;
+	float ExecutedKickHorizontalSpeed = PendingAIKickHorizontalSpeed;
+
 	if (bPendingAIKickIsAutoPass)
 	{
+		ExecutedKickTarget = GetProfileAdjustedAutoPassTarget(
+			BallToKick->GetActorLocation(),
+			ExecutedKickTarget
+		);
+		ExecutedKickHorizontalSpeed = GetProfileAdjustedDribbleTouchSpeed(
+			ExecutedKickHorizontalSpeed,
+			true
+		);
+
+		PendingAIKickTarget = ExecutedKickTarget;
 		AIAutoPassBall = BallToKick;
 		bAIAutoPassActive = true;
-		AIAutoPassTargetLocation = PendingAIKickTarget;
+		AIAutoPassTargetLocation = ExecutedKickTarget;
 		AIAutoPassStartBallLocation = BallToKick->GetActorLocation();
 		AIAutoPassStartTime =
 			GetWorld() != nullptr
 			? GetWorld()->GetTimeSeconds()
 			: 0.0f;
 
-		FVector NewCurrentDirection = PendingAIKickTarget - GetActorLocation();
+		FVector NewCurrentDirection = ExecutedKickTarget - GetActorLocation();
 		NewCurrentDirection.Z = 0.0f;
 		NewCurrentDirection = NewCurrentDirection.GetSafeNormal();
 
@@ -2163,13 +2176,7 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 			AIDribbleTurnCurrentDirection = NewCurrentDirection;
 		}
 	}
-
-	FVector ExecutedKickTarget = PendingAIKickTarget;
-	float ExecutedKickHorizontalSpeed = PendingAIKickHorizontalSpeed;
-
-	// Auto-pass is part of dribbling and intentionally waits for Stage 8B.
-	// Normal passes, shots and foot restarts use the player technical profile.
-	if (!bPendingAIKickIsAutoPass)
+	else
 	{
 		const bool bProfileShot = IsPlayerProfileShotTarget(ExecutedKickTarget);
 		ExecutedKickTarget = GetProfileAdjustedTechnicalKickTarget(
@@ -2437,9 +2444,18 @@ void ASoccerAICharacter::ExecuteAIAutoPassImmediate(
 
 	ASoccerBall* BallToKick = ControlledBall;
 
+	const FVector ExecutedAutoPassTarget = GetProfileAdjustedAutoPassTarget(
+		BallToKick->GetActorLocation(),
+		TargetLocation
+	);
+	const float ExecutedAutoPassSpeed = GetProfileAdjustedDribbleTouchSpeed(
+		HorizontalSpeed,
+		true
+	);
+
 	AIAutoPassBall = BallToKick;
 	bAIAutoPassActive = true;
-	AIAutoPassTargetLocation = TargetLocation;
+	AIAutoPassTargetLocation = ExecutedAutoPassTarget;
 	AIAutoPassStartBallLocation = BallToKick->GetActorLocation();
 
 	AIAutoPassStartTime =
@@ -2448,7 +2464,7 @@ void ASoccerAICharacter::ExecuteAIAutoPassImmediate(
 		: 0.0f;
 
 	FVector NewCurrentDirection =
-		TargetLocation - GetActorLocation();
+		ExecutedAutoPassTarget - GetActorLocation();
 
 	NewCurrentDirection.Z = 0.0f;
 	NewCurrentDirection =
@@ -2463,8 +2479,8 @@ void ASoccerAICharacter::ExecuteAIAutoPassImmediate(
 	ReleaseAIBall();
 
 	BallToKick->KickToTarget(
-		TargetLocation,
-		HorizontalSpeed,
+		ExecutedAutoPassTarget,
+		ExecutedAutoPassSpeed,
 		MinTravelTime,
 		MaxTravelTime
 	);
@@ -2695,8 +2711,28 @@ void ASoccerAICharacter::StartAIDribbleTurnAutoPass(
 	ActiveAIDribbleTurnAutoPassMaxTravelTime =
 		MaxTravelTime;
 
+	FVector CurrentTurnDirection = AIDribbleTurnCurrentDirection;
+	CurrentTurnDirection.Z = 0.0f;
+	CurrentTurnDirection = CurrentTurnDirection.GetSafeNormal();
+	if (CurrentTurnDirection.IsNearlyZero())
+	{
+		CurrentTurnDirection = GetActorForwardVector();
+		CurrentTurnDirection.Z = 0.0f;
+		CurrentTurnDirection = CurrentTurnDirection.GetSafeNormal();
+	}
+
+	const float AITurnDot = FMath::Clamp(
+		FVector::DotProduct(CurrentTurnDirection, SafeDesiredDirection),
+		-1.0f,
+		1.0f
+	);
+	const float AITurnAngleDegrees = FMath::RadiansToDegrees(
+		FMath::Acos(AITurnDot)
+	);
+
 	ActiveAIDribbleTurnForcedLocomotionSpeed =
-		ForcedLocomotionSpeed;
+		ForcedLocomotionSpeed *
+		GetPlayerProfileBalanceTurnSpeedRetention(AITurnAngleDegrees);
 
 	if (GetCharacterMovement() != nullptr)
 	{
@@ -2729,13 +2765,17 @@ void ASoccerAICharacter::StartAIDribbleTurnAutoPass(
 		? AIStrongRunDribbleTurnFinishExtraDelay
 		: AINormalRunDribbleTurnFinishExtraDelay;
 
-	const float ActorRotationDuration =
+	const float BaseActorRotationDuration =
 		FMath::Max(
 			bStrongTurn
 			? AIStrongRunDribbleTurnQuickRotationDuration
 			: AINormalRunDribbleTurnQuickRotationDuration,
 			MontageDuration
 		);
+	const float ActorRotationDuration = FMath::Max(
+		0.01f,
+		BaseActorRotationDuration * GetPlayerProfileAgilityTurnDurationMultiplier()
+	);
 
 	StartAIDribbleTurnActorRotation(
 		SafeDesiredDirection,
@@ -3418,12 +3458,16 @@ void ASoccerAICharacter::ApplyPlayerProfilePhysicalTuning()
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("[PlayerProfile] AI %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d Pass=%d ShotAcc=%d ShotPower=%d Composure=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
+			TEXT("[PlayerProfile] AI %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d Agility=%d Balance=%d BallControl=%d Dribbling=%d Pass=%d ShotAcc=%d ShotPower=%d Composure=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
 			*GetPlayerProfileId().ToString(),
 			GetPlayerProfile()->Attributes.Physical.Pace,
 			GetPlayerProfile()->Attributes.Physical.Acceleration,
 			GetPlayerProfile()->Attributes.Physical.Stamina,
 			GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
+			GetPlayerProfile()->Attributes.Physical.Agility,
+			GetPlayerProfile()->Attributes.Physical.Balance,
+			GetPlayerProfile()->Attributes.Technical.BallControl,
+			GetPlayerProfile()->Attributes.Technical.Dribbling,
 			GetPlayerProfile()->Attributes.Technical.PassingAccuracy,
 			GetPlayerProfile()->Attributes.Technical.ShootingAccuracy,
 			GetPlayerProfile()->Attributes.Technical.ShotPower,

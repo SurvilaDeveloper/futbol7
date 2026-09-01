@@ -1023,12 +1023,16 @@ void AThirdPersonCppCharacter::ApplyPlayerProfilePhysicalTuning()
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("[PlayerProfile] Human %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d Pass=%d ShotAcc=%d ShotPower=%d Composure=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
+			TEXT("[PlayerProfile] Human %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d Agility=%d Balance=%d BallControl=%d Dribbling=%d Pass=%d ShotAcc=%d ShotPower=%d Composure=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
 			*GetPlayerProfileId().ToString(),
 			GetPlayerProfile()->Attributes.Physical.Pace,
 			GetPlayerProfile()->Attributes.Physical.Acceleration,
 			GetPlayerProfile()->Attributes.Physical.Stamina,
 			GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
+			GetPlayerProfile()->Attributes.Physical.Agility,
+			GetPlayerProfile()->Attributes.Physical.Balance,
+			GetPlayerProfile()->Attributes.Technical.BallControl,
+			GetPlayerProfile()->Attributes.Technical.Dribbling,
 			GetPlayerProfile()->Attributes.Technical.PassingAccuracy,
 			GetPlayerProfile()->Attributes.Technical.ShootingAccuracy,
 			GetPlayerProfile()->Attributes.Technical.ShotPower,
@@ -3269,9 +3273,19 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 		}
 
 
-		CurrentDribbleDirection = TouchDirection;
+		FVector ExecutedDribbleDirection = GetProfileAdjustedDribbleDirection(
+			TouchDirection,
+			false
+		);
 
-		// Reci�n en el contacto cambia hacia la nueva direcci�n.
+		if (ExecutedDribbleDirection.IsNearlyZero())
+		{
+			ExecutedDribbleDirection = TouchDirection;
+		}
+
+		CurrentDribbleDirection = ExecutedDribbleDirection;
+
+		// Reci�n en el contacto cambia hacia la direcci�n realmente ejecutada.
 		if (!CurrentDribbleDirection.IsNearlyZero())
 		{
 			FRotator NewDirectionRotation = CurrentDribbleDirection.Rotation();
@@ -3283,10 +3297,15 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 
 		const float PlayerSpeed2D = GetVelocity().Size2D();
 
-		const float TouchSpeedToUse = FMath::Clamp(
+		const float BaseTouchSpeed = FMath::Clamp(
 			DribbleTouchSpeed + PlayerSpeed2D * DribbleTouchPlayerSpeedMultiplier,
 			DribbleTouchSpeed,
 			DribbleTouchMaxSpeed
+		);
+
+		const float TouchSpeedToUse = GetProfileAdjustedDribbleTouchSpeed(
+			BaseTouchSpeed,
+			false
 		);
 
 		ControlledBall->DribbleTouch(
@@ -3481,6 +3500,21 @@ void AThirdPersonCppCharacter::StartStrongRunDribbleTurn(
 		ActiveStrongRunDribbleTurnInitialDirection =
 			ActiveStrongRunDribbleTurnInitialDirection.GetSafeNormal();
 	}
+
+	const float StrongTurnDot = FMath::Clamp(
+		FVector::DotProduct(
+			ActiveStrongRunDribbleTurnInitialDirection,
+			SafeDesiredDirection
+		),
+		-1.0f,
+		1.0f
+	);
+	const float StrongTurnAngleDegrees = FMath::RadiansToDegrees(
+		FMath::Acos(StrongTurnDot)
+	);
+	ActiveStrongRunDribbleTurnResumeSpeed = FastRunSpeed *
+		GetPlayerProfileBalanceTurnSpeedRetention(StrongTurnAngleDegrees);
+
 	ControlledBall->SetPossessed(true);
 	UpdatePossessedBallLocation();
 
@@ -3496,9 +3530,13 @@ void AThirdPersonCppCharacter::StartStrongRunDribbleTurn(
 		return;
 	}
 
-	const float ActorRotationDuration = FMath::Max(
+	const float BaseActorRotationDuration = FMath::Max(
 		StrongRunDribbleTurnQuickRotationDuration,
 		MontageDuration
+	);
+	const float ActorRotationDuration = FMath::Max(
+		0.01f,
+		BaseActorRotationDuration * GetPlayerProfileAgilityTurnDurationMultiplier()
 	);
 
 	StartStrongRunDribbleTurnActorRotation(
@@ -3576,7 +3614,19 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 		float ExecutedKickHorizontalSpeed =
 			ActiveStrongRunDribbleTurnKickHorizontalSpeed;
 
-		if (ActiveStrongRunDribbleTurnKickMode != ESoccerPendingKickMode::KickAndFollow)
+		if (ActiveStrongRunDribbleTurnKickMode == ESoccerPendingKickMode::KickAndFollow)
+		{
+			ExecutedKickTarget = GetProfileAdjustedAutoPassTarget(
+				ControlledBall->GetActorLocation(),
+				ExecutedKickTarget
+			);
+			ExecutedKickHorizontalSpeed = GetProfileAdjustedDribbleTouchSpeed(
+				ExecutedKickHorizontalSpeed,
+				true
+			);
+			ActiveStrongRunDribbleTurnKickTarget = ExecutedKickTarget;
+		}
+		else
 		{
 			const bool bProfileShot =
 				bActiveStrongRunDribbleTurnUsesChargedTrajectory ||
@@ -3623,9 +3673,26 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 		return;
 	}
 
-	ControlledBall->DribbleTouch(
+	FVector ExecutedTurnDirection = GetProfileAdjustedDribbleDirection(
 		SafeDirection,
+		false
+	);
+	if (ExecutedTurnDirection.IsNearlyZero())
+	{
+		ExecutedTurnDirection = SafeDirection;
+	}
+
+	const float ExecutedTurnTouchSpeed = GetProfileAdjustedDribbleTouchSpeed(
 		ActiveStrongRunDribbleTurnTouchSpeed,
+		false
+	);
+
+	CurrentDribbleDirection = ExecutedTurnDirection;
+	DesiredDribbleDirection = ExecutedTurnDirection;
+
+	ControlledBall->DribbleTouch(
+		ExecutedTurnDirection,
+		ExecutedTurnTouchSpeed,
 		ActiveStrongRunDribbleTurnUpwardSpeed,
 		true
 	);
@@ -3932,10 +3999,23 @@ void AThirdPersonCppCharacter::StartNormalRunDribbleTurn(
 			ActiveNormalRunDribbleTurnInitialDirection.GetSafeNormal();
 	}
 
+	const float NormalTurnDot = FMath::Clamp(
+		FVector::DotProduct(
+			ActiveNormalRunDribbleTurnInitialDirection,
+			SafeDesiredDirection
+		),
+		-1.0f,
+		1.0f
+	);
+	const float NormalTurnAngleDegrees = FMath::RadiansToDegrees(
+		FMath::Acos(NormalTurnDot)
+	);
+
 	ActiveNormalRunDribbleTurnDirection = SafeDesiredDirection;
 	ActiveNormalRunDribbleTurnTouchSpeed = TouchSpeed;
 	ActiveNormalRunDribbleTurnUpwardSpeed = UpwardSpeed;
-	ActiveNormalRunDribbleTurnResumeSpeed = RunSpeed;
+	ActiveNormalRunDribbleTurnResumeSpeed = RunSpeed *
+		GetPlayerProfileBalanceTurnSpeedRetention(NormalTurnAngleDegrees);
 
 	bActiveNormalRunDribbleTurnHasImpactedBall = false;
 
@@ -3956,9 +4036,13 @@ void AThirdPersonCppCharacter::StartNormalRunDribbleTurn(
 		return;
 	}
 
-	const float ActorRotationDuration = FMath::Max(
+	const float BaseActorRotationDuration = FMath::Max(
 		NormalRunDribbleTurnQuickRotationDuration,
 		MontageDuration
+	);
+	const float ActorRotationDuration = FMath::Max(
+		0.01f,
+		BaseActorRotationDuration * GetPlayerProfileAgilityTurnDurationMultiplier()
 	);
 
 	StartNormalRunDribbleTurnActorRotation(
@@ -4019,9 +4103,26 @@ void AThirdPersonCppCharacter::PerformNormalRunDribbleTurnImpact()
 	DesiredDribbleDirection = SafeDirection;
 	bHasDesiredDribbleDirection = true;
 
-	ControlledBall->DribbleTouch(
+	FVector ExecutedTurnDirection = GetProfileAdjustedDribbleDirection(
 		SafeDirection,
+		false
+	);
+	if (ExecutedTurnDirection.IsNearlyZero())
+	{
+		ExecutedTurnDirection = SafeDirection;
+	}
+
+	const float ExecutedTurnTouchSpeed = GetProfileAdjustedDribbleTouchSpeed(
 		ActiveNormalRunDribbleTurnTouchSpeed,
+		false
+	);
+
+	CurrentDribbleDirection = ExecutedTurnDirection;
+	DesiredDribbleDirection = ExecutedTurnDirection;
+
+	ControlledBall->DribbleTouch(
+		ExecutedTurnDirection,
+		ExecutedTurnTouchSpeed,
 		ActiveNormalRunDribbleTurnUpwardSpeed,
 		true
 	);
@@ -5480,7 +5581,18 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 			ExecutedMode == ESoccerPendingKickMode::KickAndFollow &&
 			!bHumanRestartExecution;
 
-		if (!bTreatAsSelfPass)
+		if (bTreatAsSelfPass)
+		{
+			ExecutedTarget = GetProfileAdjustedAutoPassTarget(
+				ControlledBall->GetActorLocation(),
+				ExecutedTarget
+			);
+			HorizontalSpeedToUse = GetProfileAdjustedDribbleTouchSpeed(
+				HorizontalSpeedToUse,
+				true
+			);
+		}
+		else
 		{
 			const bool bProfileShot =
 				bUseChargedTrajectory || IsPlayerProfileShotTarget(ExecutedTarget);
@@ -5656,7 +5768,22 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 		ActiveKickMode == ESoccerPendingKickMode::KickAndFollow &&
 		!bActiveKickWasHumanRestartExecution;
 
-	if (!bTreatAsSelfPass)
+	if (bTreatAsSelfPass)
+	{
+		ExecutedKickTarget = GetProfileAdjustedAutoPassTarget(
+			ControlledBall->GetActorLocation(),
+			ExecutedKickTarget
+		);
+		ExecutedKickHorizontalSpeed = GetProfileAdjustedDribbleTouchSpeed(
+			ExecutedKickHorizontalSpeed,
+			true
+		);
+
+		// FinishPendingKickAnimation starts the follow using ActiveKickTarget. Keep
+		// it aligned with the actual ball path rather than the ideal click point.
+		ActiveKickTarget = ExecutedKickTarget;
+	}
+	else
 	{
 		const bool bProfileShot =
 			bActiveKickUsesChargedTrajectory ||
