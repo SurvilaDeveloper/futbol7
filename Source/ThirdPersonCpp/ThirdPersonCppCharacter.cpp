@@ -1023,12 +1023,16 @@ void AThirdPersonCppCharacter::ApplyPlayerProfilePhysicalTuning()
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("[PlayerProfile] Human %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
+			TEXT("[PlayerProfile] Human %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d Pass=%d ShotAcc=%d ShotPower=%d Composure=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
 			*GetPlayerProfileId().ToString(),
 			GetPlayerProfile()->Attributes.Physical.Pace,
 			GetPlayerProfile()->Attributes.Physical.Acceleration,
 			GetPlayerProfile()->Attributes.Physical.Stamina,
 			GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
+			GetPlayerProfile()->Attributes.Technical.PassingAccuracy,
+			GetPlayerProfile()->Attributes.Technical.ShootingAccuracy,
+			GetPlayerProfile()->Attributes.Technical.ShotPower,
+			GetPlayerProfile()->Attributes.Tactical.Composure,
 			FastRunSpeed,
 			GetCharacterMovement() != nullptr ? GetCharacterMovement()->MaxAcceleration : 0.0f
 		);
@@ -3567,18 +3571,40 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 		{
 			PrepareAutoPassBallForCleanKick(ActiveStrongRunDribbleTurnKickTarget);
 		}
+
+		FVector ExecutedKickTarget = ActiveStrongRunDribbleTurnKickTarget;
+		float ExecutedKickHorizontalSpeed =
+			ActiveStrongRunDribbleTurnKickHorizontalSpeed;
+
+		if (ActiveStrongRunDribbleTurnKickMode != ESoccerPendingKickMode::KickAndFollow)
+		{
+			const bool bProfileShot =
+				bActiveStrongRunDribbleTurnUsesChargedTrajectory ||
+				IsPlayerProfileShotTarget(ExecutedKickTarget);
+
+			ExecutedKickTarget = GetProfileAdjustedTechnicalKickTarget(
+				ControlledBall->GetActorLocation(),
+				ExecutedKickTarget,
+				bProfileShot
+			);
+			ExecutedKickHorizontalSpeed = GetProfileAdjustedTechnicalKickSpeed(
+				ExecutedKickHorizontalSpeed,
+				bProfileShot
+			);
+		}
+
 		if (bActiveStrongRunDribbleTurnUsesChargedTrajectory)
 		{
 			ControlledBall->ChargedKickToTarget(
-				ActiveStrongRunDribbleTurnKickTarget,
-				ActiveStrongRunDribbleTurnKickHorizontalSpeed
+				ExecutedKickTarget,
+				ExecutedKickHorizontalSpeed
 			);
 		}
 		else
 		{
 			ControlledBall->KickToTarget(
-				ActiveStrongRunDribbleTurnKickTarget,
-				ActiveStrongRunDribbleTurnKickHorizontalSpeed,
+				ExecutedKickTarget,
+				ExecutedKickHorizontalSpeed,
 				TargetKickMinTravelTime,
 				TargetKickMaxTravelTime
 			);
@@ -5425,7 +5451,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 	// Si no hay montaje, por ejemplo pase corto, pateamos inmediatamente.
 	if (KickMontage == nullptr)
 	{
-		const FVector ExecutedTarget = PendingKickTarget;
+		FVector ExecutedTarget = PendingKickTarget;
 		const ESoccerPendingKickMode ExecutedMode = PendingKickMode;
 
 		if (!TryRegisterHumanKickTouchForRules())
@@ -5446,6 +5472,28 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		)
 		{
 			PrepareAutoPassBallForCleanKick(ExecutedTarget);
+		}
+
+		// KickAndFollow is normally a self-pass/dribble action, except when the
+		// human is the authorised restart taker. Restarts are true passes/shots.
+		const bool bTreatAsSelfPass =
+			ExecutedMode == ESoccerPendingKickMode::KickAndFollow &&
+			!bHumanRestartExecution;
+
+		if (!bTreatAsSelfPass)
+		{
+			const bool bProfileShot =
+				bUseChargedTrajectory || IsPlayerProfileShotTarget(ExecutedTarget);
+
+			ExecutedTarget = GetProfileAdjustedTechnicalKickTarget(
+				ControlledBall->GetActorLocation(),
+				ExecutedTarget,
+				bProfileShot
+			);
+			HorizontalSpeedToUse = GetProfileAdjustedTechnicalKickSpeed(
+				HorizontalSpeedToUse,
+				bProfileShot
+			);
 		}
 
 		if (bUseChargedTrajectory)
@@ -5601,18 +5649,42 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 		PrepareAutoPassBallForCleanKick(ActiveKickTarget);
 	}
 
+	FVector ExecutedKickTarget = ActiveKickTarget;
+	float ExecutedKickHorizontalSpeed = ActiveKickHorizontalSpeed;
+
+	const bool bTreatAsSelfPass =
+		ActiveKickMode == ESoccerPendingKickMode::KickAndFollow &&
+		!bActiveKickWasHumanRestartExecution;
+
+	if (!bTreatAsSelfPass)
+	{
+		const bool bProfileShot =
+			bActiveKickUsesChargedTrajectory ||
+			IsPlayerProfileShotTarget(ExecutedKickTarget);
+
+		ExecutedKickTarget = GetProfileAdjustedTechnicalKickTarget(
+			ControlledBall->GetActorLocation(),
+			ExecutedKickTarget,
+			bProfileShot
+		);
+		ExecutedKickHorizontalSpeed = GetProfileAdjustedTechnicalKickSpeed(
+			ExecutedKickHorizontalSpeed,
+			bProfileShot
+		);
+	}
+
 	if (bActiveKickUsesChargedTrajectory)
 	{
 		ControlledBall->ChargedKickToTarget(
-			ActiveKickTarget,
-			ActiveKickHorizontalSpeed
+			ExecutedKickTarget,
+			ExecutedKickHorizontalSpeed
 		);
 	}
 	else
 	{
 		ControlledBall->KickToTarget(
-			ActiveKickTarget,
-			ActiveKickHorizontalSpeed,
+			ExecutedKickTarget,
+			ExecutedKickHorizontalSpeed,
 			TargetKickMinTravelTime,
 			TargetKickMaxTravelTime
 		);

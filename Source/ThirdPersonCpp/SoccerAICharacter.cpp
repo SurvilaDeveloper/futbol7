@@ -1455,12 +1455,25 @@ void ASoccerAICharacter::KickAIBallToTarget(
 	StartAIKickAnimation();
 
 	ASoccerBall* BallToKick = ControlledBall;
+	FVector ExecutedTarget = TargetLocation;
+	float ExecutedHorizontalSpeed = HorizontalSpeed;
+
+	const bool bProfileShot = IsPlayerProfileShotTarget(ExecutedTarget);
+	ExecutedTarget = GetProfileAdjustedTechnicalKickTarget(
+		BallToKick->GetActorLocation(),
+		ExecutedTarget,
+		bProfileShot
+	);
+	ExecutedHorizontalSpeed = GetProfileAdjustedTechnicalKickSpeed(
+		ExecutedHorizontalSpeed,
+		bProfileShot
+	);
 
 	ReleaseAIBall();
 
 	BallToKick->KickToTarget(
-		TargetLocation,
-		HorizontalSpeed,
+		ExecutedTarget,
+		ExecutedHorizontalSpeed,
 		MinTravelTime,
 		MaxTravelTime
 	);
@@ -1507,12 +1520,25 @@ void ASoccerAICharacter::KickAIBallToAirTarget(
 	StartAIKickAnimation();
 
 	ASoccerBall* BallToKick = ControlledBall;
+	FVector ExecutedTarget = TargetLocation;
+	float ExecutedHorizontalSpeed = HorizontalSpeed;
+
+	const bool bProfileShot = IsPlayerProfileShotTarget(ExecutedTarget);
+	ExecutedTarget = GetProfileAdjustedTechnicalKickTarget(
+		BallToKick->GetActorLocation(),
+		ExecutedTarget,
+		bProfileShot
+	);
+	ExecutedHorizontalSpeed = GetProfileAdjustedTechnicalKickSpeed(
+		ExecutedHorizontalSpeed,
+		bProfileShot
+	);
 
 	ReleaseAIBall();
 
 	BallToKick->KickToAirTarget(
-		TargetLocation,
-		HorizontalSpeed,
+		ExecutedTarget,
+		ExecutedHorizontalSpeed,
 		MinTravelTime,
 		MaxTravelTime
 	);
@@ -2138,11 +2164,30 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 		}
 	}
 
+	FVector ExecutedKickTarget = PendingAIKickTarget;
+	float ExecutedKickHorizontalSpeed = PendingAIKickHorizontalSpeed;
+
+	// Auto-pass is part of dribbling and intentionally waits for Stage 8B.
+	// Normal passes, shots and foot restarts use the player technical profile.
+	if (!bPendingAIKickIsAutoPass)
+	{
+		const bool bProfileShot = IsPlayerProfileShotTarget(ExecutedKickTarget);
+		ExecutedKickTarget = GetProfileAdjustedTechnicalKickTarget(
+			BallToKick->GetActorLocation(),
+			ExecutedKickTarget,
+			bProfileShot
+		);
+		ExecutedKickHorizontalSpeed = GetProfileAdjustedTechnicalKickSpeed(
+			ExecutedKickHorizontalSpeed,
+			bProfileShot
+		);
+	}
+
 	if (bPendingAIKickUsesAirTarget)
 	{
 		BallToKick->KickToAirTarget(
-			PendingAIKickTarget,
-			PendingAIKickHorizontalSpeed,
+			ExecutedKickTarget,
+			ExecutedKickHorizontalSpeed,
 			PendingAIKickMinTravelTime,
 			PendingAIKickMaxTravelTime
 		);
@@ -2150,8 +2195,8 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 	else
 	{
 		BallToKick->KickToTarget(
-			PendingAIKickTarget,
-			PendingAIKickHorizontalSpeed,
+			ExecutedKickTarget,
+			ExecutedKickHorizontalSpeed,
 			PendingAIKickMinTravelTime,
 			PendingAIKickMaxTravelTime
 		);
@@ -3373,12 +3418,16 @@ void ASoccerAICharacter::ApplyPlayerProfilePhysicalTuning()
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("[PlayerProfile] AI %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
+			TEXT("[PlayerProfile] AI %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d Pass=%d ShotAcc=%d ShotPower=%d Composure=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
 			*GetPlayerProfileId().ToString(),
 			GetPlayerProfile()->Attributes.Physical.Pace,
 			GetPlayerProfile()->Attributes.Physical.Acceleration,
 			GetPlayerProfile()->Attributes.Physical.Stamina,
 			GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
+			GetPlayerProfile()->Attributes.Technical.PassingAccuracy,
+			GetPlayerProfile()->Attributes.Technical.ShootingAccuracy,
+			GetPlayerProfile()->Attributes.Technical.ShotPower,
+			GetPlayerProfile()->Attributes.Tactical.Composure,
 			FastRunSpeed,
 			GetCharacterMovement() != nullptr ? GetCharacterMovement()->MaxAcceleration : 0.0f
 		);

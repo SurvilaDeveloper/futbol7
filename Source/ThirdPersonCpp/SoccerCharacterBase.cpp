@@ -2541,6 +2541,237 @@ float ASoccerCharacterBase::GetProfileAdjustedPaceSpeed(float BaseSpeed) const
 		GetPlayerProfilePaceSpeedMultiplier();
 }
 
+namespace
+{
+	float SoccerClampProfileAttributeAlpha(int32 AttributeValue)
+	{
+		return FMath::Clamp(AttributeValue, 0, 100) / 100.0f;
+	}
+}
+
+FVector ASoccerCharacterBase::GetProfileAdjustedTechnicalKickTarget(
+	const FVector& BallLocation,
+	const FVector& IntendedTarget,
+	bool bShot
+) const
+{
+	if (!HasPlayerProfile())
+	{
+		return IntendedTarget;
+	}
+
+	FVector BallToTarget = IntendedTarget - BallLocation;
+	BallToTarget.Z = 0.0f;
+
+	if (BallToTarget.SizeSquared2D() <= KINDA_SMALL_NUMBER)
+	{
+		return IntendedTarget;
+	}
+
+	const int32 AccuracyValue = bShot
+		? PlayerProfile->Attributes.Technical.ShootingAccuracy
+		: PlayerProfile->Attributes.Technical.PassingAccuracy;
+
+	const float AccuracyAlpha =
+		SoccerClampProfileAttributeAlpha(AccuracyValue);
+
+	const float BaseMaxAngularError = bShot
+		? FMath::Lerp(
+			ShootingMaxAngularErrorDegreesAtZero,
+			ShootingMaxAngularErrorDegreesAtHundred,
+			AccuracyAlpha
+		)
+		: FMath::Lerp(
+			PassingMaxAngularErrorDegreesAtZero,
+			PassingMaxAngularErrorDegreesAtHundred,
+			AccuracyAlpha
+		);
+
+	const float PressureAlpha = GetPlayerProfileTechnicalPressureAlpha();
+
+	const float ComposureAlpha = SoccerClampProfileAttributeAlpha(
+		PlayerProfile->Attributes.Tactical.Composure
+	);
+
+	const float FullPressureErrorMultiplier = FMath::Lerp(
+		ComposurePressureErrorMultiplierAtZero,
+		ComposurePressureErrorMultiplierAtHundred,
+		ComposureAlpha
+	);
+
+	const float EffectiveMaxAngularError =
+		FMath::Max(0.0f, BaseMaxAngularError) *
+		FMath::Lerp(1.0f, FullPressureErrorMultiplier, PressureAlpha);
+
+	if (EffectiveMaxAngularError <= KINDA_SMALL_NUMBER)
+	{
+		return IntendedTarget;
+	}
+
+	const float SignedErrorDegrees = FMath::FRandRange(
+		-EffectiveMaxAngularError,
+		EffectiveMaxAngularError
+	);
+
+	const FVector AdjustedHorizontal = BallToTarget.RotateAngleAxis(
+		SignedErrorDegrees,
+		FVector::UpVector
+	);
+
+	FVector AdjustedTarget = BallLocation + AdjustedHorizontal;
+	AdjustedTarget.Z = IntendedTarget.Z;
+
+	return AdjustedTarget;
+}
+
+float ASoccerCharacterBase::GetProfileAdjustedTechnicalKickSpeed(
+	float BaseHorizontalSpeed,
+	bool bShot
+) const
+{
+	const float SafeBaseSpeed = FMath::Max(0.0f, BaseHorizontalSpeed);
+
+	if (!HasPlayerProfile())
+	{
+		return SafeBaseSpeed;
+	}
+
+	const float PressureAlpha = GetPlayerProfileTechnicalPressureAlpha();
+
+	const float ComposureAlpha = SoccerClampProfileAttributeAlpha(
+		PlayerProfile->Attributes.Tactical.Composure
+	);
+
+	if (bShot)
+	{
+		const float ShotPowerAlpha = SoccerClampProfileAttributeAlpha(
+			PlayerProfile->Attributes.Technical.ShotPower
+		);
+
+		const float ShotPowerMultiplier = FMath::Lerp(
+			ShotPowerMultiplierAtZero,
+			ShotPowerMultiplierAtHundred,
+			ShotPowerAlpha
+		);
+
+		const float FullPressureRetention = FMath::Lerp(
+			ComposureShotPowerRetentionAtZero,
+			ComposureShotPowerRetentionAtHundred,
+			ComposureAlpha
+		);
+
+		return SafeBaseSpeed *
+			FMath::Max(0.10f, ShotPowerMultiplier) *
+			FMath::Lerp(1.0f, FullPressureRetention, PressureAlpha);
+	}
+
+	const float PassingAccuracyAlpha = SoccerClampProfileAttributeAlpha(
+		PlayerProfile->Attributes.Technical.PassingAccuracy
+	);
+
+	const float BaseSpeedVariation = FMath::Lerp(
+		PassingSpeedVariationAtZero,
+		PassingSpeedVariationAtHundred,
+		PassingAccuracyAlpha
+	);
+
+	const float FullPressureErrorMultiplier = FMath::Lerp(
+		ComposurePressureErrorMultiplierAtZero,
+		ComposurePressureErrorMultiplierAtHundred,
+		ComposureAlpha
+	);
+
+	const float EffectiveVariation =
+		FMath::Max(0.0f, BaseSpeedVariation) *
+		FMath::Lerp(1.0f, FullPressureErrorMultiplier, PressureAlpha);
+
+	const float SpeedFactor = FMath::Max(
+		0.10f,
+		1.0f + FMath::FRandRange(-EffectiveVariation, EffectiveVariation)
+	);
+
+	return SafeBaseSpeed * SpeedFactor;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileTechnicalPressureAlpha() const
+{
+	UWorld* ProfileWorld = GetWorld();
+	if (ProfileWorld == nullptr)
+	{
+		return 0.0f;
+	}
+
+	const float SafePressureRadius = FMath::Max(1.0f, TechnicalPressureRadius);
+	float AccumulatedPressureWeight = 0.0f;
+
+	for (TActorIterator<ASoccerCharacterBase> It(ProfileWorld); It; ++It)
+	{
+		const ASoccerCharacterBase* OpponentCharacter = *It;
+
+		if (
+			!IsValid(OpponentCharacter) ||
+			OpponentCharacter == this ||
+			OpponentCharacter->GetTeam() == GetTeam()
+		)
+		{
+			continue;
+		}
+
+		const float OpponentDistance2D = FVector::Dist2D(
+			GetActorLocation(),
+			OpponentCharacter->GetActorLocation()
+		);
+
+		if (OpponentDistance2D >= SafePressureRadius)
+		{
+			continue;
+		}
+
+		AccumulatedPressureWeight +=
+			1.0f - (OpponentDistance2D / SafePressureRadius);
+	}
+
+	return FMath::Clamp(
+		AccumulatedPressureWeight /
+			FMath::Max(0.10f, TechnicalPressureWeightForFullPressure),
+		0.0f,
+		1.0f
+	);
+}
+
+bool ASoccerCharacterBase::IsPlayerProfileShotTarget(
+	const FVector& IntendedTarget
+) const
+{
+	UWorld* ProfileWorld = GetWorld();
+	if (ProfileWorld == nullptr)
+	{
+		return false;
+	}
+
+	const ESoccerTeam OpponentTeam =
+		GetTeam() == ESoccerTeam::PlayerTeam
+		? ESoccerTeam::OpponentTeam
+		: ESoccerTeam::PlayerTeam;
+
+	for (TActorIterator<ASoccerMatchManager> It(ProfileWorld); It; ++It)
+	{
+		const ASoccerMatchManager* ProfileMatchManager = *It;
+		if (!IsValid(ProfileMatchManager))
+		{
+			continue;
+		}
+
+		const FVector OpponentGoalCenter =
+			ProfileMatchManager->GetOwnGoalCenterLocation(OpponentTeam);
+
+		return FVector::Dist2D(IntendedTarget, OpponentGoalCenter) <=
+			FMath::Max(100.0f, ShotTargetRecognitionRadius);
+	}
+
+	return false;
+}
+
 void ASoccerCharacterBase::ApplyTeamUniform()
 {
 	USkeletalMeshComponent* CharacterMesh = GetMesh();

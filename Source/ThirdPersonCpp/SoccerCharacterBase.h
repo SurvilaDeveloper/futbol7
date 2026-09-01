@@ -357,6 +357,20 @@ protected:
 	float GetPlayerProfileStaminaRecoveryMultiplier() const;
 	float GetProfileAdjustedPaceSpeed(float BaseSpeed) const;
 
+	// Stage 8A technical execution. Decision logic still chooses the intended
+	// target; these helpers model how accurately/powerfully this player executes it.
+	FVector GetProfileAdjustedTechnicalKickTarget(
+		const FVector& BallLocation,
+		const FVector& IntendedTarget,
+		bool bShot
+	) const;
+	float GetProfileAdjustedTechnicalKickSpeed(
+		float BaseHorizontalSpeed,
+		bool bShot
+	) const;
+	bool IsPlayerProfileShotTarget(const FVector& IntendedTarget) const;
+	float GetPlayerProfileTechnicalPressureAlpha() const;
+
 	/** Derived human/AI classes refresh their own pace tiers after a runtime profile swap. */
 	virtual void OnPlayerProfileChangedForMatch();
 	void ApplyPlayerProfileAccelerationTuning();
@@ -1269,6 +1283,54 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
 		float StaminaRecoveryMultiplierAtHundred = 1.50f;
+
+	// Technical attributes are intentionally tuned here instead of in each player
+	// Data Asset. This lets global balance change without rewriting every profile.
+	// Characters with no PlayerProfile keep the exact legacy deterministic kick.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.0", ClampMax = "30.0"))
+		float PassingMaxAngularErrorDegreesAtZero = 6.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.0", ClampMax = "30.0"))
+		float PassingMaxAngularErrorDegreesAtHundred = 0.35f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.0", ClampMax = "30.0"))
+		float ShootingMaxAngularErrorDegreesAtZero = 8.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.0", ClampMax = "30.0"))
+		float ShootingMaxAngularErrorDegreesAtHundred = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float PassingSpeedVariationAtZero = 0.10f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float PassingSpeedVariationAtHundred = 0.01f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float ShotPowerMultiplierAtZero = 0.80f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float ShotPowerMultiplierAtHundred = 1.20f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "50.0", ClampMax = "1500.0"))
+		float TechnicalPressureRadius = 450.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.10", ClampMax = "5.00"))
+		float TechnicalPressureWeightForFullPressure = 1.20f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "1.0", ClampMax = "4.0"))
+		float ComposurePressureErrorMultiplierAtZero = 1.60f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "1.0", ClampMax = "4.0"))
+		float ComposurePressureErrorMultiplierAtHundred = 1.00f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.10", ClampMax = "1.00"))
+		float ComposureShotPowerRetentionAtZero = 0.86f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "0.10", ClampMax = "1.00"))
+		float ComposureShotPowerRetentionAtHundred = 1.00f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Technical Tuning", meta = (ClampMin = "100.0", ClampMax = "2500.0"))
+		float ShotTargetRecognitionRadius = 600.0f;
 
 	// Runtime baseline makes profile application idempotent. Without this, changing
 	// a profile after BeginPlay would multiply an already adjusted acceleration.
