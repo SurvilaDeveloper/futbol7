@@ -69,6 +69,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Defense")
 		float GetPlayerProfileTacklingAlpha() const;
 
+	// Stage 8D: normalized attacking/tactical ratings used by the AI controller.
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Attack")
+		float GetPlayerProfileOffBallPositioningAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Attack")
+		float GetPlayerProfileDecisionMakingAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Attack")
+		float GetPlayerProfileComposureAlpha() const;
+
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Uniform")
 		void ApplyTeamUniform();
 

@@ -1344,10 +1344,18 @@ void ASoccerAIController::Tick(float DeltaTime)
 		)
 	{
 		ClearFilteredDefenseMoveRequest();
-		const FVector AttackMoveLocation =
+
+		const FVector IdealAttackMoveLocation =
 			CurrentOrder == ESoccerAIOrder::AttackCompensateCover
 			? MatchManager->GetAttackCompensateCoverMoveLocation(SoccerCharacter)
 			: MatchManager->GetAttackShapeMoveLocation(SoccerCharacter);
+
+		const FVector AttackMoveLocation =
+			ApplyAttackingProfileTargetExecution(
+				SoccerCharacter,
+				IdealAttackMoveLocation,
+				CurrentOrder
+			);
 
 		if (!AttackMoveLocation.IsNearlyZero())
 		{
@@ -17966,6 +17974,22 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 		return true;
 	}
 
+	// Stage 8D: the tactical system still decides which actions are legal, but
+	// DecisionMaking/Anticipation control how quickly the carrier reaches that
+	// decision. Composure only enlarges the hesitation while actually pressed.
+	if (!IsOffensiveProfileDecisionReady(SoccerCharacter))
+	{
+		StopMovement();
+
+		ASoccerBall* DecisionWaitBall = MatchManager->GetSoccerBall();
+		if (IsValid(DecisionWaitBall))
+		{
+			SetFocus(DecisionWaitBall);
+		}
+
+		return true;
+	}
+
 	auto CompleteIfActionStarted =
 		[this](bool bActionStarted) -> bool
 	{
@@ -17988,6 +18012,11 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 		}
 
 		if (!MatchManager->ShouldBallCarrierPreferShot(SoccerCharacter))
+		{
+			return false;
+		}
+
+		if (!ShouldOffensiveProfileAcceptPreferredShot(SoccerCharacter))
 		{
 			return false;
 		}
@@ -22456,6 +22485,354 @@ float ASoccerAIController::BuildAIReactionDelayForCharacter(
 	return BaseDelay * GetDefensiveProfileReactionMultiplier(SoccerCharacter);
 }
 
+float ASoccerAIController::GetOffensiveProfilePressureAlpha(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter))
+	{
+		return 0.0f;
+	}
+
+	const float SafePressureRadius = FMath::Max(
+		50.0f,
+		OffensiveDecisionPressureRadius
+	);
+
+	ASoccerCharacterBase* ClosestPressureOpponent =
+		FindClosestOpponentPressure(
+			SoccerCharacter,
+			SafePressureRadius
+		);
+
+	if (!IsValid(ClosestPressureOpponent))
+	{
+		return 0.0f;
+	}
+
+	const float PressureDistance = FVector::Dist2D(
+		SoccerCharacter->GetActorLocation(),
+		ClosestPressureOpponent->GetActorLocation()
+	);
+
+	return 1.0f - FMath::Clamp(
+		PressureDistance / SafePressureRadius,
+		0.0f,
+		1.0f
+	);
+}
+
+float ASoccerAIController::GetOffensiveProfileDecisionDelay(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 0.0f;
+	}
+
+	const float DecisionAlpha =
+		SoccerCharacter->GetPlayerProfileDecisionMakingAlpha();
+
+	const float AnticipationAlpha =
+		SoccerCharacter->GetPlayerProfileAnticipationAlpha();
+
+	const float ComposureAlpha =
+		SoccerCharacter->GetPlayerProfileComposureAlpha();
+
+	float DecisionDelay = FMath::Lerp(
+		OffensiveDecisionInitialDelayAtZero,
+		OffensiveDecisionInitialDelayAtHundred,
+		DecisionAlpha
+	);
+
+	DecisionDelay *= FMath::Lerp(
+		OffensiveAnticipationDecisionDelayMultiplierAtZero,
+		OffensiveAnticipationDecisionDelayMultiplierAtHundred,
+		AnticipationAlpha
+	);
+
+	const float PressureAlpha =
+		GetOffensiveProfilePressureAlpha(SoccerCharacter);
+
+	const float FullPressureComposureMultiplier = FMath::Lerp(
+		OffensiveComposurePressureDelayMultiplierAtZero,
+		OffensiveComposurePressureDelayMultiplierAtHundred,
+		ComposureAlpha
+	);
+
+	DecisionDelay *= FMath::Lerp(
+		1.0f,
+		FullPressureComposureMultiplier,
+		PressureAlpha
+	);
+
+	return FMath::Max(0.0f, DecisionDelay);
+}
+
+bool ASoccerAIController::IsOffensiveProfileDecisionReady(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return true;
+	}
+
+	if (!SoccerCharacter->IsAIPossessingBall())
+	{
+		return true;
+	}
+
+	return SoccerCharacter->GetTimeSinceAIPossessionStarted() >=
+		GetOffensiveProfileDecisionDelay(SoccerCharacter);
+}
+
+bool ASoccerAIController::ShouldOffensiveProfileAcceptPreferredShot(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return true;
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		return true;
+	}
+
+	const FVector PreferredShotCenter =
+		MatchManager->GetShotTargetLocation(SoccerCharacter);
+
+	const float PreferredShotDistance = FVector::Dist2D(
+		SoccerCharacter->GetActorLocation(),
+		PreferredShotCenter
+	);
+
+	const float DecisionAlpha =
+		SoccerCharacter->GetPlayerProfileDecisionMakingAlpha();
+
+	const float ComposureAlpha =
+		SoccerCharacter->GetPlayerProfileComposureAlpha();
+
+	float AllowedDistanceFraction = FMath::Lerp(
+		PreferredShotDistanceFractionAtZeroDecision,
+		PreferredShotDistanceFractionAtHundredDecision,
+		DecisionAlpha
+	);
+
+	const float PressureAlpha =
+		GetOffensiveProfilePressureAlpha(SoccerCharacter);
+
+	AllowedDistanceFraction -=
+		PressureAlpha *
+		(1.0f - ComposureAlpha) *
+		FMath::Max(0.0f, LowComposurePreferredShotDistancePenalty);
+
+	AllowedDistanceFraction = FMath::Clamp(
+		AllowedDistanceFraction,
+		0.10f,
+		1.0f
+	);
+
+	return PreferredShotDistance <=
+		FMath::Max(1.0f, AIShotDistanceToTarget) *
+		AllowedDistanceFraction;
+}
+
+float ASoccerAIController::GetOffensiveProfileRequiredPassScore(
+	const ASoccerAICharacter* SoccerCharacter,
+	bool bUsePossessionRetentionThreshold
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 0.0f;
+	}
+
+	const float DecisionAlpha =
+		SoccerCharacter->GetPlayerProfileDecisionMakingAlpha();
+
+	const float ComposureAlpha =
+		SoccerCharacter->GetPlayerProfileComposureAlpha();
+
+	float RequiredPassScore = bUsePossessionRetentionThreshold
+		? FMath::Lerp(
+			DecisionRetentionPassMinimumScoreAtZero,
+			DecisionRetentionPassMinimumScoreAtHundred,
+			DecisionAlpha
+		)
+		: FMath::Lerp(
+			DecisionSmartPassMinimumScoreAtZero,
+			DecisionSmartPassMinimumScoreAtHundred,
+			DecisionAlpha
+		);
+
+	const float PressureAlpha =
+		GetOffensiveProfilePressureAlpha(SoccerCharacter);
+
+	const float PressurePenalty = FMath::Lerp(
+		ComposurePressurePassScorePenaltyAtZero,
+		ComposurePressurePassScorePenaltyAtHundred,
+		ComposureAlpha
+	);
+
+	RequiredPassScore += PressureAlpha * PressurePenalty;
+
+	return FMath::Max(0.0f, RequiredPassScore);
+}
+
+float ASoccerAIController::GetAttackingProfileMoveRefreshMultiplier(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	const float PositioningAlpha =
+		SoccerCharacter->GetPlayerProfileOffBallPositioningAlpha();
+
+	const float AnticipationAlpha =
+		SoccerCharacter->GetPlayerProfileAnticipationAlpha();
+
+	const float MovementReadingAlpha = FMath::Clamp(
+		PositioningAlpha * 0.65f + AnticipationAlpha * 0.35f,
+		0.0f,
+		1.0f
+	);
+
+	return FMath::Max(
+		0.25f,
+		FMath::Lerp(
+			AttackMoveRefreshMultiplierAtZero,
+			AttackMoveRefreshMultiplierAtHundred,
+			MovementReadingAlpha
+		)
+	);
+}
+
+FVector ASoccerAIController::ApplyAttackingProfileTargetExecution(
+	ASoccerAICharacter* SoccerCharacter,
+	const FVector& IdealTargetLocation,
+	ESoccerAIOrder CurrentOrder
+) const
+{
+	if (
+		!IsValid(SoccerCharacter) ||
+		!SoccerCharacter->HasPlayerProfile() ||
+		IdealTargetLocation.IsNearlyZero() ||
+		IdealTargetLocation.ContainsNaN()
+	)
+	{
+		return IdealTargetLocation;
+	}
+
+	const float PositioningAlpha =
+		SoccerCharacter->GetPlayerProfileOffBallPositioningAlpha();
+
+	float MaximumErrorCm = FMath::Lerp(
+		OffBallPositioningTargetErrorCmAtZero,
+		OffBallPositioningTargetErrorCmAtHundred,
+		PositioningAlpha
+	);
+
+	// Rest-defense/compensation are structurally important even during attack.
+	// Keep profile expression visible there, but do not let a low rating break
+	// the collective safety shape.
+	if (
+		CurrentOrder == ESoccerAIOrder::AttackRestDefense ||
+		CurrentOrder == ESoccerAIOrder::AttackCompensateCover
+	)
+	{
+		MaximumErrorCm *= 0.55f;
+	}
+
+	MaximumErrorCm = FMath::Max(0.0f, MaximumErrorCm);
+	if (MaximumErrorCm <= KINDA_SMALL_NUMBER)
+	{
+		return IdealTargetLocation;
+	}
+
+	FVector AttackDirection = FVector::ForwardVector;
+	if (IsValid(MatchManager))
+	{
+		AttackDirection =
+			MatchManager->GetFieldAttackDirectionForTeam(
+				SoccerCharacter->GetTeam()
+			);
+	}
+
+	AttackDirection.Z = 0.0f;
+	AttackDirection = AttackDirection.GetSafeNormal();
+	if (AttackDirection.IsNearlyZero())
+	{
+		AttackDirection = FVector::ForwardVector;
+	}
+
+	const FVector RightDirection(
+		-AttackDirection.Y,
+		AttackDirection.X,
+		0.0f
+	);
+
+	const uint32 ProfileHash =
+		GetTypeHash(SoccerCharacter->GetPlayerProfileId());
+	const uint32 OrderHash =
+		static_cast<uint32>(CurrentOrder) * 2654435761u;
+	const uint32 CombinedHash = ProfileHash ^ OrderHash;
+
+	const float ErrorAngleRadians = FMath::DegreesToRadians(
+		static_cast<float>(CombinedHash % 360u)
+	);
+
+	const float ErrorMagnitudeAlpha =
+		0.55f + static_cast<float>((CombinedHash >> 9) % 46u) / 100.0f;
+
+	const FVector StableErrorDirection =
+		AttackDirection * FMath::Cos(ErrorAngleRadians) +
+		RightDirection * FMath::Sin(ErrorAngleRadians);
+
+	FVector AdjustedTargetLocation =
+		IdealTargetLocation +
+		StableErrorDirection * (MaximumErrorCm * ErrorMagnitudeAlpha);
+
+	AdjustedTargetLocation.Z = IdealTargetLocation.Z;
+
+	UWorld* World = GetWorld();
+	if (World != nullptr)
+	{
+		UNavigationSystemV1* NavigationSystem =
+			FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);
+
+		if (NavigationSystem != nullptr)
+		{
+			FNavLocation ProjectedAttackLocation;
+			const bool bProjectedAttackTarget =
+				NavigationSystem->ProjectPointToNavigation(
+					AdjustedTargetLocation,
+					ProjectedAttackLocation,
+					FVector(250.0f, 250.0f, 250.0f)
+				);
+
+			if (bProjectedAttackTarget)
+			{
+				AdjustedTargetLocation =
+					ProjectedAttackLocation.Location;
+				AdjustedTargetLocation.Z = IdealTargetLocation.Z;
+			}
+			else
+			{
+				return IdealTargetLocation;
+			}
+		}
+	}
+
+	return AdjustedTargetLocation;
+}
+
 float ASoccerAIController::GetDefensiveProfileReactionMultiplier(
 	const ASoccerAICharacter* SoccerCharacter
 ) const
@@ -23451,11 +23828,31 @@ bool ASoccerAIController::MoveToLocationFilteredForAttack(
 		? World->GetTimeSeconds()
 		: 0.0f;
 
+	const ASoccerAICharacter* AttackingProfileCharacter =
+		Cast<ASoccerAICharacter>(GetPawn());
+
+	const float AttackProfileRefreshMultiplier =
+		GetAttackingProfileMoveRefreshMultiplier(
+			AttackingProfileCharacter
+		);
+
 	if (CurrentAttackMoveForcedRefreshInterval <= 0.0f)
 	{
 		CurrentAttackMoveForcedRefreshInterval =
 			BuildRandomAttackMoveRefreshInterval();
 	}
+
+	const float EffectiveAttackRepathDistanceThreshold =
+		AttackMoveRepathDistanceThreshold *
+		AttackProfileRefreshMultiplier;
+
+	const float EffectiveAttackRepathMinInterval =
+		AttackMoveRepathMinInterval *
+		AttackProfileRefreshMultiplier;
+
+	const float EffectiveAttackForcedRefreshInterval =
+		CurrentAttackMoveForcedRefreshInterval *
+		AttackProfileRefreshMultiplier;
 
 	const float TimeSinceLastRequest =
 		CurrentTime - LastFilteredMoveRequestTime;
@@ -23470,13 +23867,16 @@ bool ASoccerAIController::MoveToLocationFilteredForAttack(
 		: TNumericLimits<float>::Max();
 
 	const bool bTargetMovedEnough =
-		DistanceFromLastTarget >= AttackMoveRepathDistanceThreshold;
+		DistanceFromLastTarget >=
+		EffectiveAttackRepathDistanceThreshold;
 
 	const bool bMinIntervalPassed =
-		TimeSinceLastRequest >= AttackMoveRepathMinInterval;
+		TimeSinceLastRequest >=
+		EffectiveAttackRepathMinInterval;
 
 	const bool bForcedRefreshNeeded =
-		TimeSinceLastRequest >= CurrentAttackMoveForcedRefreshInterval;
+		TimeSinceLastRequest >=
+		EffectiveAttackForcedRefreshInterval;
 
 	const EPathFollowingStatus::Type MoveStatus =
 		GetMoveStatus();
@@ -23720,6 +24120,20 @@ bool ASoccerAIController::TrySmartAttackPass(
 		);
 
 	if (!bFoundPass || !IsValid(Receiver))
+	{
+		return false;
+	}
+
+	const float ProfileRequiredPassScore =
+		GetOffensiveProfileRequiredPassScore(
+			SoccerCharacter,
+			bUsePossessionRetentionThreshold
+		);
+
+	if (
+		SoccerCharacter->HasPlayerProfile() &&
+		PassScore < ProfileRequiredPassScore
+	)
 	{
 		return false;
 	}

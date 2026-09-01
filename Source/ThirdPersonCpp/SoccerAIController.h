@@ -317,6 +317,37 @@ private:
 		const ASoccerAICharacter* SoccerCharacter
 	) const;
 
+	float GetOffensiveProfilePressureAlpha(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	float GetOffensiveProfileDecisionDelay(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	bool IsOffensiveProfileDecisionReady(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	bool ShouldOffensiveProfileAcceptPreferredShot(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	float GetOffensiveProfileRequiredPassScore(
+		const ASoccerAICharacter* SoccerCharacter,
+		bool bUsePossessionRetentionThreshold
+	) const;
+
+	float GetAttackingProfileMoveRefreshMultiplier(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	FVector ApplyAttackingProfileTargetExecution(
+		ASoccerAICharacter* SoccerCharacter,
+		const FVector& IdealTargetLocation,
+		ESoccerAIOrder CurrentOrder
+	) const;
+
 	float GetDefensiveProfileAnticipationPredictionTrust(
 		const ASoccerAICharacter* SoccerCharacter
 	) const;
@@ -603,6 +634,68 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Reaction")
 		float AIReactionDelayTeleportDistance = 900.0f;
+
+	// Stage 8D global meaning of attacking/tactical profile ratings.
+	// Characters without a PlayerProfile bypass these adjustments and keep legacy behavior.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float OffensiveDecisionInitialDelayAtZero = 0.28f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float OffensiveDecisionInitialDelayAtHundred = 0.02f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float OffensiveAnticipationDecisionDelayMultiplierAtZero = 1.15f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float OffensiveAnticipationDecisionDelayMultiplierAtHundred = 0.85f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "50.0"))
+		float OffensiveDecisionPressureRadius = 450.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.50", ClampMax = "3.00"))
+		float OffensiveComposurePressureDelayMultiplierAtZero = 1.45f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.50", ClampMax = "3.00"))
+		float OffensiveComposurePressureDelayMultiplierAtHundred = 1.00f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0", ClampMax = "400.0"))
+		float OffBallPositioningTargetErrorCmAtZero = 130.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0", ClampMax = "400.0"))
+		float OffBallPositioningTargetErrorCmAtHundred = 5.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.25", ClampMax = "3.00"))
+		float AttackMoveRefreshMultiplierAtZero = 1.35f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.25", ClampMax = "3.00"))
+		float AttackMoveRefreshMultiplierAtHundred = 0.65f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0"))
+		float DecisionSmartPassMinimumScoreAtZero = 780.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0"))
+		float DecisionSmartPassMinimumScoreAtHundred = 560.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0"))
+		float DecisionRetentionPassMinimumScoreAtZero = 580.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0"))
+		float DecisionRetentionPassMinimumScoreAtHundred = 350.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0"))
+		float ComposurePressurePassScorePenaltyAtZero = 80.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0"))
+		float ComposurePressurePassScorePenaltyAtHundred = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.10", ClampMax = "1.0"))
+		float PreferredShotDistanceFractionAtZeroDecision = 0.72f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.10", ClampMax = "1.0"))
+		float PreferredShotDistanceFractionAtHundredDecision = 1.00f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float LowComposurePreferredShotDistancePenalty = 0.10f;
 
 	// Stage 8C global meaning of the 0-100 defensive profile ratings.
 	// No PlayerProfile bypasses every multiplier and preserves legacy behavior.

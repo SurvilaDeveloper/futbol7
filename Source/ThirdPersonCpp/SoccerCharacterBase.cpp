@@ -2484,6 +2484,27 @@ float ASoccerCharacterBase::GetPlayerProfileTacklingAlpha() const
 		: 0.5f;
 }
 
+float ASoccerCharacterBase::GetPlayerProfileOffBallPositioningAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Tactical.OffBallPositioning, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileDecisionMakingAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Tactical.DecisionMaking, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileComposureAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Tactical.Composure, 0, 100) / 100.0f
+		: 0.5f;
+}
+
 void ASoccerCharacterBase::ApplyPlayerProfileAccelerationTuning()
 {
 	UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement();

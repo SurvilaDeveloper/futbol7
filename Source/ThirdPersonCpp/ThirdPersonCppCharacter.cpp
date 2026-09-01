@@ -1023,7 +1023,7 @@ void AThirdPersonCppCharacter::ApplyPlayerProfilePhysicalTuning()
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("[PlayerProfile] Human %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d Agility=%d Balance=%d BallControl=%d Dribbling=%d Pass=%d ShotAcc=%d ShotPower=%d Composure=%d DefReaction=%d Anticipation=%d DefPosition=%d Marking=%d Tackling=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
+			TEXT("[PlayerProfile] Human %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d Agility=%d Balance=%d BallControl=%d Dribbling=%d Pass=%d ShotAcc=%d ShotPower=%d Composure=%d OffBall=%d Decision=%d DefReaction=%d Anticipation=%d DefPosition=%d Marking=%d Tackling=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
 			*GetPlayerProfileId().ToString(),
 			GetPlayerProfile()->Attributes.Physical.Pace,
 			GetPlayerProfile()->Attributes.Physical.Acceleration,
@@ -1037,6 +1037,8 @@ void AThirdPersonCppCharacter::ApplyPlayerProfilePhysicalTuning()
 			GetPlayerProfile()->Attributes.Technical.ShootingAccuracy,
 			GetPlayerProfile()->Attributes.Technical.ShotPower,
 			GetPlayerProfile()->Attributes.Tactical.Composure,
+			GetPlayerProfile()->Attributes.Tactical.OffBallPositioning,
+			GetPlayerProfile()->Attributes.Tactical.DecisionMaking,
 			GetPlayerProfile()->Attributes.Tactical.DefensiveReaction,
 			GetPlayerProfile()->Attributes.Tactical.Anticipation,
 			GetPlayerProfile()->Attributes.Tactical.DefensivePositioning,
