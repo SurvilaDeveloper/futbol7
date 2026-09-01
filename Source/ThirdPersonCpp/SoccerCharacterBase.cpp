@@ -1,4 +1,4 @@
-//SoccerCharacterBase.cpp
+﻿//SoccerCharacterBase.cpp
 #include "SoccerCharacterBase.h"
 #include "SoccerPlayerProfile.h"
 
@@ -1982,8 +1982,15 @@ void ASoccerCharacterBase::UpdateTackleContactTracking(
                         BallClosest
                     );
 
+                const float EffectiveBallLimbRadius =
+                    FMath::Max(
+                        1.0f,
+                        LimbFrame.Radius *
+                            GetPlayerProfileTackleBallContactRadiusMultiplier()
+                    );
+
                 const float CombinedRadius =
-                    FMath::Max(1.0f, LimbFrame.Radius) +
+                    EffectiveBallLimbRadius +
                     FMath::Max(1.0f, Ball->GetBallRadiusCm());
 
                 if (DistanceSquared <= FMath::Square(CombinedRadius))
@@ -2442,6 +2449,41 @@ void ASoccerCharacterBase::SetPlayerProfileForMatch(
 	OnPlayerProfileChangedForMatch();
 }
 
+float ASoccerCharacterBase::GetPlayerProfileDefensiveReactionAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Tactical.DefensiveReaction, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileAnticipationAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Tactical.Anticipation, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileDefensivePositioningAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Tactical.DefensivePositioning, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileMarkingAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Tactical.Marking, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileTacklingAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Technical.Tackling, 0, 100) / 100.0f
+		: 0.5f;
+}
+
 void ASoccerCharacterBase::ApplyPlayerProfileAccelerationTuning()
 {
 	UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement();
@@ -2894,6 +2936,20 @@ float ASoccerCharacterBase::GetPlayerProfileBalanceTurnSpeedRetention(
 	);
 
 	return FMath::Lerp(1.0f, FullEffectRetention, TurnEffectAlpha);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileTackleBallContactRadiusMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Lerp(
+		TackleBallContactRadiusMultiplierAtZero,
+		TackleBallContactRadiusMultiplierAtHundred,
+		GetPlayerProfileTacklingAlpha()
+	);
 }
 
 float ASoccerCharacterBase::GetPlayerProfileTechnicalPressureAlpha() const

@@ -1,4 +1,4 @@
-//SoccerCharacterBase.h
+﻿//SoccerCharacterBase.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -50,6 +50,24 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Player Profile")
 		void SetPlayerProfileForMatch(USoccerPlayerProfile* NewPlayerProfile);
+
+	// Stage 8C: public normalized defensive ratings used by the AI controller.
+	// A value of 0.0 means attribute 0 and 1.0 means attribute 100.
+	// Callers should still check HasPlayerProfile() when legacy behavior must be exact.
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Defense")
+		float GetPlayerProfileDefensiveReactionAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Defense")
+		float GetPlayerProfileAnticipationAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Defense")
+		float GetPlayerProfileDefensivePositioningAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Defense")
+		float GetPlayerProfileMarkingAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Defense")
+		float GetPlayerProfileTacklingAlpha() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Uniform")
 		void ApplyTeamUniform();
@@ -387,6 +405,11 @@ protected:
 	) const;
 	float GetPlayerProfileAgilityTurnDurationMultiplier() const;
 	float GetPlayerProfileBalanceTurnSpeedRetention(float TurnAngleDegrees) const;
+
+	// Tackling is execution quality, not a hidden dice roll. A better tackler gets
+	// a modestly larger effective ball-contact envelope while opponent contact
+	// geometry remains unchanged, so clean ball-first challenges become easier.
+	float GetPlayerProfileTackleBallContactRadiusMultiplier() const;
 
 	bool IsPlayerProfileShotTarget(const FVector& IntendedTarget) const;
 	float GetPlayerProfileTechnicalPressureAlpha() const;
@@ -1404,6 +1427,15 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Dribbling Tuning", meta = (ClampMin = "30.0", ClampMax = "180.0"))
 		float BalanceFullEffectTurnAngleDegrees = 120.0f;
+
+	// Stage 8C. Tackling affects the physical quality of a slide challenge for
+	// both human and AI characters. It changes only the effective ball envelope;
+	// the opponent-contact sphere is intentionally left untouched.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float TackleBallContactRadiusMultiplierAtZero = 0.82f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float TackleBallContactRadiusMultiplierAtHundred = 1.18f;
 
 	// Runtime baseline makes profile application idempotent. Without this, changing
 	// a profile after BeginPlay would multiply an already adjusted acceleration.

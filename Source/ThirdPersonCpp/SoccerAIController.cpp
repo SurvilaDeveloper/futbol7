@@ -1088,6 +1088,17 @@ void ASoccerAIController::Tick(float DeltaTime)
 		ClearDefensivePressureOvertakeState();
 	}
 
+	const bool bProfileDefensiveShapeOrder =
+		CurrentOrder == ESoccerAIOrder::DefendProtectGoalLane ||
+		CurrentOrder == ESoccerAIOrder::DefendCoverCenter ||
+		CurrentOrder == ESoccerAIOrder::DefendCompactShape ||
+		CurrentOrder == ESoccerAIOrder::DefendMarkDangerousReceiver;
+
+	if (!bProfileDefensiveShapeOrder)
+	{
+		ClearDefensiveProfileTargetExecutionState();
+	}
+
 	if (
 		TryHandleGoalAreaAttackerHoldingRespect(
 			SoccerCharacter,
@@ -1371,7 +1382,7 @@ void ASoccerAIController::Tick(float DeltaTime)
 	{
 		ClearFilteredMoveRequest();
 
-		const FVector DefensiveMoveLocation =
+		FVector DefensiveMoveLocation =
 			MatchManager->GetDefensiveMoveLocation(SoccerCharacter);
 
 		const bool bGoalAreaDefenseEmergency =
@@ -1379,6 +1390,13 @@ void ASoccerAIController::Tick(float DeltaTime)
 			IsGoalAreaDefenderCoordinationActiveForCharacter(
 				SoccerCharacter
 			);
+
+		DefensiveMoveLocation = ApplyDefensiveProfileTargetExecution(
+			SoccerCharacter,
+			DefensiveMoveLocation,
+			CurrentOrder,
+			bGoalAreaDefenseEmergency
+		);
 
 		if (!DefensiveMoveLocation.IsNearlyZero())
 		{
@@ -20836,12 +20854,39 @@ bool ASoccerAIController::ResolvePredictiveBallChaseLocation(
 
 	if (bUsePredictiveBallChase)
 	{
+		const bool bProfileDefensivePrediction =
+			IsValid(MatchManager) &&
+			MatchManager->GetTeamPhase(SoccerCharacter->GetTeam()) == ESoccerTeamPhase::Defending &&
+			SoccerCharacter->HasPlayerProfile();
+
+		const float EffectivePredictiveTargetRefreshInterval =
+			bProfileDefensivePrediction
+			? AIPredictiveTargetRefreshInterval *
+				GetDefensiveProfileReactionMultiplier(SoccerCharacter)
+			: AIPredictiveTargetRefreshInterval;
+
 		SoccerCharacter->ResolveStableBallPursuitTarget(
 			SoccerBall,
 			OutMoveLocation,
 			nullptr,
-			AIPredictiveTargetRefreshInterval
+			FMath::Max(0.02f, EffectivePredictiveTargetRefreshInterval)
 		);
+
+		if (bProfileDefensivePrediction)
+		{
+			FVector ObservedBallLocation =
+				GetDelayedObservedBallLocation(SoccerBall);
+			ObservedBallLocation.Z = OutMoveLocation.Z;
+
+			const float PredictionTrust =
+				GetDefensiveProfileAnticipationPredictionTrust(SoccerCharacter);
+
+			OutMoveLocation = FMath::Lerp(
+				ObservedBallLocation,
+				OutMoveLocation,
+				PredictionTrust
+			);
+		}
 	}
 	else
 	{
@@ -21658,9 +21703,13 @@ bool ASoccerAIController::TryStartBasicAITackleInterception(
 	}
 
 	const float CurrentTime = World->GetTimeSeconds();
+	const float EffectiveTackleDecisionCooldown =
+		FMath::Max(0.0f, AITackleDecisionCooldown) *
+		GetDefensiveProfileTackleCooldownMultiplier(SoccerCharacter);
+
 	if (
 		CurrentTime - LastBasicAITackleAttemptTime <
-		FMath::Max(0.0f, AITackleDecisionCooldown)
+		EffectiveTackleDecisionCooldown
 	)
 	{
 		return false;
@@ -21699,9 +21748,15 @@ bool ASoccerAIController::TryStartBasicAITackleInterception(
 		return false;
 	}
 
+	const float AnticipationHorizonMultiplier =
+		GetDefensiveProfileAnticipationHorizonMultiplier(SoccerCharacter);
+
 	TArray<FSoccerBallTrajectorySample> Trajectory;
 	if (!SoccerBall->BuildPredictedGroundTrajectory(
-		FMath::Max(0.10f, AITacklePredictionHorizon),
+		FMath::Max(
+			0.10f,
+			AITacklePredictionHorizon * AnticipationHorizonMultiplier
+		),
 		FMath::Max(0.02f, AITacklePredictionSampleInterval),
 		Trajectory
 	))
@@ -21717,7 +21772,7 @@ bool ASoccerAIController::TryStartBasicAITackleInterception(
 	const float MinSampleTime = FMath::Max(0.0f, AITackleMinimumSampleTime);
 	const float MaxSampleTime = FMath::Max(
 		MinSampleTime,
-		AITackleMaximumSampleTime
+		AITackleMaximumSampleTime * AnticipationHorizonMultiplier
 	);
 	const float EstimatedSlideSpeed = FMath::Max(
 		1.0f,
@@ -22054,9 +22109,13 @@ bool ASoccerAIController::TryStartContestedAITackle(
 	}
 
 	const float CurrentTime = World->GetTimeSeconds();
+	const float EffectiveContestedTackleCooldown =
+		FMath::Max(0.0f, AIContestedTackleDecisionCooldown) *
+		GetDefensiveProfileTackleCooldownMultiplier(SoccerCharacter);
+
 	if (
 		CurrentTime - LastContestedAITackleAttemptTime <
-		FMath::Max(0.0f, AIContestedTackleDecisionCooldown)
+		EffectiveContestedTackleCooldown
 	)
 	{
 		return false;
@@ -22087,7 +22146,8 @@ bool ASoccerAIController::TryStartContestedAITackle(
 	CharacterForward.Normalize();
 
 	const float LeadTime =
-		FMath::Max(0.0f, AIContestedTackleLeadTime);
+		FMath::Max(0.0f, AIContestedTackleLeadTime) *
+		GetDefensiveProfileAnticipationHorizonMultiplier(SoccerCharacter);
 
 	FVector CarrierVelocity = Carrier->GetVelocity();
 	CarrierVelocity.Z = 0.0f;
@@ -22242,14 +22302,14 @@ bool ASoccerAIController::TryStartContestedAITackle(
 		ApproachScore * 0.35f +
 		DistanceScore * 0.20f;
 
-	if (
-		DecisionScore <
-		FMath::Clamp(
-			AIContestedTackleMinimumDecisionScore,
-			0.0f,
-			1.0f
-		)
-	)
+	const float EffectiveMinimumDecisionScore = FMath::Clamp(
+		AIContestedTackleMinimumDecisionScore +
+			GetDefensiveProfileContestedTackleScoreAdjustment(SoccerCharacter),
+		0.0f,
+		1.0f
+	);
+
+	if (DecisionScore < EffectiveMinimumDecisionScore)
 	{
 		return false;
 	}
@@ -22375,6 +22435,283 @@ void ASoccerAIController::ClearPredictiveBallChaseMovement(
 	}
 }
 
+float ASoccerAIController::BuildAIReactionDelayForCharacter(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	const float SafeMin = FMath::Max(0.0f, AIReactionDelayMin);
+	const float SafeMax = FMath::Max(SafeMin, AIReactionDelayMax);
+	const float BaseDelay = FMath::FRandRange(SafeMin, SafeMax);
+
+	if (
+		!IsValid(SoccerCharacter) ||
+		!SoccerCharacter->HasPlayerProfile() ||
+		!IsValid(MatchManager) ||
+		MatchManager->GetTeamPhase(SoccerCharacter->GetTeam()) != ESoccerTeamPhase::Defending
+	)
+	{
+		return BaseDelay;
+	}
+
+	return BaseDelay * GetDefensiveProfileReactionMultiplier(SoccerCharacter);
+}
+
+float ASoccerAIController::GetDefensiveProfileReactionMultiplier(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Max(
+		0.10f,
+		FMath::Lerp(
+			DefensiveReactionDelayMultiplierAtZero,
+			DefensiveReactionDelayMultiplierAtHundred,
+			SoccerCharacter->GetPlayerProfileDefensiveReactionAlpha()
+		)
+	);
+}
+
+float ASoccerAIController::GetDefensiveProfileAnticipationPredictionTrust(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Clamp(
+		FMath::Lerp(
+			AnticipationPredictionTrustAtZero,
+			AnticipationPredictionTrustAtHundred,
+			SoccerCharacter->GetPlayerProfileAnticipationAlpha()
+		),
+		0.0f,
+		1.0f
+	);
+}
+
+float ASoccerAIController::GetDefensiveProfileAnticipationHorizonMultiplier(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Max(
+		0.25f,
+		FMath::Lerp(
+			AnticipationHorizonMultiplierAtZero,
+			AnticipationHorizonMultiplierAtHundred,
+			SoccerCharacter->GetPlayerProfileAnticipationAlpha()
+		)
+	);
+}
+
+float ASoccerAIController::GetDefensiveProfileMovementSkillAlpha(
+	const ASoccerAICharacter* SoccerCharacter,
+	ESoccerAIOrder CurrentOrder
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return CurrentOrder == ESoccerAIOrder::DefendMarkDangerousReceiver
+		? SoccerCharacter->GetPlayerProfileMarkingAlpha()
+		: SoccerCharacter->GetPlayerProfileDefensivePositioningAlpha();
+}
+
+float ASoccerAIController::GetDefensiveProfileMoveRefreshMultiplier(
+	const ASoccerAICharacter* SoccerCharacter,
+	ESoccerAIOrder CurrentOrder
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Max(
+		0.25f,
+		FMath::Lerp(
+			DefenseMoveRefreshMultiplierAtZero,
+			DefenseMoveRefreshMultiplierAtHundred,
+			GetDefensiveProfileMovementSkillAlpha(
+				SoccerCharacter,
+				CurrentOrder
+			)
+		)
+	);
+}
+
+float ASoccerAIController::GetDefensiveProfileTackleCooldownMultiplier(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Max(
+		0.25f,
+		FMath::Lerp(
+			TacklingDecisionCooldownMultiplierAtZero,
+			TacklingDecisionCooldownMultiplierAtHundred,
+			SoccerCharacter->GetPlayerProfileTacklingAlpha()
+		)
+	);
+}
+
+float ASoccerAIController::GetDefensiveProfileContestedTackleScoreAdjustment(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 0.0f;
+	}
+
+	return FMath::Lerp(
+		ContestedTackleDecisionScoreAdjustmentAtZero,
+		ContestedTackleDecisionScoreAdjustmentAtHundred,
+		SoccerCharacter->GetPlayerProfileTacklingAlpha()
+	);
+}
+
+FVector ASoccerAIController::ApplyDefensiveProfileTargetExecution(
+	ASoccerAICharacter* SoccerCharacter,
+	const FVector& IdealTargetLocation,
+	ESoccerAIOrder CurrentOrder,
+	bool bGoalAreaEmergency
+)
+{
+	if (
+		!IsValid(SoccerCharacter) ||
+		!SoccerCharacter->HasPlayerProfile() ||
+		IdealTargetLocation.IsNearlyZero() ||
+		IdealTargetLocation.ContainsNaN()
+	)
+	{
+		ClearDefensiveProfileTargetExecutionState();
+		return IdealTargetLocation;
+	}
+
+	const bool bMarkingOrder =
+		CurrentOrder == ESoccerAIOrder::DefendMarkDangerousReceiver;
+
+	const float SkillAlpha = GetDefensiveProfileMovementSkillAlpha(
+		SoccerCharacter,
+		CurrentOrder
+	);
+
+	float MaximumErrorCm = bMarkingOrder
+		? FMath::Lerp(
+			MarkingTargetErrorCmAtZero,
+			MarkingTargetErrorCmAtHundred,
+			SkillAlpha
+		)
+		: FMath::Lerp(
+			DefensivePositioningTargetErrorCmAtZero,
+			DefensivePositioningTargetErrorCmAtHundred,
+			SkillAlpha
+		);
+
+	if (bGoalAreaEmergency)
+	{
+		MaximumErrorCm *= FMath::Clamp(
+			GoalAreaEmergencyDefensiveErrorScale,
+			0.0f,
+			1.0f
+		);
+	}
+
+	MaximumErrorCm = FMath::Max(0.0f, MaximumErrorCm);
+
+	if (MaximumErrorCm <= KINDA_SMALL_NUMBER)
+	{
+		ClearDefensiveProfileTargetExecutionState();
+		return IdealTargetLocation;
+	}
+
+	UWorld* World = GetWorld();
+	const float CurrentTime = World != nullptr
+		? World->GetTimeSeconds()
+		: 0.0f;
+
+	const float IdealTargetMovement = bHasDefensiveProfileExecutionOffset
+		? FVector::Dist2D(
+			IdealTargetLocation,
+			LastDefensiveProfileIdealTarget
+		)
+		: TNumericLimits<float>::Max();
+
+	const float TargetMovementRefreshThreshold = FMath::Max(
+		80.0f,
+		MaximumErrorCm * 0.75f
+	);
+
+	const bool bNeedsNewExecutionOffset =
+		!bHasDefensiveProfileExecutionOffset ||
+		LastDefensiveProfileExecutionOrder != CurrentOrder ||
+		CurrentTime - LastDefensiveProfileExecutionOffsetTime >=
+			FMath::Max(0.20f, DefensiveExecutionOffsetRefreshInterval) ||
+		IdealTargetMovement >= TargetMovementRefreshThreshold;
+
+	if (bNeedsNewExecutionOffset)
+	{
+		const float ErrorAngle = FMath::FRandRange(-PI, PI);
+		const float ErrorRadius =
+			FMath::FRandRange(0.25f, 1.0f) * MaximumErrorCm;
+
+		DefensiveProfileExecutionOffset = FVector(
+			FMath::Cos(ErrorAngle) * ErrorRadius,
+			FMath::Sin(ErrorAngle) * ErrorRadius,
+			0.0f
+		);
+
+		LastDefensiveProfileExecutionOffsetTime = CurrentTime;
+		LastDefensiveProfileExecutionOrder = CurrentOrder;
+		bHasDefensiveProfileExecutionOffset = true;
+	}
+
+	LastDefensiveProfileIdealTarget = IdealTargetLocation;
+
+	FVector AdjustedTargetLocation =
+		IdealTargetLocation + DefensiveProfileExecutionOffset;
+	AdjustedTargetLocation.Z = IdealTargetLocation.Z;
+
+	FVector ProjectedTargetLocation;
+	if (
+		ProjectDefensivePressureLocationToNavigation(
+			AdjustedTargetLocation,
+			ProjectedTargetLocation
+		)
+	)
+	{
+		return ProjectedTargetLocation;
+	}
+
+	return IdealTargetLocation;
+}
+
+void ASoccerAIController::ClearDefensiveProfileTargetExecutionState()
+{
+	bHasDefensiveProfileExecutionOffset = false;
+	DefensiveProfileExecutionOffset = FVector::ZeroVector;
+	LastDefensiveProfileIdealTarget = FVector::ZeroVector;
+	LastDefensiveProfileExecutionOffsetTime = -1000.0f;
+	LastDefensiveProfileExecutionOrder = ESoccerAIOrder::ReturnHome;
+}
+
 FVector ASoccerAIController::GetDelayedObservedBallLocation(
 	ASoccerBall* SoccerBall
 )
@@ -22403,14 +22740,10 @@ FVector ASoccerAIController::GetDelayedObservedBallLocation(
 		DelayedObservedBallLocation = CurrentBallLocation;
 		LastDelayedBallObservationTime = CurrentTime;
 
-		const float SafeMin =
-			FMath::Max(0.0f, AIReactionDelayMin);
-
-		const float SafeMax =
-			FMath::Max(SafeMin, AIReactionDelayMax);
-
 		CurrentAIReactionDelay =
-			FMath::RandRange(SafeMin, SafeMax);
+			BuildAIReactionDelayForCharacter(
+				Cast<ASoccerAICharacter>(GetPawn())
+			);
 
 		return DelayedObservedBallLocation;
 	}
@@ -22426,14 +22759,10 @@ FVector ASoccerAIController::GetDelayedObservedBallLocation(
 		DelayedObservedBallLocation = CurrentBallLocation;
 		LastDelayedBallObservationTime = CurrentTime;
 
-		const float SafeMin =
-			FMath::Max(0.0f, AIReactionDelayMin);
-
-		const float SafeMax =
-			FMath::Max(SafeMin, AIReactionDelayMax);
-
 		CurrentAIReactionDelay =
-			FMath::RandRange(SafeMin, SafeMax);
+			BuildAIReactionDelayForCharacter(
+				Cast<ASoccerAICharacter>(GetPawn())
+			);
 
 		return DelayedObservedBallLocation;
 	}
@@ -22446,14 +22775,10 @@ FVector ASoccerAIController::GetDelayedObservedBallLocation(
 		DelayedObservedBallLocation = CurrentBallLocation;
 		LastDelayedBallObservationTime = CurrentTime;
 
-		const float SafeMin =
-			FMath::Max(0.0f, AIReactionDelayMin);
-
-		const float SafeMax =
-			FMath::Max(SafeMin, AIReactionDelayMax);
-
 		CurrentAIReactionDelay =
-			FMath::RandRange(SafeMin, SafeMax);
+			BuildAIReactionDelayForCharacter(
+				Cast<ASoccerAICharacter>(GetPawn())
+			);
 	}
 
 	return DelayedObservedBallLocation;
@@ -23248,6 +23573,17 @@ bool ASoccerAIController::MoveToLocationFilteredForDefense(
 		? World->GetTimeSeconds()
 		: 0.0f;
 
+	const ASoccerAICharacter* DefensiveCharacter =
+		Cast<ASoccerAICharacter>(GetPawn());
+
+	const float ProfileRefreshMultiplier =
+		bGoalAreaEmergency
+		? 1.0f
+		: GetDefensiveProfileMoveRefreshMultiplier(
+			DefensiveCharacter,
+			CurrentOrder
+		);
+
 	if (CurrentDefenseMoveForcedRefreshInterval <= 0.0f)
 	{
 		CurrentDefenseMoveForcedRefreshInterval =
@@ -23265,7 +23601,7 @@ bool ASoccerAIController::MoveToLocationFilteredForDefense(
 			1.0f,
 			GoalAreaDefenseMoveRepathDistanceThreshold
 		)
-		: DefenseMoveRepathDistanceThreshold;
+		: DefenseMoveRepathDistanceThreshold * ProfileRefreshMultiplier;
 
 	const float EffectiveRepathMinInterval =
 		bGoalAreaEmergency
@@ -23273,7 +23609,7 @@ bool ASoccerAIController::MoveToLocationFilteredForDefense(
 			0.0f,
 			GoalAreaDefenseMoveRepathMinInterval
 		)
-		: DefenseMoveRepathMinInterval;
+		: DefenseMoveRepathMinInterval * ProfileRefreshMultiplier;
 
 	const float EffectiveForcedRefreshInterval =
 		bGoalAreaEmergency
@@ -23281,7 +23617,7 @@ bool ASoccerAIController::MoveToLocationFilteredForDefense(
 			0.01f,
 			GoalAreaDefenseMoveForcedRefreshInterval
 		)
-		: CurrentDefenseMoveForcedRefreshInterval;
+		: CurrentDefenseMoveForcedRefreshInterval * ProfileRefreshMultiplier;
 
 	const float TimeSinceLastRequest =
 		CurrentTime - LastFilteredDefenseMoveRequestTime;

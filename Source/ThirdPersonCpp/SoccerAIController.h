@@ -306,6 +306,52 @@ private:
 		ASoccerAICharacter* SoccerCharacter = nullptr
 	);
 
+	// Stage 8C player-profile defense execution. The tactical system still
+	// chooses the correct action/ideal location; these helpers model how
+	// quickly and accurately the individual defender executes it.
+	float BuildAIReactionDelayForCharacter(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	float GetDefensiveProfileReactionMultiplier(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	float GetDefensiveProfileAnticipationPredictionTrust(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	float GetDefensiveProfileAnticipationHorizonMultiplier(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	float GetDefensiveProfileMovementSkillAlpha(
+		const ASoccerAICharacter* SoccerCharacter,
+		ESoccerAIOrder CurrentOrder
+	) const;
+
+	float GetDefensiveProfileMoveRefreshMultiplier(
+		const ASoccerAICharacter* SoccerCharacter,
+		ESoccerAIOrder CurrentOrder
+	) const;
+
+	float GetDefensiveProfileTackleCooldownMultiplier(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	float GetDefensiveProfileContestedTackleScoreAdjustment(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	FVector ApplyDefensiveProfileTargetExecution(
+		ASoccerAICharacter* SoccerCharacter,
+		const FVector& IdealTargetLocation,
+		ESoccerAIOrder CurrentOrder,
+		bool bGoalAreaEmergency
+	);
+
+	void ClearDefensiveProfileTargetExecutionState();
+
 	// Stage 1: conservative AI tackle used only to intercept a genuinely
 	// loose moving ball when sliding reaches an earlier safe point than running.
 	bool TryStartBasicAITackleInterception(
@@ -557,6 +603,62 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Reaction")
 		float AIReactionDelayTeleportDistance = 900.0f;
+
+	// Stage 8C global meaning of the 0-100 defensive profile ratings.
+	// No PlayerProfile bypasses every multiplier and preserves legacy behavior.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float DefensiveReactionDelayMultiplierAtZero = 1.60f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float DefensiveReactionDelayMultiplierAtHundred = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float AnticipationPredictionTrustAtZero = 0.30f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float AnticipationPredictionTrustAtHundred = 1.00f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float AnticipationHorizonMultiplierAtZero = 0.70f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float AnticipationHorizonMultiplierAtHundred = 1.15f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.0", ClampMax = "400.0"))
+		float DefensivePositioningTargetErrorCmAtZero = 140.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.0", ClampMax = "400.0"))
+		float DefensivePositioningTargetErrorCmAtHundred = 8.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.0", ClampMax = "400.0"))
+		float MarkingTargetErrorCmAtZero = 120.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.0", ClampMax = "400.0"))
+		float MarkingTargetErrorCmAtHundred = 5.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.20", ClampMax = "5.00"))
+		float DefensiveExecutionOffsetRefreshInterval = 1.35f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float GoalAreaEmergencyDefensiveErrorScale = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.25", ClampMax = "3.00"))
+		float DefenseMoveRefreshMultiplierAtZero = 1.35f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.25", ClampMax = "3.00"))
+		float DefenseMoveRefreshMultiplierAtHundred = 0.65f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.25", ClampMax = "3.00"))
+		float TacklingDecisionCooldownMultiplierAtZero = 1.25f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.25", ClampMax = "3.00"))
+		float TacklingDecisionCooldownMultiplierAtHundred = 0.80f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "-0.50", ClampMax = "0.50"))
+		float ContestedTackleDecisionScoreAdjustmentAtZero = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "-0.50", ClampMax = "0.50"))
+		float ContestedTackleDecisionScoreAdjustmentAtHundred = -0.08f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Interception")
 		bool bUsePredictiveBallChase = true;
@@ -1648,6 +1750,12 @@ private:
 	ESoccerAIOrder LastFilteredDefenseMoveOrder = ESoccerAIOrder::ReturnHome;
 
 	float CurrentDefenseMoveForcedRefreshInterval = 0.0f;
+
+	bool bHasDefensiveProfileExecutionOffset = false;
+	FVector DefensiveProfileExecutionOffset = FVector::ZeroVector;
+	FVector LastDefensiveProfileIdealTarget = FVector::ZeroVector;
+	float LastDefensiveProfileExecutionOffsetTime = -1000.0f;
+	ESoccerAIOrder LastDefensiveProfileExecutionOrder = ESoccerAIOrder::ReturnHome;
 
 	void UpdateAIMovementForMove(
 		ESoccerAIOrder CurrentOrder,
