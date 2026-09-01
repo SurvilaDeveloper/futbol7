@@ -18,6 +18,7 @@
 #include "Animation/AnimMontage.h"
 #include "GameFramework/Controller.h"
 #include "Engine/Engine.h"
+#include "Engine/SkeletalMesh.h"
 #include "Engine/CurveTable.h"
 #include "Curves/RealCurve.h"
 #include "Curves/CurveFloat.h"
@@ -316,6 +317,11 @@ ASoccerCharacterBase::ASoccerCharacterBase()
 void ASoccerCharacterBase::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Capture the mesh configured by the native/Blueprint character before a
+	// PlayerProfile is allowed to replace it.
+	CapturePlayerProfileAppearanceBaseline();
+	ApplyPlayerProfileAppearance();
 
 	// Acceleration is shared by human and AI CharacterMovement. Pace and
 	// fatigue remain in their existing class-specific movement systems.
@@ -2446,8 +2452,86 @@ void ASoccerCharacterBase::SetPlayerProfileForMatch(
 {
 	PlayerProfile = NewPlayerProfile;
 
+	ApplyPlayerProfileAppearance();
 	ApplyPlayerProfileAccelerationTuning();
 	OnPlayerProfileChangedForMatch();
+}
+
+void ASoccerCharacterBase::CapturePlayerProfileAppearanceBaseline()
+{
+	if (bPlayerProfileAppearanceBaselineCaptured)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	if (CharacterMesh == nullptr)
+	{
+		return;
+	}
+
+	PlayerProfileBaselineSkeletalMesh = CharacterMesh->SkeletalMesh;
+	bPlayerProfileAppearanceBaselineCaptured = true;
+}
+
+void ASoccerCharacterBase::ApplyPlayerProfileAppearance()
+{
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	if (CharacterMesh == nullptr)
+	{
+		return;
+	}
+
+	CapturePlayerProfileAppearanceBaseline();
+	if (!bPlayerProfileAppearanceBaselineCaptured)
+	{
+		return;
+	}
+
+	USkeletalMesh* DesiredMesh = PlayerProfileBaselineSkeletalMesh;
+	bool bUsingProfileMeshOverride = false;
+	if (HasPlayerProfile() && !PlayerProfile->Appearance.MeshOverride.IsNull())
+	{
+		USkeletalMesh* ProfileMesh =
+			PlayerProfile->Appearance.MeshOverride.LoadSynchronous();
+
+		if (ProfileMesh != nullptr)
+		{
+			DesiredMesh = ProfileMesh;
+			bUsingProfileMeshOverride = true;
+		}
+		else
+		{
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("[PlayerAppearance] %s could not load MeshOverride for profile %s; restoring baseline mesh."),
+				*GetName(),
+				*GetPlayerProfileId().ToString()
+			);
+		}
+	}
+
+	if (CharacterMesh->SkeletalMesh != DesiredMesh)
+	{
+		CharacterMesh->SetSkeletalMesh(DesiredMesh, true);
+	}
+
+	// A replacement mesh starts with its own material array, so team uniform
+	// materials must be applied again after every effective profile change.
+	ApplyTeamUniform();
+
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("[PlayerAppearance] %s applied profile=%s mesh=%s source=%s."),
+		*GetName(),
+		HasPlayerProfile() ? *GetPlayerProfileId().ToString() : TEXT("None"),
+		DesiredMesh != nullptr ? *DesiredMesh->GetName() : TEXT("None"),
+		bUsingProfileMeshOverride
+			? TEXT("MeshOverride")
+			: TEXT("Baseline")
+	);
 }
 
 float ASoccerCharacterBase::GetPlayerProfileDefensiveReactionAlpha() const

@@ -16,6 +16,7 @@ class UAnimMontage;
 class UCurveTable;
 class UCurveFloat;
 class USoccerPlayerProfile;
+class USkeletalMesh;
 
 UCLASS(Blueprintable)
 class THIRDPERSONCPP_API ASoccerCharacterBase : public ACharacter
@@ -466,6 +467,11 @@ protected:
 	/** Derived human/AI classes refresh their own pace tiers after a runtime profile swap. */
 	virtual void OnPlayerProfileChangedForMatch();
 	void ApplyPlayerProfileAccelerationTuning();
+
+	// Stage 9A: applies the optional profile mesh while preserving the class/
+	// Blueprint mesh as the reversible legacy fallback.
+	void ApplyPlayerProfileAppearance();
+	void CapturePlayerProfileAppearanceBaseline();
 
 	virtual void UpdateSoccerAnimationState();
 
@@ -1547,6 +1553,14 @@ private:
 	// a profile after BeginPlay would multiply an already adjusted acceleration.
 	bool bPlayerProfileAccelerationBaselineCaptured = false;
 	float PlayerProfileBaselineMaxAcceleration = 0.0f;
+
+	// Captured before the first profile mesh is applied. Keeping this reference
+	// makes repeated runtime profile changes idempotent and lets a profile with
+	// no MeshOverride restore the character's original mesh.
+	UPROPERTY(Transient)
+	USkeletalMesh* PlayerProfileBaselineSkeletalMesh = nullptr;
+
+	bool bPlayerProfileAppearanceBaselineCaptured = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer|Team", meta = (AllowPrivateAccess = "true"))
 		ESoccerTeam Team = ESoccerTeam::PlayerTeam;
