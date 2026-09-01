@@ -466,6 +466,10 @@ private:
 		ASoccerBall* SoccerBall
 	);
 
+	float GetAerialAbilityHeaderExecutionErrorMultiplier(
+		const ASoccerCharacterBase* SoccerCharacter
+	) const;
+
 	void ApplyAIAerialHeaderPassExecutionError(
 		const ASoccerAICharacter* SoccerCharacter,
 		const FVector& IntendedTarget,
@@ -1178,6 +1182,26 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Aerial|Decision|Pass Error", meta = (ClampMin = "0.0", ClampMax = "0.50"))
 		float AIAerialHeaderPassPowerErrorFraction = 0.12f;
+
+	// Stage 8F. These multipliers scale the already-authored AI heading error.
+	// No PlayerProfile returns 1.0 and preserves the legacy distribution exactly.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float AerialAbilityHeaderExecutionErrorMultiplierAtZero = 1.60f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
+		float AerialAbilityHeaderExecutionErrorMultiplierAtHundred = 0.40f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "-1.0", ClampMax = "1.0"))
+		float AerialAbilityContestPlanScoreAdjustmentAtZero = 0.22f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "-1.0", ClampMax = "1.0"))
+		float AerialAbilityContestPlanScoreAdjustmentAtHundred = -0.18f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "-0.50", ClampMax = "0.50"))
+		float StrengthContestPlanScoreAdjustmentAtZero = 0.05f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "-0.50", ClampMax = "0.50"))
+		float StrengthContestPlanScoreAdjustmentAtHundred = -0.05f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Aerial|Decision|Power", meta = (ClampMin = "0.0"))
 		float AIAerialHeaderProlongHorizontalSpeed = 1350.0f;

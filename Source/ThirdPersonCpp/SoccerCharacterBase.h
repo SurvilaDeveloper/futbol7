@@ -69,6 +69,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Defense")
 		float GetPlayerProfileTacklingAlpha() const;
 
+	// Stage 8F: normalized physical/aerial ratings shared by contact and aerial systems.
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Physical")
+		float GetPlayerProfileStrengthAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Aerial")
+		float GetPlayerProfileAerialAbilityAlpha() const;
+
 	// Stage 8D: normalized attacking/tactical ratings used by the AI controller.
 	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Attack")
 		float GetPlayerProfileOffBallPositioningAlpha() const;
@@ -438,6 +445,20 @@ protected:
 	// a modestly larger effective ball-contact envelope while opponent contact
 	// geometry remains unchanged, so clean ball-first challenges become easier.
 	float GetPlayerProfileTackleBallContactRadiusMultiplier() const;
+
+	// Stage 8F. Strength only modifies real contact consequences that already exist
+	// (aerial body contests and tackle-fall displacement). AerialAbility modifies
+	// timing/contact quality and heading execution without granting automatic wins.
+	float GetPlayerProfileStrengthAerialContestScoreAdjustment() const;
+	float GetPlayerProfileStrengthBodyForceMultiplier() const;
+	float GetPlayerProfileStrengthBodyResistanceMultiplier() const;
+	float GetPlayerProfileStrengthTackleFallInertiaMultiplier() const;
+	float GetPlayerProfileAerialAbilityContestScoreAdjustment() const;
+	float GetPlayerProfileAerialHeadContactRadiusMultiplier() const;
+	float GetPlayerProfileAerialContactQualityMultiplier(
+		ESoccerAerialContactSurface ContactSurface
+	) const;
+	float GetPlayerProfileAerialHeaderPowerMultiplier() const;
 
 	bool IsPlayerProfileShotTarget(const FVector& IntendedTarget) const;
 	float GetPlayerProfileTechnicalPressureAlpha() const;
@@ -1464,6 +1485,63 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
 		float TackleBallContactRadiusMultiplierAtHundred = 1.18f;
+
+	// Stage 8F: Strength changes the outcome of real body contact rather than a
+	// hidden success roll. AerialAbility changes contact quality/reach and heading
+	// execution. Characters without PlayerProfile bypass all these adjustments.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Contest Tuning", meta = (ClampMin = "-0.25", ClampMax = "0.25"))
+		float StrengthAerialContestScoreAdjustmentAtZero = -0.04f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Contest Tuning", meta = (ClampMin = "-0.25", ClampMax = "0.25"))
+		float StrengthAerialContestScoreAdjustmentAtHundred = 0.04f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Contest Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float StrengthBodyForceMultiplierAtZero = 0.90f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Contest Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float StrengthBodyForceMultiplierAtHundred = 1.10f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Contest Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float StrengthBodyResistanceMultiplierAtZero = 1.15f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Contest Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float StrengthBodyResistanceMultiplierAtHundred = 0.85f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Contest Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float StrengthTackleFallInertiaMultiplierAtZero = 1.10f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Contest Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float StrengthTackleFallInertiaMultiplierAtHundred = 0.90f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "-0.30", ClampMax = "0.30"))
+		float AerialAbilityContestScoreAdjustmentAtZero = -0.10f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "-0.30", ClampMax = "0.30"))
+		float AerialAbilityContestScoreAdjustmentAtHundred = 0.10f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float AerialHeadContactRadiusMultiplierAtZero = 0.88f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float AerialHeadContactRadiusMultiplierAtHundred = 1.12f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float AerialHeadContactQualityMultiplierAtZero = 0.82f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float AerialHeadContactQualityMultiplierAtHundred = 1.18f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float AerialChestContactQualityMultiplierAtZero = 0.92f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float AerialChestContactQualityMultiplierAtHundred = 1.08f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float AerialHeaderPowerMultiplierAtZero = 0.84f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Aerial Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float AerialHeaderPowerMultiplierAtHundred = 1.16f;
 
 	// Runtime baseline makes profile application idempotent. Without this, changing
 	// a profile after BeginPlay would multiply an already adjusted acceleration.

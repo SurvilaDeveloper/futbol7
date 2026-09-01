@@ -19013,14 +19013,21 @@ bool ASoccerAIController::BuildAIOffensiveHeaderDecision(
 						);
 					};
 
+				const float AerialExecutionErrorMultiplier =
+					GetAerialAbilityHeaderExecutionErrorMultiplier(
+						SoccerCharacter
+					);
+
 				DirectionErrorDegrees =
 					SampleTriangularSignedUnit() *
-					FMath::Max(0.0f, AIAerialHeaderShotDirectionErrorDegrees);
+					FMath::Max(0.0f, AIAerialHeaderShotDirectionErrorDegrees) *
+					AerialExecutionErrorMultiplier;
 
 				PowerErrorFraction =
 					SampleTriangularSignedUnit() *
 					FMath::Clamp(
-						AIAerialHeaderShotPowerErrorFraction,
+						AIAerialHeaderShotPowerErrorFraction *
+							AerialExecutionErrorMultiplier,
 						0.0f,
 						0.50f
 					);
@@ -19305,6 +19312,22 @@ bool ASoccerAIController::BuildAIDefensiveHeaderDecision(
 	return true;
 }
 
+float ASoccerAIController::GetAerialAbilityHeaderExecutionErrorMultiplier(
+	const ASoccerCharacterBase* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Lerp(
+		AerialAbilityHeaderExecutionErrorMultiplierAtZero,
+		AerialAbilityHeaderExecutionErrorMultiplierAtHundred,
+		SoccerCharacter->GetPlayerProfileAerialAbilityAlpha()
+	);
+}
+
 void ASoccerAIController::ApplyAIAerialHeaderPassExecutionError(
 	const ASoccerAICharacter* SoccerCharacter,
 	const FVector& IntendedTarget,
@@ -19341,14 +19364,19 @@ void ASoccerAIController::ApplyAIAerialHeaderPassExecutionError(
 			);
 		};
 
+	const float AerialExecutionErrorMultiplier =
+		GetAerialAbilityHeaderExecutionErrorMultiplier(SoccerCharacter);
+
 	OutDirectionErrorDegrees =
 		SampleTriangularSignedUnit() *
-		FMath::Max(0.0f, AIAerialHeaderPassDirectionErrorDegrees);
+		FMath::Max(0.0f, AIAerialHeaderPassDirectionErrorDegrees) *
+		AerialExecutionErrorMultiplier;
 
 	OutPowerErrorFraction =
 		SampleTriangularSignedUnit() *
 		FMath::Clamp(
-			AIAerialHeaderPassPowerErrorFraction,
+			AIAerialHeaderPassPowerErrorFraction *
+				AerialExecutionErrorMultiplier,
 			0.0f,
 			0.50f
 		);
@@ -19926,6 +19954,20 @@ float ASoccerAIController::ScoreAerialContestPlan(
 			FMath::Max(0.0f, AIAerialContestTimingErrorWeight) -
 		UsefulPositiveMargin *
 			FMath::Max(0.0f, AIAerialContestPositiveMarginBonusWeight);
+
+	if (Candidate->HasPlayerProfile())
+	{
+		Score += FMath::Lerp(
+			AerialAbilityContestPlanScoreAdjustmentAtZero,
+			AerialAbilityContestPlanScoreAdjustmentAtHundred,
+			Candidate->GetPlayerProfileAerialAbilityAlpha()
+		);
+		Score += FMath::Lerp(
+			StrengthContestPlanScoreAdjustmentAtZero,
+			StrengthContestPlanScoreAdjustmentAtHundred,
+			Candidate->GetPlayerProfileStrengthAlpha()
+		);
+	}
 
 	switch (Candidate->GetAerialActionPhase())
 	{

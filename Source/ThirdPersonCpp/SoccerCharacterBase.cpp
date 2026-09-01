@@ -799,7 +799,8 @@ bool ASoccerCharacterBase::TryStartTackleFallReaction(
 
     ActiveTackleFallInitialSpeed = FMath::Min(
         PreImpactVelocity.Size2D() *
-            FMath::Max(0.0f, TackleFallInitialInertiaScale),
+            FMath::Max(0.0f, TackleFallInitialInertiaScale) *
+            GetPlayerProfileStrengthTackleFallInertiaMultiplier(),
         FMath::Max(0.0f, TackleFallMaximumInitialInertiaSpeed)
     );
 
@@ -2484,6 +2485,20 @@ float ASoccerCharacterBase::GetPlayerProfileTacklingAlpha() const
 		: 0.5f;
 }
 
+float ASoccerCharacterBase::GetPlayerProfileStrengthAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Physical.Strength, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileAerialAbilityAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Technical.AerialAbility, 0, 100) / 100.0f
+		: 0.5f;
+}
+
 float ASoccerCharacterBase::GetPlayerProfileOffBallPositioningAlpha() const
 {
 	return HasPlayerProfile()
@@ -3005,6 +3020,131 @@ float ASoccerCharacterBase::GetPlayerProfileTackleBallContactRadiusMultiplier() 
 		TackleBallContactRadiusMultiplierAtZero,
 		TackleBallContactRadiusMultiplierAtHundred,
 		GetPlayerProfileTacklingAlpha()
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileStrengthAerialContestScoreAdjustment() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 0.0f;
+	}
+
+	return FMath::Lerp(
+		StrengthAerialContestScoreAdjustmentAtZero,
+		StrengthAerialContestScoreAdjustmentAtHundred,
+		GetPlayerProfileStrengthAlpha()
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileStrengthBodyForceMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Lerp(
+		StrengthBodyForceMultiplierAtZero,
+		StrengthBodyForceMultiplierAtHundred,
+		GetPlayerProfileStrengthAlpha()
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileStrengthBodyResistanceMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Lerp(
+		StrengthBodyResistanceMultiplierAtZero,
+		StrengthBodyResistanceMultiplierAtHundred,
+		GetPlayerProfileStrengthAlpha()
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileStrengthTackleFallInertiaMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Lerp(
+		StrengthTackleFallInertiaMultiplierAtZero,
+		StrengthTackleFallInertiaMultiplierAtHundred,
+		GetPlayerProfileStrengthAlpha()
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileAerialAbilityContestScoreAdjustment() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 0.0f;
+	}
+
+	return FMath::Lerp(
+		AerialAbilityContestScoreAdjustmentAtZero,
+		AerialAbilityContestScoreAdjustmentAtHundred,
+		GetPlayerProfileAerialAbilityAlpha()
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileAerialHeadContactRadiusMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Lerp(
+		AerialHeadContactRadiusMultiplierAtZero,
+		AerialHeadContactRadiusMultiplierAtHundred,
+		GetPlayerProfileAerialAbilityAlpha()
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileAerialContactQualityMultiplier(
+	ESoccerAerialContactSurface ContactSurface
+) const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	const float AbilityAlpha = GetPlayerProfileAerialAbilityAlpha();
+
+	if (ContactSurface == ESoccerAerialContactSurface::Chest)
+	{
+		return FMath::Lerp(
+			AerialChestContactQualityMultiplierAtZero,
+			AerialChestContactQualityMultiplierAtHundred,
+			AbilityAlpha
+		);
+	}
+
+	return FMath::Lerp(
+		AerialHeadContactQualityMultiplierAtZero,
+		AerialHeadContactQualityMultiplierAtHundred,
+		AbilityAlpha
+	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileAerialHeaderPowerMultiplier() const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Lerp(
+		AerialHeaderPowerMultiplierAtZero,
+		AerialHeaderPowerMultiplierAtHundred,
+		GetPlayerProfileAerialAbilityAlpha()
 	);
 }
 
@@ -8367,7 +8507,8 @@ bool ASoccerCharacterBase::BuildAerialContactCandidate(
     const float BallRadius = FMath::Max(1.0f, Ball->GetBallRadiusCm());
     const float HeadCombinedRadius =
         BallRadius +
-        FMath::Max(1.0f, AerialHeadContactRadius) +
+        FMath::Max(1.0f, AerialHeadContactRadius) *
+            GetPlayerProfileAerialHeadContactRadiusMultiplier() +
         FMath::Max(0.0f, AerialContactExtraTolerance);
     const float ChestCombinedRadius =
         BallRadius +
@@ -8658,8 +8799,14 @@ bool ASoccerCharacterBase::BuildAerialContactCandidate(
     );
     OutCandidate.AirborneCommitment =
         GetAerialAirborneCommitment(MontagePosition);
-    OutCandidate.ContactQuality =
-        CalculateAerialContactQuality(OutCandidate);
+    OutCandidate.ContactQuality = FMath::Clamp(
+        CalculateAerialContactQuality(OutCandidate) *
+            GetPlayerProfileAerialContactQualityMultiplier(
+                OutCandidate.ContactSurface
+            ),
+        0.0f,
+        1.0f
+    );
 
     float ActionBonus = 0.0f;
 
@@ -8685,7 +8832,10 @@ bool ASoccerCharacterBase::BuildAerialContactCandidate(
     }
 
     OutCandidate.ContestScore =
-        OutCandidate.ContactQuality + ActionBonus;
+        OutCandidate.ContactQuality +
+        ActionBonus +
+        GetPlayerProfileAerialAbilityContestScoreAdjustment() +
+        GetPlayerProfileStrengthAerialContestScoreAdjustment();
 
     return true;
 }
@@ -9285,8 +9435,6 @@ void ASoccerCharacterBase::ReceiveAerialContestBodyReaction(
     float StrengthMultiplier
 )
 {
-    (void)OtherCharacter;
-
     FVector SafeDirection = SeparationDirection;
     SafeDirection.Z = 0.0f;
     SafeDirection.Normalize();
@@ -9296,7 +9444,18 @@ void ASoccerCharacterBase::ReceiveAerialContestBodyReaction(
         return;
     }
 
-    const float SafeStrength = FMath::Max(0.0f, StrengthMultiplier);
+    const float SourceForceMultiplier =
+        IsValid(OtherCharacter)
+        ? OtherCharacter->GetPlayerProfileStrengthBodyForceMultiplier()
+        : 1.0f;
+    const float ReceiverResistanceMultiplier =
+        GetPlayerProfileStrengthBodyResistanceMultiplier();
+    const float SafeStrength = FMath::Max(
+        0.0f,
+        StrengthMultiplier *
+            SourceForceMultiplier *
+            ReceiverResistanceMultiplier
+    );
 
     FVector AddedImpulse =
         SafeDirection *
@@ -9759,9 +9918,11 @@ bool ASoccerCharacterBase::ResolveAerialContactVelocity(
             ResolveAerialActiveHeaderSpeedOverride();
 
         const float BaseHorizontalSpeed =
-            OverrideSpeed >= 0.0f
-            ? OverrideSpeed
-            : AerialActiveHeaderHorizontalSpeed;
+            (
+                OverrideSpeed >= 0.0f
+                ? OverrideSpeed
+                : AerialActiveHeaderHorizontalSpeed
+            ) * GetPlayerProfileAerialHeaderPowerMultiplier();
 
         const float QualityPowerScale = FMath::Lerp(
             FMath::Clamp(AerialPoorHeaderPowerScale, 0.0f, 1.0f),
@@ -9806,9 +9967,11 @@ bool ASoccerCharacterBase::ResolveAerialContactVelocity(
             )
         );
         const float HorizontalSpeed =
-            OverrideSpeed >= 0.0f
-            ? OverrideSpeed
-            : RetainedHorizontalSpeed;
+            (
+                OverrideSpeed >= 0.0f
+                ? OverrideSpeed
+                : RetainedHorizontalSpeed
+            ) * GetPlayerProfileAerialHeaderPowerMultiplier();
 
         FVector DesiredDirection = CharacterForward;
         FVector TargetLocation = FVector::ZeroVector;
