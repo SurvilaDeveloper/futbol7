@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
@@ -152,6 +152,7 @@ private:
 		const FSoccerSlotTacticalInstruction& Instruction,
 		const FString& StatusMessage
 	);
+	void PersistCurrentPlayerTeamStrategyToDirectorSetup();
 
 	void EnsureSelectedInstructionSlotValid();
 	TArray<FName> GetCurrentPlayerInstructionSlotIds() const;

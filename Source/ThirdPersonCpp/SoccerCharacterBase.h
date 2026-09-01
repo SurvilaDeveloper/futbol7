@@ -44,6 +44,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile")
 		FName GetPlayerProfileId() const;
 
+	/**
+	 * Runtime assignment used by the Director Technical -> match handoff.
+	 * Reapplies profile-driven movement tuning immediately and safely.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Soccer|Player Profile")
+		void SetPlayerProfileForMatch(USoccerPlayerProfile* NewPlayerProfile);
+
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Uniform")
 		void ApplyTeamUniform();
 
@@ -349,6 +356,10 @@ protected:
 	float GetPlayerProfileStaminaDrainMultiplier() const;
 	float GetPlayerProfileStaminaRecoveryMultiplier() const;
 	float GetProfileAdjustedPaceSpeed(float BaseSpeed) const;
+
+	/** Derived human/AI classes refresh their own pace tiers after a runtime profile swap. */
+	virtual void OnPlayerProfileChangedForMatch();
+	void ApplyPlayerProfileAccelerationTuning();
 
 	virtual void UpdateSoccerAnimationState();
 
@@ -1258,6 +1269,11 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Tuning", meta = (ClampMin = "0.10", ClampMax = "3.00"))
 		float StaminaRecoveryMultiplierAtHundred = 1.50f;
+
+	// Runtime baseline makes profile application idempotent. Without this, changing
+	// a profile after BeginPlay would multiply an already adjusted acceleration.
+	bool bPlayerProfileAccelerationBaselineCaptured = false;
+	float PlayerProfileBaselineMaxAcceleration = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer|Team", meta = (AllowPrivateAccess = "true"))
 		ESoccerTeam Team = ESoccerTeam::PlayerTeam;

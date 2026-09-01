@@ -1,8 +1,9 @@
-﻿#include "SoccerFormationMenuWidget.h"
+#include "SoccerFormationMenuWidget.h"
 
 #include "SoccerFormationLibrary.h"
 #include "SoccerDirectorTechnicalWidget.h"
 #include "SoccerMatchManager.h"
+#include "SoccerGameInstance.h"
 #include "SoccerTacticalPresetManager.h"
 #include "SoccerCharacterBase.h"
 #include "SoccerTeamTypes.h"
@@ -738,6 +739,20 @@ void USoccerFormationMenuWidget::ActivateMenu(bool bPauseGame)
 void USoccerFormationMenuWidget::CloseMenu()
 {
 	ClosePresetDeleteConfirmation();
+
+	// PLANTEL writes directly to the persistent coach setup. Before the first
+	// kickoff, closing the menu also pushes the selected lineup profiles into
+	// this match. Later openings keep lineup edits for the next match, avoiding
+	// implicit mid-match substitutions, while formation/tactics can still refresh.
+	if (IsValid(MatchManager))
+	{
+		const bool bBeforeFirstKickoff =
+			MatchManager->GetTotalMatchElapsedSeconds() <= 0.01f;
+
+		MatchManager->ApplyPersistentDirectorTechnicalSetupToPlayerTeam(
+			bBeforeFirstKickoff
+		);
+	}
 
 	APlayerController* PlayerController = GetOwningPlayer();
 
@@ -3491,6 +3506,7 @@ void USoccerFormationMenuWidget::CycleFormation(int32 Direction)
 		ESoccerTeam::PlayerTeam,
 		NewFormation
 	);
+	PersistCurrentPlayerTeamStrategyToDirectorSetup();
 
 	EnsureSelectedInstructionSlotValid();
 	RefreshHeader();
@@ -3664,6 +3680,7 @@ void USoccerFormationMenuWidget::ApplyPlayerTacticalPlan(
 		ESoccerTeam::PlayerTeam,
 		TacticalPlan
 	);
+	PersistCurrentPlayerTeamStrategyToDirectorSetup();
 	RefreshTacticsPage();
 	RefreshPresetsPage(false);
 	SetStatusMessage(StatusMessage);
@@ -3683,9 +3700,35 @@ void USoccerFormationMenuWidget::ApplySelectedSlotInstruction(
 		ESoccerTeam::PlayerTeam,
 		Instruction
 	);
+	PersistCurrentPlayerTeamStrategyToDirectorSetup();
 	RefreshInstructionsPage();
 	RefreshPresetsPage(false);
 	SetStatusMessage(StatusMessage);
+}
+
+void USoccerFormationMenuWidget::PersistCurrentPlayerTeamStrategyToDirectorSetup()
+{
+	if (!IsValid(MatchManager))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	USoccerGameInstance* SoccerGameInstance =
+		World != nullptr
+			? Cast<USoccerGameInstance>(World->GetGameInstance())
+			: nullptr;
+
+	if (!IsValid(SoccerGameInstance))
+	{
+		return;
+	}
+
+	SoccerGameInstance->SetCoachStrategySnapshot(
+		MatchManager->GetFormationSystemForTeam(ESoccerTeam::PlayerTeam),
+		MatchManager->GetTacticalPlanForTeam(ESoccerTeam::PlayerTeam),
+		MatchManager->GetSlotTacticalInstructionsForTeam(ESoccerTeam::PlayerTeam)
+	);
 }
 
 void USoccerFormationMenuWidget::EnsureSelectedInstructionSlotValid()
@@ -3862,6 +3905,7 @@ void USoccerFormationMenuWidget::HandlePresetApplyClicked()
 	FString Message;
 	if (TacticalPresetManager->ApplyPresetToPlayerTeam(SelectedPresetId, Message))
 	{
+		PersistCurrentPlayerTeamStrategyToDirectorSetup();
 		EnsureSelectedInstructionSlotValid();
 		RefreshFromMatchManager();
 	}
@@ -4097,6 +4141,7 @@ void USoccerFormationMenuWidget::HandlePresetRevertClicked()
 	FString Message;
 	if (TacticalPresetManager->ApplyPresetToPlayerTeam(ActivePresetId, Message))
 	{
+		PersistCurrentPlayerTeamStrategyToDirectorSetup();
 		EnsureSelectedInstructionSlotValid();
 		RefreshFromMatchManager();
 		SetStatusMessage(

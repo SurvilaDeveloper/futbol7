@@ -5,6 +5,9 @@
 #include "SoccerTeamSetupTypes.h"
 #include "SoccerGameInstance.generated.h"
 
+class USoccerPlayerProfile;
+class USoccerSquadCatalog;
+
 /**
  * Session owner for the persistent coach/team configuration.
  *
@@ -49,6 +52,14 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Tactics")
     bool SetSlotTacticalInstruction(const FSoccerSlotTacticalInstruction& NewInstruction);
+
+    /** Stores formation + collective plan + slot instructions with one autosave. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Team Setup|Tactics")
+    bool SetCoachStrategySnapshot(
+        ESoccerFormationSystem NewFormationSystem,
+        const FSoccerTeamTacticalPlan& NewTacticalPlan,
+        const TArray<FSoccerSlotTacticalInstruction>& NewSlotInstructions
+    );
 
     /**
      * Synchronizes the content-side roster with persistent IDs. Existing lineup
@@ -132,6 +143,16 @@ public:
     UFUNCTION(BlueprintPure, Category = "Soccer|Team Setup|Lineup")
     bool HasCompleteStartingLineup() const;
 
+    /** Runtime registry used by the match to resolve persistent PlayerIds back to Data Assets. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Player Profiles")
+    bool RefreshPlayerProfileRegistry();
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Player Profiles")
+    USoccerPlayerProfile* FindPlayerProfileById(FName PlayerIdToFind) const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Player Profiles")
+    int32 GetResolvedPlayerProfileCount() const;
+
     static FString GetTeamSaveSlotName();
     static int32 GetCurrentSaveFormatVersion();
     static int32 GetCurrentTeamSetupDataVersion();
@@ -156,6 +177,12 @@ private:
     void RemovePlayerFromBench(FSoccerTeamSetup& InOutTeamSetup, FName PlayerIdToRemove) const;
     void RemovePlayerFromStartingLineup(FSoccerTeamSetup& InOutTeamSetup, FName PlayerIdToRemove) const;
     void EnsurePlayerExistsInSquad(FSoccerTeamSetup& InOutTeamSetup, FName PlayerIdToEnsure) const;
+
+    UPROPERTY(Transient)
+    TMap<FName, USoccerPlayerProfile*> RuntimePlayerProfilesById;
+
+    UPROPERTY(Transient)
+    USoccerSquadCatalog* RuntimePlayerTeamCatalog = nullptr;
 
     bool bTeamSetupLoaded = false;
     bool bTeamSetupDirty = false;

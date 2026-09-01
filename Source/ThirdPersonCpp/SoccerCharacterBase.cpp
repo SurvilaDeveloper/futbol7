@@ -319,14 +319,7 @@ void ASoccerCharacterBase::BeginPlay()
 
 	// Acceleration is shared by human and AI CharacterMovement. Pace and
 	// fatigue remain in their existing class-specific movement systems.
-	if (HasPlayerProfile())
-	{
-		if (UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement())
-		{
-			ProfileCharacterMovement->MaxAcceleration *=
-				GetPlayerProfileAccelerationMultiplier();
-		}
-	}
+	ApplyPlayerProfileAccelerationTuning();
 
 	ApplyTeamUniform();
 }
@@ -2437,6 +2430,41 @@ FName ASoccerCharacterBase::GetPlayerProfileId() const
 	return HasPlayerProfile()
 		? PlayerProfile->Identity.PlayerId
 		: NAME_None;
+}
+
+void ASoccerCharacterBase::SetPlayerProfileForMatch(
+	USoccerPlayerProfile* NewPlayerProfile
+)
+{
+	PlayerProfile = NewPlayerProfile;
+
+	ApplyPlayerProfileAccelerationTuning();
+	OnPlayerProfileChangedForMatch();
+}
+
+void ASoccerCharacterBase::ApplyPlayerProfileAccelerationTuning()
+{
+	UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement();
+	if (ProfileCharacterMovement == nullptr)
+	{
+		return;
+	}
+
+	if (!bPlayerProfileAccelerationBaselineCaptured)
+	{
+		PlayerProfileBaselineMaxAcceleration =
+			ProfileCharacterMovement->MaxAcceleration;
+		bPlayerProfileAccelerationBaselineCaptured = true;
+	}
+
+	ProfileCharacterMovement->MaxAcceleration =
+		PlayerProfileBaselineMaxAcceleration *
+		GetPlayerProfileAccelerationMultiplier();
+}
+
+void ASoccerCharacterBase::OnPlayerProfileChangedForMatch()
+{
+	// Human and AI classes intentionally keep separate pace/energy systems.
 }
 
 float ASoccerCharacterBase::GetPlayerProfilePaceSpeedMultiplier() const

@@ -756,6 +756,15 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Energy|Fast Run")
 		float AIFastRunMinimumSpeed = 640.0f;
 
+	// Unmodified movement values used to reapply a different runtime PlayerProfile
+	// without multiplying already-tuned speeds.
+	bool bPlayerProfilePhysicalBaselineCaptured = false;
+	float PlayerProfileBaselineWalkSpeed = 0.0f;
+	float PlayerProfileBaselineJogSpeed = 0.0f;
+	float PlayerProfileBaselineRunSpeed = 0.0f;
+	float PlayerProfileBaselineFastRunSpeed = 0.0f;
+	float PlayerProfileBaselineFastRunMinimumSpeed = 0.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Energy|Fast Run")
 		float AIFastRunFullSpeedEnergy = 80.0f;
 
@@ -806,6 +815,7 @@ private:
 
 	void UpdateAIPlayerEnergy(float DeltaTime);
 	void ApplyPlayerProfilePhysicalTuning();
+	virtual void OnPlayerProfileChangedForMatch() override;
 
 	void UpdateAIMovementSpeed();
 

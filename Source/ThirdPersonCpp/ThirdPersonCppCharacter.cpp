@@ -992,19 +992,25 @@ void AThirdPersonCppCharacter::SelectFastRunSpeed()
 
 void AThirdPersonCppCharacter::ApplyPlayerProfilePhysicalTuning()
 {
-	if (!HasPlayerProfile())
+	if (!bPlayerProfilePhysicalBaselineCaptured)
 	{
-		return;
+		PlayerProfileBaselineWalkSpeed = WalkSpeed;
+		PlayerProfileBaselineJogSpeed = JogSpeed;
+		PlayerProfileBaselineRunSpeed = RunSpeed;
+		PlayerProfileBaselineFastRunSpeed = FastRunSpeed;
+		PlayerProfileBaselineFastRunMinimumSpeed = FastRunMinimumSpeed;
+		bPlayerProfilePhysicalBaselineCaptured = true;
 	}
 
-	WalkSpeed = GetProfileAdjustedPaceSpeed(WalkSpeed);
-	JogSpeed = GetProfileAdjustedPaceSpeed(JogSpeed);
-	RunSpeed = GetProfileAdjustedPaceSpeed(RunSpeed);
-	FastRunSpeed = GetProfileAdjustedPaceSpeed(FastRunSpeed);
-	FastRunMinimumSpeed = GetProfileAdjustedPaceSpeed(FastRunMinimumSpeed);
+	const float PaceMultiplier = GetPlayerProfilePaceSpeedMultiplier();
 
-	// Human starts in Jog. Keep the selected tier synchronized with the
-	// profile-adjusted speed values used by IsSelectedMovementSpeed().
+	WalkSpeed = PlayerProfileBaselineWalkSpeed * PaceMultiplier;
+	JogSpeed = PlayerProfileBaselineJogSpeed * PaceMultiplier;
+	RunSpeed = PlayerProfileBaselineRunSpeed * PaceMultiplier;
+	FastRunSpeed = PlayerProfileBaselineFastRunSpeed * PaceMultiplier;
+	FastRunMinimumSpeed =
+		PlayerProfileBaselineFastRunMinimumSpeed * PaceMultiplier;
+
 	SelectedMovementSpeed = JogSpeed;
 
 	if (UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement())
@@ -1012,18 +1018,26 @@ void AThirdPersonCppCharacter::ApplyPlayerProfilePhysicalTuning()
 		ProfileCharacterMovement->MaxWalkSpeed = SelectedMovementSpeed;
 	}
 
-	UE_LOG(
-		LogTemp,
-		Display,
-		TEXT("[PlayerProfile] Human %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
-		*GetPlayerProfileId().ToString(),
-		GetPlayerProfile()->Attributes.Physical.Pace,
-		GetPlayerProfile()->Attributes.Physical.Acceleration,
-		GetPlayerProfile()->Attributes.Physical.Stamina,
-		GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
-		FastRunSpeed,
-		GetCharacterMovement() != nullptr ? GetCharacterMovement()->MaxAcceleration : 0.0f
-	);
+	if (HasPlayerProfile())
+	{
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("[PlayerProfile] Human %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
+			*GetPlayerProfileId().ToString(),
+			GetPlayerProfile()->Attributes.Physical.Pace,
+			GetPlayerProfile()->Attributes.Physical.Acceleration,
+			GetPlayerProfile()->Attributes.Physical.Stamina,
+			GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
+			FastRunSpeed,
+			GetCharacterMovement() != nullptr ? GetCharacterMovement()->MaxAcceleration : 0.0f
+		);
+	}
+}
+
+void AThirdPersonCppCharacter::OnPlayerProfileChangedForMatch()
+{
+	ApplyPlayerProfilePhysicalTuning();
 }
 
 float AThirdPersonCppCharacter::GetPlayerEnergyPercent() const

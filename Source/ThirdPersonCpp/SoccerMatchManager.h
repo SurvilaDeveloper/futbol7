@@ -1,4 +1,4 @@
-﻿//SoccerMatchManager.h
+//SoccerMatchManager.h
 
 #pragma once
 
@@ -264,6 +264,15 @@ public:
 	TArray<FSoccerSlotTacticalInstruction> GetSlotTacticalInstructionsForTeam(
 		ESoccerTeam Team
 	) const;
+
+	/**
+	 * Pulls the persistent Director Technical setup into the live PlayerTeam.
+	 * Lineup profile application can be disabled for in-match menu refreshes.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Soccer|Director Technical|Match Integration")
+	bool ApplyPersistentDirectorTechnicalSetupToPlayerTeam(
+		bool bApplyStartingLineupProfiles
+	);
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Formation|Menu")
 	bool ShouldShowFormationMenuAtMatchStart() const;
@@ -1907,6 +1916,11 @@ bool IsPenaltyMatchStateActive() const;
 	// ============================================================
 	// FORMATION - structural preset + stable assignment + open-play structure (Stage 3)
 	// ============================================================
+
+	// Stage 7 (Director Technical integration): the user's saved formation,
+	// tactics and lineup become the authoritative PlayerTeam setup at match start.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Director Technical|Match Integration")
+	bool bUsePersistentDirectorTechnicalSetupForPlayerTeam = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Soccer|Formation", meta = (AllowPrivateAccess = "true"))
 	ESoccerFormationSystem PlayerTeamFormationSystem =

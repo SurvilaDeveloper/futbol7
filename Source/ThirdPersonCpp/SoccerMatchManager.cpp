@@ -43,6 +43,8 @@
 #include "SoccerRestartRadiusActor.h"
 #include "SoccerInstantReplayManager.h"
 #include "ThirdPersonCppCharacter.h"
+#include "SoccerGameInstance.h"
+#include "SoccerPlayerProfile.h"
 
 #include "Engine/CurveTable.h"
 #include "Curves/RealCurve.h"
@@ -398,13 +400,21 @@ void ASoccerMatchManager::BeginPlay()
 	InitializeTeamFieldSides();
 	CaptureInitialHumanFieldReferences();
 
-	// Stage 3: capture the stable structural assignment before match flow begins.
-	// Open-play team shape can now use these slots as structural anchors.
-	RebuildFormationAssignmentsForTeam(
-		ESoccerTeam::PlayerTeam,
-		PlayerTeamFormationSystem,
-		false
-	);
+	// Stage 7 (Director Technical): the persistent user setup is loaded before
+	// kickoff. If there is no valid persistent setup, legacy PlayerTeam defaults
+	// remain untouched and the old formation assignment path is used.
+	const bool bPersistentPlayerTeamSetupApplied =
+		ApplyPersistentDirectorTechnicalSetupToPlayerTeam(true);
+
+	if (!bPersistentPlayerTeamSetupApplied)
+	{
+		RebuildFormationAssignmentsForTeam(
+			ESoccerTeam::PlayerTeam,
+			PlayerTeamFormationSystem,
+			false
+		);
+	}
+
 	RebuildFormationAssignmentsForTeam(
 		ESoccerTeam::OpponentTeam,
 		OpponentTeamFormationSystem,
@@ -15657,6 +15667,164 @@ void ASoccerMatchManager::EnsureSlotTacticalInstructionsForTeam(
 			Instructions.Add(NewInstruction);
 		}
 	}
+}
+
+bool ASoccerMatchManager::ApplyPersistentDirectorTechnicalSetupToPlayerTeam(
+	bool bApplyStartingLineupProfiles
+)
+{
+	if (!bUsePersistentDirectorTechnicalSetupForPlayerTeam)
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	USoccerGameInstance* SoccerGameInstance =
+		World != nullptr
+			? Cast<USoccerGameInstance>(World->GetGameInstance())
+			: nullptr;
+
+	if (
+		!IsValid(SoccerGameInstance) ||
+		!SoccerGameInstance->HasLoadedTeamSetup()
+	)
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[DirectorMatch] Persistent PlayerTeam setup unavailable; keeping match defaults.")
+		);
+		return false;
+	}
+
+	const FSoccerTeamSetup PersistentSetup =
+		SoccerGameInstance->GetCurrentTeamSetup();
+
+	const FSoccerFormationDefinition& PersistentFormation =
+		SoccerFormationLibrary::GetDefinition(PersistentSetup.FormationSystem);
+
+	if (!SoccerFormationLibrary::IsValidSevenASideDefinition(PersistentFormation))
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[DirectorMatch] Saved formation is invalid; keeping match defaults.")
+		);
+		return false;
+	}
+
+	const ESoccerFormationSystem PreviousFormationSystem =
+		PlayerTeamFormationSystem;
+
+	PlayerTeamFormationSystem = PersistentSetup.FormationSystem;
+	PlayerTeamTacticalPlan = PersistentSetup.TacticalPlan;
+	PlayerTeamSlotTacticalInstructions = PersistentSetup.SlotInstructions;
+
+	const bool bPreserveExistingAssignments =
+		PlayerTeamFormationAssignments.Num() > 0;
+
+	RebuildFormationAssignmentsForTeam(
+		ESoccerTeam::PlayerTeam,
+		PreviousFormationSystem,
+		bPreserveExistingAssignments
+	);
+	EnsureSlotTacticalInstructionsForTeam(ESoccerTeam::PlayerTeam);
+
+	int32 AppliedProfileCount = 0;
+	int32 MissingProfileCount = 0;
+	int32 EmptyLineupSlotCount = 0;
+
+	if (bApplyStartingLineupProfiles)
+	{
+		for (const FSoccerFormationSlot& FormationSlot : PersistentFormation.Slots)
+		{
+			const FName* PlayerIdPtr =
+				PersistentSetup.StartingLineupBySlot.Find(FormationSlot.SlotId);
+
+			if (PlayerIdPtr == nullptr || PlayerIdPtr->IsNone())
+			{
+				++EmptyLineupSlotCount;
+				continue;
+			}
+
+			ASoccerCharacterBase* MatchCharacter =
+				GetFormationSlotAssignedCharacter(
+					ESoccerTeam::PlayerTeam,
+					FormationSlot.SlotId
+				);
+
+			if (!IsValid(MatchCharacter))
+			{
+				++MissingProfileCount;
+				UE_LOG(
+					LogTemp,
+					Warning,
+					TEXT("[DirectorMatch] No runtime character found for slot '%s' (PlayerId '%s')."),
+					*FormationSlot.SlotId.ToString(),
+					*PlayerIdPtr->ToString()
+				);
+				continue;
+			}
+
+			USoccerPlayerProfile* PlayerProfile =
+				SoccerGameInstance->FindPlayerProfileById(*PlayerIdPtr);
+
+			if (!IsValid(PlayerProfile))
+			{
+				++MissingProfileCount;
+				UE_LOG(
+					LogTemp,
+					Warning,
+					TEXT("[DirectorMatch] Could not resolve PlayerId '%s' for slot '%s'; existing actor profile is preserved."),
+					*PlayerIdPtr->ToString(),
+					*FormationSlot.SlotId.ToString()
+				);
+				continue;
+			}
+
+			MatchCharacter->SetPlayerProfileForMatch(PlayerProfile);
+			++AppliedProfileCount;
+
+			UE_LOG(
+				LogTemp,
+				Display,
+				TEXT("[DirectorMatch] Slot %s -> %s -> actor %s%s."),
+				*FormationSlot.SlotId.ToString(),
+				*PlayerProfile->Identity.PlayerId.ToString(),
+				*MatchCharacter->GetName(),
+				Cast<AThirdPersonCppCharacter>(MatchCharacter) != nullptr
+					? TEXT(" [HUMAN]")
+					: TEXT("")
+			);
+		}
+	}
+
+	// The start-of-match menu opens after the first kickoff state has already
+	// been created. If the coach changed the formation/lineup there, rebuild the
+	// kickoff once so taker/receiver and Preparation positions use the new setup.
+	if (
+		bApplyStartingLineupProfiles &&
+		TotalMatchElapsedSeconds <= 0.01f &&
+		IsKickoffMatchStateActive()
+	)
+	{
+		const ESoccerTeam KickoffTeamToReconfigure = PendingKickoffTeam;
+		StartKickoff(KickoffTeamToReconfigure);
+	}
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[DirectorMatch] PlayerTeam setup applied: formation=%d, starters=%d/7, profilesApplied=%d, emptySlots=%d, unresolved=%d, lineupProfiles=%s."),
+		static_cast<int32>(PlayerTeamFormationSystem),
+		PersistentSetup.StartingLineupBySlot.Num(),
+		AppliedProfileCount,
+		EmptyLineupSlotCount,
+		MissingProfileCount,
+		bApplyStartingLineupProfiles ? TEXT("YES") : TEXT("NO")
+	);
+
+	return true;
 }
 
 bool ASoccerMatchManager::ShouldShowFormationMenuAtMatchStart() const

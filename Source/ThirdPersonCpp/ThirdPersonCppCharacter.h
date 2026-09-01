@@ -375,6 +375,7 @@ void StartAutoPassCollectCarry();
 	void UpdatePlayerEnergy(float DeltaTime);
 	void UpdateEnergyAdjustedMovementSpeed();
 	void ApplyPlayerProfilePhysicalTuning();
+	virtual void OnPlayerProfileChangedForMatch() override;
 
 	float GetEnergyAdjustedFastRunSpeed() const;
 	bool IsSelectedMovementSpeed(float Speed) const;
@@ -472,6 +473,15 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Energy|Fast Run")
 		float FastRunMinimumSpeed = 640.0f;
+
+	// Unmodified movement values used to reapply a different runtime PlayerProfile
+	// without multiplying already-tuned speeds.
+	bool bPlayerProfilePhysicalBaselineCaptured = false;
+	float PlayerProfileBaselineWalkSpeed = 0.0f;
+	float PlayerProfileBaselineJogSpeed = 0.0f;
+	float PlayerProfileBaselineRunSpeed = 0.0f;
+	float PlayerProfileBaselineFastRunSpeed = 0.0f;
+	float PlayerProfileBaselineFastRunMinimumSpeed = 0.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Energy|Fast Run")
 		float FastRunFullSpeedEnergy = 80.0f;

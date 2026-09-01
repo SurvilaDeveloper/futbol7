@@ -3342,37 +3342,52 @@ ESoccerAIMovementMode ASoccerAICharacter::LimitAIMovementModeByEnergy(
 
 void ASoccerAICharacter::ApplyPlayerProfilePhysicalTuning()
 {
-	if (!HasPlayerProfile())
+	if (!bPlayerProfilePhysicalBaselineCaptured)
 	{
-		return;
+		PlayerProfileBaselineWalkSpeed = WalkSpeed;
+		PlayerProfileBaselineJogSpeed = JogSpeed;
+		PlayerProfileBaselineRunSpeed = RunSpeed;
+		PlayerProfileBaselineFastRunSpeed = FastRunSpeed;
+		PlayerProfileBaselineFastRunMinimumSpeed = AIFastRunMinimumSpeed;
+		bPlayerProfilePhysicalBaselineCaptured = true;
 	}
 
-	WalkSpeed = GetProfileAdjustedPaceSpeed(WalkSpeed);
-	JogSpeed = GetProfileAdjustedPaceSpeed(JogSpeed);
-	RunSpeed = GetProfileAdjustedPaceSpeed(RunSpeed);
-	FastRunSpeed = GetProfileAdjustedPaceSpeed(FastRunSpeed);
-	AIFastRunMinimumSpeed = GetProfileAdjustedPaceSpeed(AIFastRunMinimumSpeed);
+	const float PaceMultiplier = GetPlayerProfilePaceSpeedMultiplier();
+
+	WalkSpeed = PlayerProfileBaselineWalkSpeed * PaceMultiplier;
+	JogSpeed = PlayerProfileBaselineJogSpeed * PaceMultiplier;
+	RunSpeed = PlayerProfileBaselineRunSpeed * PaceMultiplier;
+	FastRunSpeed = PlayerProfileBaselineFastRunSpeed * PaceMultiplier;
+	AIFastRunMinimumSpeed =
+		PlayerProfileBaselineFastRunMinimumSpeed * PaceMultiplier;
 
 	if (UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement())
 	{
-		// UE path following otherwise tends to request an immediate velocity.
-		// Enabling requested-move acceleration makes the profile's Acceleration
-		// value observable for bots as well as for the human player.
 		ProfileCharacterMovement->bRequestedMoveUseAcceleration = true;
+		ProfileCharacterMovement->MaxWalkSpeed =
+			GetAIBaseSpeedForMode(CurrentAIMovementMode);
 	}
 
-	UE_LOG(
-		LogTemp,
-		Display,
-		TEXT("[PlayerProfile] AI %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
-		*GetPlayerProfileId().ToString(),
-		GetPlayerProfile()->Attributes.Physical.Pace,
-		GetPlayerProfile()->Attributes.Physical.Acceleration,
-		GetPlayerProfile()->Attributes.Physical.Stamina,
-		GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
-		FastRunSpeed,
-		GetCharacterMovement() != nullptr ? GetCharacterMovement()->MaxAcceleration : 0.0f
-	);
+	if (HasPlayerProfile())
+	{
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("[PlayerProfile] AI %s applied: Pace=%d Acceleration=%d Stamina=%d Recovery=%d, FastRun=%.1f, MaxAcceleration=%.1f."),
+			*GetPlayerProfileId().ToString(),
+			GetPlayerProfile()->Attributes.Physical.Pace,
+			GetPlayerProfile()->Attributes.Physical.Acceleration,
+			GetPlayerProfile()->Attributes.Physical.Stamina,
+			GetPlayerProfile()->Attributes.Physical.StaminaRecovery,
+			FastRunSpeed,
+			GetCharacterMovement() != nullptr ? GetCharacterMovement()->MaxAcceleration : 0.0f
+		);
+	}
+}
+
+void ASoccerAICharacter::OnPlayerProfileChangedForMatch()
+{
+	ApplyPlayerProfilePhysicalTuning();
 }
 
 float ASoccerAICharacter::GetAIBaseSpeedForMode(

@@ -3,6 +3,10 @@
 #include "Kismet/GameplayStatics.h"
 #include "SoccerFormationLibrary.h"
 #include "SoccerTeamSaveGame.h"
+#include "SoccerPlayerProfile.h"
+#include "SoccerSquadCatalog.h"
+#include "AssetRegistryModule.h"
+#include "Modules/ModuleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSoccerTeamPersistence, Log, All);
 
@@ -65,6 +69,8 @@ void USoccerGameInstance::Init()
         );
     }
 
+    RefreshPlayerProfileRegistry();
+
     bTeamSetupLoaded = LoadOrCreateTeamSetup();
 
     if (bTeamSetupLoaded)
@@ -100,6 +106,133 @@ FSoccerTeamSetup USoccerGameInstance::GetCurrentTeamSetup() const
 bool USoccerGameInstance::HasLoadedTeamSetup() const
 {
     return bTeamSetupLoaded;
+}
+
+bool USoccerGameInstance::RefreshPlayerProfileRegistry()
+{
+    RuntimePlayerProfilesById.Reset();
+    RuntimePlayerTeamCatalog = nullptr;
+
+    FAssetRegistryModule& AssetRegistryModule =
+        FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+
+    TArray<FAssetData> CatalogAssets;
+    AssetRegistryModule.Get().GetAssetsByClass(
+        USoccerSquadCatalog::StaticClass()->GetFName(),
+        CatalogAssets,
+        true
+    );
+
+    USoccerSquadCatalog* FirstValidCatalog = nullptr;
+    for (const FAssetData& CatalogAssetData : CatalogAssets)
+    {
+        USoccerSquadCatalog* CandidateCatalog = Cast<USoccerSquadCatalog>(
+            CatalogAssetData.GetAsset()
+        );
+        if (!IsValid(CandidateCatalog))
+        {
+            continue;
+        }
+
+        if (FirstValidCatalog == nullptr)
+        {
+            FirstValidCatalog = CandidateCatalog;
+        }
+
+        if (CandidateCatalog->bDefaultPlayerTeamCatalog)
+        {
+            RuntimePlayerTeamCatalog = CandidateCatalog;
+            break;
+        }
+    }
+
+    if (RuntimePlayerTeamCatalog == nullptr)
+    {
+        RuntimePlayerTeamCatalog = FirstValidCatalog;
+    }
+
+    TArray<USoccerPlayerProfile*> CandidateProfiles;
+
+    if (IsValid(RuntimePlayerTeamCatalog))
+    {
+        CandidateProfiles = RuntimePlayerTeamCatalog->PlayerProfiles;
+    }
+    else
+    {
+        // Development fallback: before a PlayerTeam catalog exists, resolve all
+        // player profiles so the manager layer remains immediately testable.
+        TArray<FAssetData> ProfileAssets;
+        AssetRegistryModule.Get().GetAssetsByClass(
+            USoccerPlayerProfile::StaticClass()->GetFName(),
+            ProfileAssets,
+            true
+        );
+
+        for (const FAssetData& ProfileAssetData : ProfileAssets)
+        {
+            USoccerPlayerProfile* Profile = Cast<USoccerPlayerProfile>(
+                ProfileAssetData.GetAsset()
+            );
+            if (IsValid(Profile))
+            {
+                CandidateProfiles.Add(Profile);
+            }
+        }
+    }
+
+    for (USoccerPlayerProfile* Profile : CandidateProfiles)
+    {
+        if (!IsValid(Profile) || !Profile->HasValidPlayerId())
+        {
+            continue;
+        }
+
+        const FName PlayerId = Profile->Identity.PlayerId;
+        if (RuntimePlayerProfilesById.Contains(PlayerId))
+        {
+            UE_LOG(
+                LogSoccerTeamPersistence,
+                Warning,
+                TEXT("[TeamSetup] Duplicate runtime PlayerId '%s'. Keeping first profile."),
+                *PlayerId.ToString()
+            );
+            continue;
+        }
+
+        RuntimePlayerProfilesById.Add(PlayerId, Profile);
+    }
+
+    UE_LOG(
+        LogSoccerTeamPersistence,
+        Display,
+        TEXT("[TeamSetup] Runtime player-profile registry ready: %d profiles, source=%s."),
+        RuntimePlayerProfilesById.Num(),
+        IsValid(RuntimePlayerTeamCatalog)
+            ? *RuntimePlayerTeamCatalog->GetName()
+            : TEXT("PlayerProfile fallback")
+    );
+
+    return RuntimePlayerProfilesById.Num() > 0;
+}
+
+USoccerPlayerProfile* USoccerGameInstance::FindPlayerProfileById(
+    FName PlayerIdToFind
+) const
+{
+    if (PlayerIdToFind.IsNone())
+    {
+        return nullptr;
+    }
+
+    USoccerPlayerProfile* const* FoundProfile =
+        RuntimePlayerProfilesById.Find(PlayerIdToFind);
+
+    return FoundProfile != nullptr ? *FoundProfile : nullptr;
+}
+
+int32 USoccerGameInstance::GetResolvedPlayerProfileCount() const
+{
+    return RuntimePlayerProfilesById.Num();
 }
 
 bool USoccerGameInstance::SaveTeamSetup()
@@ -243,6 +376,44 @@ bool USoccerGameInstance::SetSlotTacticalInstruction(
 
     RebuildSlotInstructionsForCurrentFormation(CurrentTeamSetup);
     MarkTeamSetupChanged();
+    return PersistIfNeeded();
+}
+
+
+bool USoccerGameInstance::SetCoachStrategySnapshot(
+    ESoccerFormationSystem NewFormationSystem,
+    const FSoccerTeamTacticalPlan& NewTacticalPlan,
+    const TArray<FSoccerSlotTacticalInstruction>& NewSlotInstructions
+)
+{
+    const bool bPreviousAutoSave = bAutoSaveTeamChanges;
+    bAutoSaveTeamChanges = false;
+
+    const bool bFormationAccepted = SetFormationSystem(NewFormationSystem);
+    if (bFormationAccepted)
+    {
+        SetTacticalPlan(NewTacticalPlan);
+
+        for (const FSoccerSlotTacticalInstruction& Instruction : NewSlotInstructions)
+        {
+            if (IsValidSlotForFormation(Instruction.SlotId, NewFormationSystem))
+            {
+                SetSlotTacticalInstruction(Instruction);
+            }
+        }
+
+        RebuildSlotInstructionsForCurrentFormation(CurrentTeamSetup);
+        NormalizeLoadedTeamSetup(CurrentTeamSetup);
+        MarkTeamSetupChanged();
+    }
+
+    bAutoSaveTeamChanges = bPreviousAutoSave;
+
+    if (!bFormationAccepted)
+    {
+        return false;
+    }
+
     return PersistIfNeeded();
 }
 
