@@ -1,4 +1,4 @@
-﻿//SoccerCharacterBase.h
+//SoccerCharacterBase.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -78,6 +78,24 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Attack")
 		float GetPlayerProfileComposureAlpha() const;
+
+	// Stage 8E: normalized goalkeeper-specific ratings used by the AI goalkeeper.
+	// A character without a PlayerProfile still reports neutral 0.5; callers that
+	// must preserve exact legacy behavior should check HasPlayerProfile().
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Goalkeeper")
+		float GetPlayerProfileGoalkeeperReflexesAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Goalkeeper")
+		float GetPlayerProfileGoalkeeperPositioningAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Goalkeeper")
+		float GetPlayerProfileGoalkeeperHandlingAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Goalkeeper")
+		float GetPlayerProfileGoalkeeperDivingAlpha() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Goalkeeper")
+		float GetPlayerProfileGoalkeeperDistributionAlpha() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Uniform")
 		void ApplyTeamUniform();

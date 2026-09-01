@@ -1,4 +1,4 @@
-﻿//SoccerCharacterBase.cpp
+//SoccerCharacterBase.cpp
 #include "SoccerCharacterBase.h"
 #include "SoccerPlayerProfile.h"
 
@@ -2502,6 +2502,41 @@ float ASoccerCharacterBase::GetPlayerProfileComposureAlpha() const
 {
 	return HasPlayerProfile()
 		? FMath::Clamp(PlayerProfile->Attributes.Tactical.Composure, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileGoalkeeperReflexesAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Goalkeeper.Reflexes, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileGoalkeeperPositioningAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Goalkeeper.Positioning, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileGoalkeeperHandlingAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Goalkeeper.Handling, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileGoalkeeperDivingAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Goalkeeper.Diving, 0, 100) / 100.0f
+		: 0.5f;
+}
+
+float ASoccerCharacterBase::GetPlayerProfileGoalkeeperDistributionAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Goalkeeper.Distribution, 0, 100) / 100.0f
 		: 0.5f;
 }
 

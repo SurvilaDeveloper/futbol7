@@ -1,4 +1,4 @@
-﻿//SoccerAIController.h
+//SoccerAIController.h
 
 #pragma once
 
@@ -383,6 +383,39 @@ private:
 
 	void ClearDefensiveProfileTargetExecutionState();
 
+	// Stage 8E goalkeeper profile execution. The existing goalkeeper systems
+	// still choose the ideal action/target; these helpers only model individual
+	// reflexes, positioning quality, handling, dive reach and distribution.
+	float GetGoalkeeperProfileDecisionHorizon(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	float GetGoalkeeperProfileAdditionalReactionDelay(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	FVector ApplyGoalkeeperProfilePositioningExecution(
+		const ASoccerAICharacter* SoccerCharacter,
+		const FVector& IdealTargetLocation
+	) const;
+
+	float GetGoalkeeperProfileCatchRadius(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	float GetGoalkeeperProfileAdaptiveLateralMaximumExtraDistance(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
+	FVector ApplyGoalkeeperProfileDistributionTargetExecution(
+		const ASoccerAICharacter* SoccerCharacter,
+		const FVector& IntendedTargetLocation
+	) const;
+
+	float GetGoalkeeperProfileDistributionSpeedMultiplier(
+		const ASoccerAICharacter* SoccerCharacter
+	) const;
+
 	// Stage 1: conservative AI tackle used only to intercept a genuinely
 	// loose moving ball when sliding reaches an earlier safe point than running.
 	bool TryStartBasicAITackleInterception(
@@ -752,6 +785,56 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Defensive Tuning", meta = (ClampMin = "-0.50", ClampMax = "0.50"))
 		float ContestedTackleDecisionScoreAdjustmentAtHundred = -0.08f;
+
+	// Stage 8E global meaning of the 0-100 goalkeeper ratings.
+	// No PlayerProfile bypasses every adjustment and preserves legacy behavior.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float GoalkeeperReflexDecisionHorizonMultiplierAtZero = 0.72f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float GoalkeeperReflexDecisionHorizonMultiplierAtHundred = 1.10f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float GoalkeeperReflexAdditionalStartDelayAtZero = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+		float GoalkeeperReflexAdditionalStartDelayAtHundred = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.0", ClampMax = "250.0"))
+		float GoalkeeperPositioningLateralErrorCmAtZero = 85.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.0", ClampMax = "250.0"))
+		float GoalkeeperPositioningLateralErrorCmAtHundred = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.0", ClampMax = "200.0"))
+		float GoalkeeperPositioningDepthErrorCmAtZero = 65.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.0", ClampMax = "200.0"))
+		float GoalkeeperPositioningDepthErrorCmAtHundred = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float GoalkeeperHandlingCatchRadiusMultiplierAtZero = 0.76f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float GoalkeeperHandlingCatchRadiusMultiplierAtHundred = 1.08f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float GoalkeeperDivingAdaptiveReachMultiplierAtZero = 0.78f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.25", ClampMax = "2.00"))
+		float GoalkeeperDivingAdaptiveReachMultiplierAtHundred = 1.12f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.0", ClampMax = "20.0"))
+		float GoalkeeperDistributionMaxAngularErrorDegreesAtZero = 8.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.0", ClampMax = "20.0"))
+		float GoalkeeperDistributionMaxAngularErrorDegreesAtHundred = 0.35f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float GoalkeeperDistributionSpeedMultiplierAtZero = 0.90f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Goalkeeper Tuning", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+		float GoalkeeperDistributionSpeedMultiplierAtHundred = 1.05f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Interception")
 		bool bUsePredictiveBallChase = true;

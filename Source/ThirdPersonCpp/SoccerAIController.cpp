@@ -1,4 +1,4 @@
-﻿//SoccerAIController.cpp
+//SoccerAIController.cpp
 
 #include "SoccerAIController.h"
 
@@ -2504,8 +2504,14 @@ bool ASoccerAIController::UpdateGoalkeeperBehavior(
 		ESoccerGoalkeeperBehaviorMode::Positioning
 	);
 
-	const FVector GoalkeeperMoveLocation =
+	const FVector IdealGoalkeeperMoveLocation =
 		MatchManager->GetGoalkeeperMoveLocation(SoccerCharacter);
+
+	const FVector GoalkeeperMoveLocation =
+		ApplyGoalkeeperProfilePositioningExecution(
+			SoccerCharacter,
+			IdealGoalkeeperMoveLocation
+		);
 
 	if (!GoalkeeperMoveLocation.IsNearlyZero())
 	{
@@ -5664,12 +5670,16 @@ TryStartGoalkeeperSaveForIncomingShot(
 	float TimeToReferencePlane =
 		0.0f;
 
+	const float ProfileDecisionHorizon =
+		GetGoalkeeperProfileDecisionHorizon(SoccerCharacter);
+
 	if (
 		!TryPredictGoalkeeperReferencePlaneCrossing(
 			SoccerCharacter,
 			SoccerBall,
 			ReferencePredictedLocation,
-			TimeToReferencePlane
+			TimeToReferencePlane,
+			ProfileDecisionHorizon
 		)
 		)
 	{
@@ -8436,7 +8446,10 @@ FVector ASoccerAIController::GetGoalkeeperRetreatTargetLocation(
 
 		if (!DynamicPositioningLocation.IsNearlyZero())
 		{
-			return DynamicPositioningLocation;
+			return ApplyGoalkeeperProfilePositioningExecution(
+				SoccerCharacter,
+				DynamicPositioningLocation
+			);
 		}
 	}
 
@@ -9267,10 +9280,15 @@ TryScoreGoalkeeperSaveActionAgainstBall(
 			MinimumAdaptiveLateralScale < 1.0f - KINDA_SMALL_NUMBER ||
 			MaximumAdaptiveLateralScale > 1.0f + KINDA_SMALL_NUMBER;
 
+		const float ProfileAdaptiveMaximumExtraDistance =
+			GetGoalkeeperProfileAdaptiveLateralMaximumExtraDistance(
+				SoccerCharacter
+			);
+
 		if (
 			bUseGoalkeeperAdaptiveLateralReach &&
 			bAdaptiveScaleCanChange &&
-			GoalkeeperAdaptiveLateralMaximumExtraDistance > 0.0f
+			ProfileAdaptiveMaximumExtraDistance > 0.0f
 			)
 		{
 			const float AbsCapsuleLateralOffset =
@@ -9307,7 +9325,7 @@ TryScoreGoalkeeperSaveActionAgainstBall(
 				const float MaximumAbsoluteExtraDistance =
 					FMath::Max(
 						0.0f,
-						GoalkeeperAdaptiveLateralMaximumExtraDistance
+						ProfileAdaptiveMaximumExtraDistance
 					);
 
 				const float MinimumAllowedExtraDistance =
@@ -10828,6 +10846,15 @@ UpdatePendingGoalkeeperSaveAction(
 	const float UpdatedRequiredStartDelay =
 		UpdatedSelection.RequiredMontageStartDelay;
 
+	// Reflexes does not alter the authored contact time. A low-reflex goalkeeper
+	// simply commits a little later than the ideal instant; a 100-rated keeper
+	// adds no extra delay. Characters without a profile keep legacy timing.
+	const float GoalkeeperProfileReactionDelay =
+		GetGoalkeeperProfileAdditionalReactionDelay(SoccerCharacter);
+
+	const float ProfileAdjustedRequiredStartDelay =
+		UpdatedRequiredStartDelay + GoalkeeperProfileReactionDelay;
+
 	/*
 	 * Actualizamos el estado pendiente con los valores
 	 * del candidato concreto.
@@ -11013,7 +11040,7 @@ UpdatePendingGoalkeeperSaveAction(
 	 * La selecci�n seguir� recalcul�ndose en cada Tick.
 	 */
 	if (
-		UpdatedRequiredStartDelay >
+		ProfileAdjustedRequiredStartDelay >
 		GoalkeeperSaveMontageStartTolerance
 		)
 	{
@@ -11056,7 +11083,9 @@ UpdatePendingGoalkeeperSaveAction(
 	// atajada reproduce una curva fija; no persigue lateralmente la pelota.
 	SoccerCharacter->SetGoalkeeperSaveAdaptiveLateralScale(
 		UpdatedSelection.AdaptiveLateralScale,
-		GoalkeeperAdaptiveLateralMaximumExtraDistance
+		GetGoalkeeperProfileAdaptiveLateralMaximumExtraDistance(
+			SoccerCharacter
+		)
 	);
 
 	SoccerCharacter->SetGoalkeeperSaveNearPerfectContactCorrection(
@@ -11762,9 +11791,12 @@ bool ASoccerAIController::DetectGoalkeeperAnimatedContact(
 			}
 		}
 
+		const float EffectiveCatchRadius =
+			GetGoalkeeperProfileCatchRadius(SoccerCharacter);
+
 		const bool bCatchZoneTouched =
 			ClosestCatchZoneDistance <=
-			GoalkeeperHandContactRadius;
+			EffectiveCatchRadius;
 
 		OutContactResult.ClosestHandDistance =
 			ClosestCatchZoneDistance;
@@ -11854,7 +11886,7 @@ bool ASoccerAIController::DetectGoalkeeperAnimatedContact(
 							RightHandLocation,
 							ZoneAlpha
 						),
-						GoalkeeperHandContactRadius,
+						EffectiveCatchRadius,
 						ZoneColor,
 						0.75f,
 						10,
@@ -13658,10 +13690,16 @@ bool ASoccerAIController::TryGoalkeeperClearCaughtBall(
 		ControlledBall;
 
 	ActiveGoalkeeperDistributionTargetLocation =
-		Plan.TargetLocation;
+		ApplyGoalkeeperProfileDistributionTargetExecution(
+			SoccerCharacter,
+			Plan.TargetLocation
+		);
 
 	ActiveGoalkeeperDistributionHorizontalSpeed =
-		Plan.HorizontalSpeed;
+		Plan.HorizontalSpeed *
+		GetGoalkeeperProfileDistributionSpeedMultiplier(
+			SoccerCharacter
+		);
 
 	ActiveGoalkeeperDistributionMinTravelTime =
 		Plan.MinTravelTime;
@@ -22462,6 +22500,209 @@ void ASoccerAIController::ClearPredictiveBallChaseMovement(
 	{
 		SoccerCharacter->ClearBallPursuitTarget();
 	}
+}
+
+float ASoccerAIController::GetGoalkeeperProfileDecisionHorizon(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return GoalkeeperSaveDecisionTimeHorizon;
+	}
+
+	const float ReflexAlpha =
+		SoccerCharacter->GetPlayerProfileGoalkeeperReflexesAlpha();
+
+	const float HorizonMultiplier = FMath::Lerp(
+		GoalkeeperReflexDecisionHorizonMultiplierAtZero,
+		GoalkeeperReflexDecisionHorizonMultiplierAtHundred,
+		ReflexAlpha
+	);
+
+	return FMath::Max(0.05f, GoalkeeperSaveDecisionTimeHorizon * HorizonMultiplier);
+}
+
+float ASoccerAIController::GetGoalkeeperProfileAdditionalReactionDelay(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 0.0f;
+	}
+
+	return FMath::Max(
+		0.0f,
+		FMath::Lerp(
+			GoalkeeperReflexAdditionalStartDelayAtZero,
+			GoalkeeperReflexAdditionalStartDelayAtHundred,
+			SoccerCharacter->GetPlayerProfileGoalkeeperReflexesAlpha()
+		)
+	);
+}
+
+FVector ASoccerAIController::ApplyGoalkeeperProfilePositioningExecution(
+	const ASoccerAICharacter* SoccerCharacter,
+	const FVector& IdealTargetLocation
+) const
+{
+	if (
+		!IsValid(SoccerCharacter) ||
+		!SoccerCharacter->HasPlayerProfile() ||
+		IdealTargetLocation.IsNearlyZero()
+	)
+	{
+		return IdealTargetLocation;
+	}
+
+	const float PositioningAlpha =
+		SoccerCharacter->GetPlayerProfileGoalkeeperPositioningAlpha();
+
+	const float MaximumLateralError = FMath::Lerp(
+		GoalkeeperPositioningLateralErrorCmAtZero,
+		GoalkeeperPositioningLateralErrorCmAtHundred,
+		PositioningAlpha
+	);
+
+	const float MaximumDepthError = FMath::Lerp(
+		GoalkeeperPositioningDepthErrorCmAtZero,
+		GoalkeeperPositioningDepthErrorCmAtHundred,
+		PositioningAlpha
+	);
+
+	const uint32 ProfileHash = GetTypeHash(SoccerCharacter->GetPlayerProfileId());
+	const float LateralSign = (ProfileHash & 1u) != 0u ? 1.0f : -1.0f;
+	const float DepthSign = (ProfileHash & 2u) != 0u ? 1.0f : -1.0f;
+	const float LateralMagnitude = 0.65f + 0.35f * static_cast<float>((ProfileHash >> 2) & 255u) / 255.0f;
+	const float DepthMagnitude = 0.55f + 0.45f * static_cast<float>((ProfileHash >> 10) & 255u) / 255.0f;
+
+	FVector RightDirection = GetGoalkeeperRightDirection(SoccerCharacter);
+	RightDirection.Z = 0.0f;
+	RightDirection = RightDirection.GetSafeNormal();
+
+	FVector OutfieldDirection = GetGoalkeeperOutfieldDirection(SoccerCharacter);
+	OutfieldDirection.Z = 0.0f;
+	OutfieldDirection = OutfieldDirection.GetSafeNormal();
+
+	if (RightDirection.IsNearlyZero() || OutfieldDirection.IsNearlyZero())
+	{
+		return IdealTargetLocation;
+	}
+
+	FVector AdjustedTargetLocation = IdealTargetLocation;
+	AdjustedTargetLocation += RightDirection * (MaximumLateralError * LateralMagnitude * LateralSign);
+	AdjustedTargetLocation += OutfieldDirection * (MaximumDepthError * DepthMagnitude * DepthSign);
+	AdjustedTargetLocation.Z = IdealTargetLocation.Z;
+
+	return AdjustedTargetLocation;
+}
+
+float ASoccerAIController::GetGoalkeeperProfileCatchRadius(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return GoalkeeperHandContactRadius;
+	}
+
+	const float HandlingAlpha =
+		SoccerCharacter->GetPlayerProfileGoalkeeperHandlingAlpha();
+
+	const float RadiusMultiplier = FMath::Lerp(
+		GoalkeeperHandlingCatchRadiusMultiplierAtZero,
+		GoalkeeperHandlingCatchRadiusMultiplierAtHundred,
+		HandlingAlpha
+	);
+
+	return FMath::Max(1.0f, GoalkeeperHandContactRadius * RadiusMultiplier);
+}
+
+float ASoccerAIController::GetGoalkeeperProfileAdaptiveLateralMaximumExtraDistance(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return GoalkeeperAdaptiveLateralMaximumExtraDistance;
+	}
+
+	const float DivingAlpha =
+		SoccerCharacter->GetPlayerProfileGoalkeeperDivingAlpha();
+
+	const float ReachMultiplier = FMath::Lerp(
+		GoalkeeperDivingAdaptiveReachMultiplierAtZero,
+		GoalkeeperDivingAdaptiveReachMultiplierAtHundred,
+		DivingAlpha
+	);
+
+	return FMath::Max(0.0f, GoalkeeperAdaptiveLateralMaximumExtraDistance * ReachMultiplier);
+}
+
+FVector ASoccerAIController::ApplyGoalkeeperProfileDistributionTargetExecution(
+	const ASoccerAICharacter* SoccerCharacter,
+	const FVector& IntendedTargetLocation
+) const
+{
+	if (
+		!IsValid(SoccerCharacter) ||
+		!SoccerCharacter->HasPlayerProfile() ||
+		IntendedTargetLocation.IsNearlyZero()
+	)
+	{
+		return IntendedTargetLocation;
+	}
+
+	FVector ToTarget = IntendedTargetLocation - SoccerCharacter->GetActorLocation();
+	const float TargetHeight = ToTarget.Z;
+	ToTarget.Z = 0.0f;
+
+	const float TargetDistance = ToTarget.Size();
+	if (TargetDistance <= KINDA_SMALL_NUMBER)
+	{
+		return IntendedTargetLocation;
+	}
+
+	const float DistributionAlpha =
+		SoccerCharacter->GetPlayerProfileGoalkeeperDistributionAlpha();
+
+	const float MaximumAngleDegrees = FMath::Lerp(
+		GoalkeeperDistributionMaxAngularErrorDegreesAtZero,
+		GoalkeeperDistributionMaxAngularErrorDegreesAtHundred,
+		DistributionAlpha
+	);
+
+	const uint32 ProfileHash = GetTypeHash(SoccerCharacter->GetPlayerProfileId());
+	const float ErrorSign = (ProfileHash & 4u) != 0u ? 1.0f : -1.0f;
+	const float ErrorMagnitude = 0.55f + 0.45f * static_cast<float>((ProfileHash >> 18) & 255u) / 255.0f;
+	const float ErrorAngleRadians = FMath::DegreesToRadians(MaximumAngleDegrees * ErrorMagnitude * ErrorSign);
+
+	const FVector HorizontalDirection = ToTarget.GetSafeNormal();
+	const FVector RotatedDirection = HorizontalDirection.RotateAngleAxis(
+		FMath::RadiansToDegrees(ErrorAngleRadians),
+		FVector::UpVector
+	);
+
+	FVector AdjustedTargetLocation = SoccerCharacter->GetActorLocation() + RotatedDirection * TargetDistance;
+	AdjustedTargetLocation.Z += TargetHeight;
+	return AdjustedTargetLocation;
+}
+
+float ASoccerAIController::GetGoalkeeperProfileDistributionSpeedMultiplier(
+	const ASoccerAICharacter* SoccerCharacter
+) const
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	return FMath::Lerp(
+		GoalkeeperDistributionSpeedMultiplierAtZero,
+		GoalkeeperDistributionSpeedMultiplierAtHundred,
+		SoccerCharacter->GetPlayerProfileGoalkeeperDistributionAlpha()
+	);
 }
 
 float ASoccerAIController::BuildAIReactionDelayForCharacter(
