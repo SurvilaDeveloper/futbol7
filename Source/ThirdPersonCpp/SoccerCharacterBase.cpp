@@ -2489,7 +2489,7 @@ void ASoccerCharacterBase::ApplyPlayerProfileAppearance()
 	}
 
 	USkeletalMesh* DesiredMesh = PlayerProfileBaselineSkeletalMesh;
-	bool bUsingProfileMeshOverride = false;
+	const TCHAR* MeshSource = TEXT("Baseline");
 	if (HasPlayerProfile() && !PlayerProfile->Appearance.MeshOverride.IsNull())
 	{
 		USkeletalMesh* ProfileMesh =
@@ -2498,7 +2498,7 @@ void ASoccerCharacterBase::ApplyPlayerProfileAppearance()
 		if (ProfileMesh != nullptr)
 		{
 			DesiredMesh = ProfileMesh;
-			bUsingProfileMeshOverride = true;
+			MeshSource = TEXT("MeshOverride");
 		}
 		else
 		{
@@ -2508,6 +2508,49 @@ void ASoccerCharacterBase::ApplyPlayerProfileAppearance()
 				TEXT("[PlayerAppearance] %s could not load MeshOverride for profile %s; restoring baseline mesh."),
 				*GetName(),
 				*GetPlayerProfileId().ToString()
+			);
+		}
+	}
+	else if (
+		HasPlayerProfile() &&
+		!PlayerProfile->Appearance.BodyVariantId.IsNone()
+	)
+	{
+		UWorld* ProfileWorld = GetWorld();
+		ASoccerMatchManager* ProfileMatchManager = nullptr;
+
+		if (ProfileWorld != nullptr)
+		{
+			for (TActorIterator<ASoccerMatchManager> It(ProfileWorld); It; ++It)
+			{
+				if (IsValid(*It))
+				{
+					ProfileMatchManager = *It;
+					break;
+				}
+			}
+		}
+
+		USkeletalMesh* BodyVariantMesh =
+			ProfileMatchManager != nullptr
+				? ProfileMatchManager->ResolvePlayerBodyVariantMesh(
+					PlayerProfile->Appearance.BodyVariantId
+				)
+				: nullptr;
+
+		if (BodyVariantMesh != nullptr)
+		{
+			DesiredMesh = BodyVariantMesh;
+			MeshSource = TEXT("BodyVariantId");
+		}
+		else if (ProfileMatchManager == nullptr)
+		{
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("[PlayerAppearance] %s could not find SoccerMatchManager; BodyVariantId '%s' cannot be resolved."),
+				*GetName(),
+				*PlayerProfile->Appearance.BodyVariantId.ToString()
 			);
 		}
 	}
@@ -2528,9 +2571,7 @@ void ASoccerCharacterBase::ApplyPlayerProfileAppearance()
 		*GetName(),
 		HasPlayerProfile() ? *GetPlayerProfileId().ToString() : TEXT("None"),
 		DesiredMesh != nullptr ? *DesiredMesh->GetName() : TEXT("None"),
-		bUsingProfileMeshOverride
-			? TEXT("MeshOverride")
-			: TEXT("Baseline")
+		MeshSource
 	);
 }
 

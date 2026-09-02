@@ -27,6 +27,8 @@ class ASoccerOffsideLineActor;
 class ASoccerRestartRadiusActor;
 class ASoccerInstantReplayManager;
 class UCurveTable;
+class USkeletalMesh;
+class USoccerPlayerAppearanceCatalog;
 
 enum class ESoccerRestartRestrictionShape : uint8
 {
@@ -77,6 +79,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match")
 		ASoccerBall* GetSoccerBall() const;
+
+	/** Stage 9B central BodyVariantId -> SkeletalMesh resolver. */
+	USkeletalMesh* ResolvePlayerBodyVariantMesh(FName BodyVariantId) const;
 
 	/* Instant-replay recorder/playback manager. */
 	ASoccerInstantReplayManager* GetInstantReplayManager() const;
@@ -649,6 +654,10 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	/** Shared visual catalog used by human and AI player profiles in this match. */
+	UPROPERTY(EditAnywhere, Category = "Soccer|Player Appearance")
+	USoccerPlayerAppearanceCatalog* PlayerAppearanceCatalog = nullptr;
+
 	// Explicit match-state machine. Concrete restart families and Playing are
 	// migrated incrementally; MatchPlayState remains only as a compatibility bridge.
 	bool ActivateMatchState(TUniquePtr<ISoccerMatchState> NewState);

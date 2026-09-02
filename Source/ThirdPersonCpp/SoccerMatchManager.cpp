@@ -45,6 +45,7 @@
 #include "ThirdPersonCppCharacter.h"
 #include "SoccerGameInstance.h"
 #include "SoccerPlayerProfile.h"
+#include "SoccerPlayerAppearanceCatalog.h"
 
 #include "Engine/CurveTable.h"
 #include "Curves/RealCurve.h"
@@ -1749,6 +1750,29 @@ void ASoccerMatchManager::ApplyOpponentCoachMode(
 ASoccerBall* ASoccerMatchManager::GetSoccerBall() const
 {
 	return SoccerBall;
+}
+
+USkeletalMesh* ASoccerMatchManager::ResolvePlayerBodyVariantMesh(
+	FName BodyVariantId
+) const
+{
+	if (BodyVariantId.IsNone())
+	{
+		return nullptr;
+	}
+
+	if (!IsValid(PlayerAppearanceCatalog))
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[PlayerAppearance] MatchManager has no PlayerAppearanceCatalog; BodyVariantId '%s' cannot be resolved."),
+			*BodyVariantId.ToString()
+		);
+		return nullptr;
+	}
+
+	return PlayerAppearanceCatalog->LoadBodyVariantMesh(BodyVariantId);
 }
 
 const ASoccerField* ASoccerMatchManager::GetSoccerField() const
