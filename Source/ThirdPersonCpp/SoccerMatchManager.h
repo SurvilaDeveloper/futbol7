@@ -94,6 +94,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Club")
 	FName GetClubIdForTeam(ESoccerTeam Team) const;
 
+	void SetClubProfileForTeam(
+		ESoccerTeam Team,
+		USoccerClubProfile* ClubProfile
+	);
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Club Selection")
+	bool ShouldShowClubSelectionAtMatchStart() const;
+
 	/* Instant-replay recorder/playback manager. */
 	ASoccerInstantReplayManager* GetInstantReplayManager() const;
 
@@ -676,6 +684,9 @@ private:
 	/** Rival club occupying OpponentTeam for this match. */
 	UPROPERTY(EditAnywhere, Category = "Soccer|Clubs")
 	USoccerClubProfile* OpponentTeamClubProfile = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Clubs")
+	bool bShowClubSelectionAtMatchStart = true;
 
 	// Explicit match-state machine. Concrete restart families and Playing are
 	// migrated incrementally; MatchPlayState remains only as a compatibility bridge.

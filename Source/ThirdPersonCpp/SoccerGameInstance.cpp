@@ -298,6 +298,26 @@ bool USoccerGameInstance::RefreshPlayerProfileRegistry()
             : TEXT("PlayerProfile fallback")
     );
 
+    const FName HumanClubId = GetDefaultHumanClubId();
+    if (
+        CurrentMatchSetup.OpponentTeamClubId.IsNone() ||
+        CurrentMatchSetup.OpponentTeamClubId == HumanClubId ||
+        FindSquadCatalogByClubId(CurrentMatchSetup.OpponentTeamClubId) == nullptr
+    )
+    {
+        CurrentMatchSetup = FSoccerMatchSetup();
+        CurrentMatchSetup.PlayerTeamClubId = HumanClubId;
+        const TArray<FName> AvailableClubIds = GetAvailableClubIds();
+        for (const FName ClubId : AvailableClubIds)
+        {
+            if (ClubId != HumanClubId)
+            {
+                CurrentMatchSetup.OpponentTeamClubId = ClubId;
+                break;
+            }
+        }
+    }
+
     return RuntimePlayerProfilesById.Num() > 0;
 }
 
@@ -370,6 +390,61 @@ FName USoccerGameInstance::GetInitialClubIdForPlayer(
         RuntimeInitialClubIdByPlayerId.Find(PlayerIdToFind);
 
     return FoundClubId != nullptr ? *FoundClubId : NAME_None;
+}
+
+FName USoccerGameInstance::GetDefaultHumanClubId() const
+{
+    return IsValid(RuntimePlayerTeamCatalog)
+        ? RuntimePlayerTeamCatalog->GetClubId()
+        : NAME_None;
+}
+
+FName USoccerGameInstance::GetSelectedOpponentClubId() const
+{
+    return CurrentMatchSetup.OpponentTeamClubId;
+}
+
+bool USoccerGameInstance::SetSelectedOpponentClubId(FName OpponentClubId)
+{
+	return ConfigureStandaloneMatch(
+		GetDefaultHumanClubId(),
+		OpponentClubId
+	);
+}
+
+FSoccerMatchSetup USoccerGameInstance::GetCurrentMatchSetup() const
+{
+	return CurrentMatchSetup;
+}
+
+bool USoccerGameInstance::ConfigureStandaloneMatch(
+	FName HumanClubId,
+	FName OpponentClubId
+)
+{
+	if (
+		HumanClubId.IsNone() ||
+		OpponentClubId.IsNone() ||
+		HumanClubId == OpponentClubId ||
+		FindSquadCatalogByClubId(HumanClubId) == nullptr ||
+		FindSquadCatalogByClubId(OpponentClubId) == nullptr
+	)
+	{
+		return false;
+	}
+
+	CurrentMatchSetup = FSoccerMatchSetup();
+	CurrentMatchSetup.PlayerTeamClubId = HumanClubId;
+	CurrentMatchSetup.OpponentTeamClubId = OpponentClubId;
+	CurrentMatchSetup.bPlayerTeamIsHome = true;
+	UE_LOG(
+		LogSoccerTeamPersistence,
+		Display,
+		TEXT("[MatchSetup] Standalone match configured: PlayerTeam=%s, OpponentTeam=%s."),
+		*HumanClubId.ToString(),
+		*OpponentClubId.ToString()
+	);
+	return true;
 }
 
 bool USoccerGameInstance::SaveTeamSetup()

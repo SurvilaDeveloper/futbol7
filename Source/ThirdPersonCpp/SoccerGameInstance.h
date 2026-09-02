@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
 #include "SoccerTeamSetupTypes.h"
+#include "SoccerMatchSetupTypes.h"
 #include "SoccerGameInstance.generated.h"
 
 class USoccerPlayerProfile;
@@ -167,6 +168,23 @@ public:
     UFUNCTION(BlueprintPure, Category = "Soccer|Clubs")
     FName GetInitialClubIdForPlayer(FName PlayerIdToFind) const;
 
+    UFUNCTION(BlueprintPure, Category = "Soccer|Match Clubs")
+    FName GetDefaultHumanClubId() const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Match Clubs")
+    FName GetSelectedOpponentClubId() const;
+
+    /** Session/match choice. It is intentionally separate from team lineup persistence. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Match Clubs")
+    bool SetSelectedOpponentClubId(FName OpponentClubId);
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Match Setup")
+    FSoccerMatchSetup GetCurrentMatchSetup() const;
+
+    /** Creates/updates the standalone friendly used by the pre-match screen. */
+    UFUNCTION(BlueprintCallable, Category = "Soccer|Match Setup")
+    bool ConfigureStandaloneMatch(FName HumanClubId, FName OpponentClubId);
+
     static FString GetTeamSaveSlotName();
     static int32 GetCurrentSaveFormatVersion();
     static int32 GetCurrentTeamSetupDataVersion();
@@ -203,6 +221,9 @@ private:
 
     UPROPERTY(Transient)
     TMap<FName, FName> RuntimeInitialClubIdByPlayerId;
+
+    UPROPERTY(Transient)
+    FSoccerMatchSetup CurrentMatchSetup;
 
     bool bTeamSetupLoaded = false;
     bool bTeamSetupDirty = false;

@@ -11,6 +11,7 @@
 
 #include "SoccerDebugManager.h"
 #include "SoccerFormationMenuWidget.h"
+#include "SoccerClubSelectionWidget.h"
 #include "SoccerQuickTacticsWidget.h"
 #include "SoccerTacticalPresetManager.h"
 
@@ -34,9 +35,72 @@ void AGameHUD::BeginPlay()
 	)
 	{
 		FTimerDelegate OpenMenuDelegate;
-		OpenMenuDelegate.BindUObject(this, &AGameHUD::ShowFormationMenu);
+		if (MatchManager->ShouldShowClubSelectionAtMatchStart())
+		{
+			OpenMenuDelegate.BindUObject(this, &AGameHUD::ShowClubSelectionMenu);
+		}
+		else
+		{
+			OpenMenuDelegate.BindUObject(this, &AGameHUD::ShowFormationMenu);
+		}
 		GetWorldTimerManager().SetTimerForNextTick(OpenMenuDelegate);
 	}
+}
+
+void AGameHUD::ShowClubSelectionMenu()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	APlayerController* PlayerController =
+		UGameplayStatics::GetPlayerController(GetWorld(), 0);
+	if (!IsValid(MatchManager) || PlayerController == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(ClubSelectionWidget))
+	{
+		ClubSelectionWidget = CreateWidget<USoccerClubSelectionWidget>(
+			PlayerController,
+			USoccerClubSelectionWidget::StaticClass()
+		);
+		if (IsValid(ClubSelectionWidget))
+		{
+			ClubSelectionWidget->OnSelectionConfirmed.AddDynamic(
+				this,
+				&AGameHUD::HandleClubSelectionConfirmed
+			);
+		}
+	}
+
+	if (!IsValid(ClubSelectionWidget))
+	{
+		ShowFormationMenu();
+		return;
+	}
+
+	ClubSelectionWidget->InitializeForMatchManager(MatchManager);
+	if (!ClubSelectionWidget->HasSelectableOpponent())
+	{
+		ShowFormationMenu();
+		return;
+	}
+
+	if (!ClubSelectionWidget->IsInViewport())
+	{
+		ClubSelectionWidget->AddToViewport(120);
+	}
+	ClubSelectionWidget->ActivateMenu(
+		MatchManager->ShouldPauseGameWhileFormationMenuOpen()
+	);
+}
+
+void AGameHUD::HandleClubSelectionConfirmed()
+{
+	ShowFormationMenu();
 }
 
 void AGameHUD::ShowFormationMenu()

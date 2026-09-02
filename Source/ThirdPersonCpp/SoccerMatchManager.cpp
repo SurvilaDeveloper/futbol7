@@ -1802,6 +1802,34 @@ FName ASoccerMatchManager::GetClubIdForTeam(ESoccerTeam Team) const
 		: NAME_None;
 }
 
+void ASoccerMatchManager::SetClubProfileForTeam(
+	ESoccerTeam Team,
+	USoccerClubProfile* ClubProfile
+)
+{
+	if (Team == ESoccerTeam::PlayerTeam)
+	{
+		PlayerTeamClubProfile = ClubProfile;
+	}
+	else
+	{
+		OpponentTeamClubProfile = ClubProfile;
+	}
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[ClubMatch] %s now represents club %s."),
+		Team == ESoccerTeam::PlayerTeam ? TEXT("PlayerTeam") : TEXT("OpponentTeam"),
+		*GetClubIdForTeam(Team).ToString()
+	);
+}
+
+bool ASoccerMatchManager::ShouldShowClubSelectionAtMatchStart() const
+{
+	return bShowClubSelectionAtMatchStart;
+}
+
 const ASoccerField* ASoccerMatchManager::GetSoccerField() const
 {
 	return SoccerField;
