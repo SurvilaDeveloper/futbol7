@@ -1,4 +1,4 @@
-﻿// ThirdPersonCppCharacter.cpp
+// ThirdPersonCppCharacter.cpp
 #include "ThirdPersonCppCharacter.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "Camera/CameraComponent.h"
@@ -52,10 +52,10 @@ AThirdPersonCppCharacter::AThirdPersonCppCharacter()
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
 	CameraBoom->TargetArmLength = 300.0f; // The camera follows at this distance behind the character
-	// Sube la c�mara.
+	// Sube la cï¿½mara.
 	CameraBoom->SocketOffset = FVector(0.0f, 0.0f, 200.0f);
 
-	// Baja el target/pivote de la c�mara.
+	// Baja el target/pivote de la cï¿½mara.
 	CameraBoom->TargetOffset = FVector(0.0f, 0.0f, -80.0f);
 
 	CameraBoom->bUsePawnControlRotation = true; // Rotate the arm based on the controller
@@ -73,8 +73,8 @@ AThirdPersonCppCharacter::AThirdPersonCppCharacter()
 
 	PossessionIndicator->SetRelativeLocation(FVector(0.0f, 0.0f, PossessionIndicatorHeight));
 
-	// Esta rotaci�n depende del mesh que uses.
-	// Si us�s un Cone de Unreal y apunta hacia arriba, esto lo da vuelta para que apunte hacia abajo.
+	// Esta rotaciï¿½n depende del mesh que uses.
+	// Si usï¿½s un Cone de Unreal y apunta hacia arriba, esto lo da vuelta para que apunte hacia abajo.
 	PossessionIndicator->SetRelativeRotation(FRotator(180.0f, 0.0f, 0.0f));
 
 	PossessionIndicator->SetRelativeScale3D(PossessionIndicatorBaseScale);
@@ -135,6 +135,11 @@ void AThirdPersonCppCharacter::SetupPlayerInputComponent(class UInputComponent* 
 	// Direct debug binding: no Project Settings Action Mapping is required.
 	PlayerInputComponent->BindKey(EKeys::NumPadSix, IE_Pressed, this, &AThirdPersonCppCharacter::DebugStartOpponentPenalty);
 	PlayerInputComponent->BindKey(EKeys::NumPadSeven, IE_Pressed, this, &AThirdPersonCppCharacter::DebugStartPlayerTeamPenalty);
+	PlayerInputComponent->BindKey(EKeys::NumPadOne, IE_Pressed, this, &AThirdPersonCppCharacter::DebugCyclePlayerTeamOutgoingSubstitute);
+	PlayerInputComponent->BindKey(EKeys::NumPadTwo, IE_Pressed, this, &AThirdPersonCppCharacter::DebugCyclePlayerTeamIncomingSubstitute);
+	PlayerInputComponent->BindKey(EKeys::NumPadThree, IE_Pressed, this, &AThirdPersonCppCharacter::DebugConfirmPlayerTeamSubstitution);
+	PlayerInputComponent->BindKey(EKeys::NumPadFour, IE_Pressed, this, &AThirdPersonCppCharacter::DebugCancelPlayerTeamSubstitution);
+	PlayerInputComponent->BindKey(EKeys::NumPadFive, IE_Pressed, this, &AThirdPersonCppCharacter::DebugRequestOpponentTeamSubstitution);
 
 	// Stage 12B: one dedicated toggle is available on keyboard and gamepad.
 	// When the menu is open, UIOnly input means the widget owns the same keys
@@ -281,6 +286,74 @@ void AThirdPersonCppCharacter::DebugStartPlayerTeamPenalty()
 		TEXT("NUMPAD 7 PENAL TEST: no se encontro SoccerMatchManager"),
 		FColor::Red
 	);
+}
+
+void AThirdPersonCppCharacter::DebugCyclePlayerTeamOutgoingSubstitute()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+	if (IsValid(MatchManager))
+	{
+		MatchManager->DebugCyclePlayerTeamOutgoingSubstitute();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SubstitutionDebug] NUMPAD 1: SoccerMatchManager not found."));
+	}
+}
+
+void AThirdPersonCppCharacter::DebugCyclePlayerTeamIncomingSubstitute()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+	if (IsValid(MatchManager))
+	{
+		MatchManager->DebugCyclePlayerTeamIncomingSubstitute();
+	}
+}
+
+void AThirdPersonCppCharacter::DebugConfirmPlayerTeamSubstitution()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+	if (IsValid(MatchManager))
+	{
+		MatchManager->DebugConfirmPlayerTeamSubstitution();
+	}
+}
+
+void AThirdPersonCppCharacter::DebugCancelPlayerTeamSubstitution()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+	if (IsValid(MatchManager))
+	{
+		MatchManager->DebugCancelPlayerTeamSubstitution();
+	}
+}
+
+void AThirdPersonCppCharacter::DebugRequestOpponentTeamSubstitution()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+	if (IsValid(MatchManager))
+	{
+		MatchManager->DebugRequestAutomaticSubstitution(ESoccerTeam::OpponentTeam);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SubstitutionDebug] NUMPAD 5: SoccerMatchManager not found."));
+	}
 }
 
 
@@ -674,7 +747,7 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 		return;
 	}
 
-	// Si est� activo el intento de robo humano, este sistema toma control
+	// Si estï¿½ activo el intento de robo humano, este sistema toma control
 	// del movimiento hacia la pelota del bot rival.
 	if (IsAerialActionApproaching())
 	{
@@ -1070,6 +1143,14 @@ float AThirdPersonCppCharacter::GetPlayerEnergyPercent() const
 	}
 
 	return FMath::Clamp(PlayerEnergy / MaxPlayerEnergy, 0.0f, 1.0f);
+}
+
+void AThirdPersonCppCharacter::ResetRuntimeStateForIncomingSubstitute()
+{
+	ReleaseBallForMatchRestart(false);
+	PlayerEnergy = FMath::Max(0.0f, MaxPlayerEnergy);
+	Super::ResetRuntimeStateForIncomingSubstitute();
+	UpdateEnergyAdjustedMovementSpeed();
 }
 
 bool AThirdPersonCppCharacter::IsSelectedMovementSpeed(float Speed) const
@@ -2079,8 +2160,8 @@ bool AThirdPersonCppCharacter::ShouldMovementInputCancelChase()
 
 	const FVector2D CurrentMovementInput = GetCurrentMovementInputVector();
 
-	// Si el jugador solt� las teclas/stick que estaban presionadas
-	// cuando solt� el click derecho, dejamos de ignorar futuros inputs.
+	// Si el jugador soltï¿½ las teclas/stick que estaban presionadas
+	// cuando soltï¿½ el click derecho, dejamos de ignorar futuros inputs.
 	if (CurrentMovementInput.Size() <= MovementInputCancelDeadZone)
 	{
 		bIgnoreChaseCancelUntilMovementInputChanges = false;
@@ -2091,8 +2172,8 @@ bool AThirdPersonCppCharacter::ShouldMovementInputCancelChase()
 	const float InputChangeAmount =
 		(CurrentMovementInput - IgnoredMovementInputForChaseCancel).Size();
 
-	// Si cambi� el input mientras iba hacia la pelota,
-	// eso s� cuenta como intenci�n nueva de cancelar.
+	// Si cambiï¿½ el input mientras iba hacia la pelota,
+	// eso sï¿½ cuenta como intenciï¿½n nueva de cancelar.
 	if (InputChangeAmount >= MovementInputChangeCancelThreshold)
 	{
 		bIgnoreChaseCancelUntilMovementInputChanges = false;
@@ -2883,8 +2964,8 @@ void AThirdPersonCppCharacter::CollectAutoPassBallWithoutCollision()
 	PossessBall();
 
 	// Importante:
-	// PossessBall() llama a StopBallKeepingPhysics(), que deja f�sica activa.
-	// Para este caso queremos que la pelota quede controlada y sin impulso f�sico.
+	// PossessBall() llama a StopBallKeepingPhysics(), que deja fï¿½sica activa.
+	// Para este caso queremos que la pelota quede controlada y sin impulso fï¿½sico.
 	ControlledBall->SetPossessed(true);
 
 	FVector Forward = GetActorForwardVector();
@@ -2913,7 +2994,7 @@ void AThirdPersonCppCharacter::CollectAutoPassBallWithoutCollision()
 	);
 
 	// En vez de dejarla congelada, le damos un toque muy suave hacia adelante.
-	// Esto simula que el jugador la control�/fren�, pero sin matarla de golpe.
+	// Esto simula que el jugador la controlï¿½/frenï¿½, pero sin matarla de golpe.
 	ControlledBall->DribbleTouch(
 		Forward,
 		AutoPassCollectSoftTouchSpeed,
@@ -2927,7 +3008,7 @@ void AThirdPersonCppCharacter::CollectAutoPassBallWithoutCollision()
 	LastDribbleTouchBallLocation = ControlledBall->GetActorLocation();
 	LastDribbleTouchTime = GetWorld()->GetTimeSeconds();
 
-	// Evita que el sistema le d� otro toque inmediatamente en el frame siguiente.
+	// Evita que el sistema le dï¿½ otro toque inmediatamente en el frame siguiente.
 	bCanDribbleTouch = false;
 
 	if (GEngine)
@@ -3117,7 +3198,7 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 
 	const float DistanceToBall = ToBall.Size();
 
-	// Si la pelota se fue demasiado lejos, dejamos de considerarla pose�da.
+	// Si la pelota se fue demasiado lejos, dejamos de considerarla poseï¿½da.
 	if (DistanceToBall > DribbleMaxPossessionDistance)
 	{
 		EnterManualControl();
@@ -3174,7 +3255,7 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 
 	AddMovementInput(MoveDirection, 1.0f);
 
-	// Mientras todav�a no lleg� a la pelota, mira hacia la pelota.
+	// Mientras todavï¿½a no llegï¿½ a la pelota, mira hacia la pelota.
 	if (!MoveDirection.IsNearlyZero())
 	{
 		FRotator TargetRotation = MoveDirection.Rotation();
@@ -3198,9 +3279,9 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 	const float BallSpeed2D =
 		ControlledBall->GetVelocity().Size2D();
 
-	// Despu�s de un toque, esperamos a que la pelota se aleje.
-	// Pero no bloqueamos para siempre: tambi�n liberamos por tiempo
-	// o si la pelota qued� casi trabada/frenada.
+	// Despuï¿½s de un toque, esperamos a que la pelota se aleje.
+	// Pero no bloqueamos para siempre: tambiï¿½n liberamos por tiempo
+	// o si la pelota quedï¿½ casi trabada/frenada.
 	if (!bCanDribbleTouch)
 	{
 		const bool bBallMovedEnough =
@@ -3299,7 +3380,7 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 
 		CurrentDribbleDirection = ExecutedDribbleDirection;
 
-		// Reci�n en el contacto cambia hacia la direcci�n realmente ejecutada.
+		// Reciï¿½n en el contacto cambia hacia la direcciï¿½n realmente ejecutada.
 		if (!CurrentDribbleDirection.IsNearlyZero())
 		{
 			FRotator NewDirectionRotation = CurrentDribbleDirection.Rotation();
@@ -3827,7 +3908,7 @@ bool AThirdPersonCppCharacter::TryStartStrongRunDribbleTurnForPendingKick()
 
 	float HorizontalSpeedToUse = TargetKickHorizontalSpeed;
 
-	// Usamos la animaci�n de giro como animaci�n de autopase.
+	// Usamos la animaciï¿½n de giro como animaciï¿½n de autopase.
 	// Por eso guardamos el destino y pateamos en el impacto del giro.
 	const FVector KickTargetToUse = PendingKickTarget;
 	const ESoccerPendingKickMode KickModeToUse = PendingKickMode;
@@ -4920,7 +5001,7 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 				-1,
 				1.0f,
 				FColor::Cyan,
-				TEXT("Destino de autopase guardado para despu�s del robo")
+				TEXT("Destino de autopase guardado para despuï¿½s del robo")
 			);
 		}
 
@@ -4989,7 +5070,7 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 	}
 
 	// Segundo click izquierdo mientras ya va hacia la pelota:
-	// ahora s� marca destino y prepara KickAndFollow.
+	// ahora sï¿½ marca destino y prepara KickAndFollow.
 	if (SoccerControlState == ESoccerPlayerControlState::ChasingBall)
 	{
 		StoreKickTarget(ESoccerPendingKickMode::KickAndFollow);
@@ -6077,7 +6158,7 @@ UAnimMontage* AThirdPersonCppCharacter::SelectKickMontageForTarget(
 
 	const float Distance2D = FVector::Dist2D(BallLocation, TargetLocation);
 
-	// Distancia corta: no usamos animaci�n especial.
+	// Distancia corta: no usamos animaciï¿½n especial.
 	if (Distance2D <= ShortKickMaxDistance)
 	{
 		return nullptr;
@@ -6101,8 +6182,8 @@ UAnimMontage* AThirdPersonCppCharacter::SelectKickMontageForTarget(
 
 	const float CrossZ = FVector::CrossProduct(PlayerForward, BallToTarget).Z;
 
-	// Si el destino est� hacia la izquierda, preferimos pierna derecha.
-	// Si est� hacia la derecha, preferimos pierna izquierda.
+	// Si el destino estï¿½ hacia la izquierda, preferimos pierna derecha.
+	// Si estï¿½ hacia la derecha, preferimos pierna izquierda.
 	const bool bUseRightLeg = CrossZ < 0.0f;
 
 	const bool bSideKick = AngleDegrees > SideKickMinAngleDegrees;
@@ -6450,7 +6531,7 @@ ASoccerAICharacter* AThirdPersonCppCharacter::GetOpponentPossessingAICharacter()
 		return nullptr;
 	}
 
-	// Una pelota asegurada por el arquero no ofrece una acci�n
+	// Una pelota asegurada por el arquero no ofrece una acciï¿½n
 	// de robo al jugador humano.
 	if (PossessingAICharacter->IsGoalkeeperHoldingBall())
 	{
@@ -6677,7 +6758,7 @@ void AThirdPersonCppCharacter::CompleteHumanStealAttempt(
 	// Limpiamos solo el estado de intento de robo.
 	ClearHumanStealAttemptOnly();
 
-	// Tu PossessBall() no recibe par�metros:
+	// Tu PossessBall() no recibe parï¿½metros:
 	// primero asignamos la pelota al ControlledBall del humano.
 	ControlledBall = SoccerBall;
 
@@ -6686,12 +6767,12 @@ void AThirdPersonCppCharacter::CompleteHumanStealAttempt(
 		ControlledBall->SetPossessed(true);
 	}
 
-	// Ahora s�, usamos tu PossessBall() existente.
+	// Ahora sï¿½, usamos tu PossessBall() existente.
 	PossessBall();
 
 	UpdatePossessedBallLocation();
 
-	// PossessBall() limpia PendingKickMode, as� que restauramos
+	// PossessBall() limpia PendingKickMode, asï¿½ que restauramos
 	// el destino que el jugador pudo haber marcado durante el robo.
 	PendingKickMode = SavedPendingKickMode;
 	PendingKickTarget = SavedPendingKickTarget;
@@ -6700,7 +6781,7 @@ void AThirdPersonCppCharacter::CompleteHumanStealAttempt(
 	PendingKickHorizontalSpeedOverride =
 		SavedPendingKickHorizontalSpeedOverride;
 
-	// Si durante la carrera de robo el usuario marc� autopase,
+	// Si durante la carrera de robo el usuario marcï¿½ autopase,
 	// ejecutamos el pase apenas roba.
 	if (
 		PendingKickMode == ESoccerPendingKickMode::KickAndFollow ||

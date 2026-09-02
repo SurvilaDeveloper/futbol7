@@ -53,6 +53,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Player Profile")
 		void SetPlayerProfileForMatch(USoccerPlayerProfile* NewPlayerProfile);
 
+	/** Clears actor-local carryover before this actor represents a substitute. */
+	virtual void ResetRuntimeStateForIncomingSubstitute();
+
 	// Stage 8C: public normalized defensive ratings used by the AI controller.
 	// A value of 0.0 means attribute 0 and 1.0 means attribute 100.
 	// Callers should still check HasPlayerProfile() when legacy behavior must be exact.

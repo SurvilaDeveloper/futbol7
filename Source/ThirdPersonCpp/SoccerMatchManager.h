@@ -18,6 +18,7 @@
 #include "SoccerGoalLineRestart.h"
 #include "SoccerCoachMatchPlanTypes.h"
 #include "SoccerCoachRuntimeDecisionTypes.h"
+#include "SoccerMatchSquadTypes.h"
 #include "SoccerMatchManager.generated.h"
 
 class ASoccerBall;
@@ -115,6 +116,30 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|AI Coach|Runtime")
 	FSoccerCoachRuntimeDecision GetLastOpponentCoachRuntimeDecision() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Match Squad")
+	FSoccerMatchSquadState GetMatchSquadState(ESoccerTeam Team) const;
+
+	/** Queues a valid substitution and executes it at the next safe match pause. */
+	UFUNCTION(BlueprintCallable, Category = "Soccer|Match Squad")
+	bool RequestMatchSubstitution(
+		ESoccerTeam Team,
+		FName OutgoingPlayerId,
+		FName IncomingPlayerId
+	);
+
+	UFUNCTION(BlueprintCallable, Category = "Soccer|Match Squad")
+	bool CancelPendingMatchSubstitution(ESoccerTeam Team);
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Match Squad")
+	bool HasPendingMatchSubstitution(ESoccerTeam Team) const;
+
+	/** Temporary Stage 9K keyboard tests. */
+	void DebugRequestAutomaticSubstitution(ESoccerTeam Team);
+	void DebugCyclePlayerTeamOutgoingSubstitute();
+	void DebugCyclePlayerTeamIncomingSubstitute();
+	void DebugConfirmPlayerTeamSubstitution();
+	void DebugCancelPlayerTeamSubstitution();
 
 	/* Instant-replay recorder/playback manager. */
 	ASoccerInstantReplayManager* GetInstantReplayManager() const;
@@ -710,6 +735,34 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Soccer|Coach|Opponent", meta = (AllowPrivateAccess = "true"))
 	FSoccerCoachRuntimeDecision LastOpponentCoachRuntimeDecision;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Soccer|Match Squad", meta = (AllowPrivateAccess = "true"))
+	FSoccerMatchSquadState PlayerTeamMatchSquadState;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Soccer|Match Squad", meta = (AllowPrivateAccess = "true"))
+	FSoccerMatchSquadState OpponentTeamMatchSquadState;
+
+	UPROPERTY(Transient)
+	TArray<FSoccerMatchSubstitutionRequest> PendingMatchSubstitutions;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad", meta = (ClampMin = "0", UIMin = "0", UIMax = "7"))
+	int32 MaximumSubstitutionsPerTeam = 3;
+
+	FName DebugSelectedPlayerTeamOutgoingId = NAME_None;
+	FName DebugSelectedPlayerTeamIncomingId = NAME_None;
+
+	FSoccerMatchSquadState& GetMutableMatchSquadState(ESoccerTeam Team);
+	const FSoccerMatchSquadState& GetMatchSquadStateRef(ESoccerTeam Team) const;
+	void InitializeMatchSquadState(
+		ESoccerTeam Team,
+		FName ClubId,
+		const TMap<FName, FName>& StartingLineupBySlot,
+		const TArray<FName>& BenchPlayerIds
+	);
+	void UpdatePendingMatchSubstitutions();
+	bool IsSafeMomentForSubstitution() const;
+	bool ExecuteMatchSubstitution(const FSoccerMatchSubstitutionRequest& Request);
+	void ShowDebugPlayerTeamSubstitutionSelection(const FString& Prefix) const;
 
 	int32 ApplySquadCatalogProfilesToTeam(
 		ESoccerTeam Team,

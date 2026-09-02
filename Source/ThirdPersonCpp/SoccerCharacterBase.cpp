@@ -2457,6 +2457,19 @@ void ASoccerCharacterBase::SetPlayerProfileForMatch(
 	OnPlayerProfileChangedForMatch();
 }
 
+void ASoccerCharacterBase::ResetRuntimeStateForIncomingSubstitute()
+{
+	ClearBallPursuitTarget();
+	bSoccerIsPossessingBall = false;
+	bSoccerIsChasingBall = false;
+	bSoccerIsKicking = false;
+	SoccerEnergyPercent = 1.0f;
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+	}
+}
+
 void ASoccerCharacterBase::CapturePlayerProfileAppearanceBaseline()
 {
 	if (bPlayerProfileAppearanceBaselineCaptured)

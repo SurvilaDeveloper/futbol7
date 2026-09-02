@@ -1,4 +1,4 @@
-﻿//SoccerAICharacter.cpp
+//SoccerAICharacter.cpp
 
 #include "SoccerAICharacter.h"
 
@@ -584,9 +584,9 @@ void ASoccerAICharacter::PossessAIBall(ASoccerBall* NewControlledBall)
 		CancelPendingAIKickAnimation(true);
 	}
 
-	// Toda posesi�n nueva comienza como posesi�n normal.
-	// HoldGoalkeeperBallInHands() la marcar� despu�s
-	// expl�citamente como pelota sostenida.
+	// Toda posesiï¿½n nueva comienza como posesiï¿½n normal.
+	// HoldGoalkeeperBallInHands() la marcarï¿½ despuï¿½s
+	// explï¿½citamente como pelota sostenida.
 	bGoalkeeperHoldingBall = false;
 
 	ControlledBall = NewControlledBall;
@@ -606,8 +606,8 @@ void ASoccerAICharacter::PossessAIBall(ASoccerBall* NewControlledBall)
 	AIDribbleTurnCurrentDirection =
 		AIDribbleTurnCurrentDirection.GetSafeNormal();
 
-	// El bot tiene posesi�n l�gica, pero no conduce la pelota.
-	// La pelota queda quieta/f�sica hasta que el bot haga pase, autopase o remate.
+	// El bot tiene posesiï¿½n lï¿½gica, pero no conduce la pelota.
+	// La pelota queda quieta/fï¿½sica hasta que el bot haga pase, autopase o remate.
 	ControlledBall->SetPossessed(false);
 	ControlledBall->StopBallKeepingPhysics();
 
@@ -646,10 +646,10 @@ void ASoccerAICharacter::ReleaseAIBall()
 			);
 		}
 
-		// Mientras estaba en las manos qued� sin colisi�n.
+		// Mientras estaba en las manos quedï¿½ sin colisiï¿½n.
 		BallToRelease->SetActorEnableCollision(true);
 
-		// Reactiva f�sica y gravedad.
+		// Reactiva fï¿½sica y gravedad.
 		BallToRelease->SetPossessed(false);
 	}
 
@@ -1112,7 +1112,7 @@ ReleaseHeldGoalkeeperBallForDrop(
 	}
 
 	// Primero desadjuntamos la pelota y reactivamos
-	// colisi�n, gravedad y simulaci�n f�sica.
+	// colisiï¿½n, gravedad y simulaciï¿½n fï¿½sica.
 	ReleaseAIBall();
 
 	if (!IsValid(BallToDrop))
@@ -1203,7 +1203,7 @@ PlaceHeldGoalkeeperBallForDistribution()
 
 	// ReleaseAIBall usa KeepWorldTransform.
 	// Por lo tanto, la pelota queda exactamente donde
-	// la animaci�n y el socket la dejaron.
+	// la animaciï¿½n y el socket la dejaron.
 	ReleaseAIBall();
 
 	if (!IsValid(BallToPlace))
@@ -1217,7 +1217,7 @@ PlaceHeldGoalkeeperBallForDistribution()
 	// mientras el arquero retrocede y toma carrera.
 	BallToPlace->SetPossessed(true);
 
-	// Aunque no simule f�sica, conserva colisi�n.
+	// Aunque no simule fï¿½sica, conserva colisiï¿½n.
 	BallToPlace->SetActorEnableCollision(true);
 
 	return true;
@@ -1308,8 +1308,8 @@ bool ASoccerAICharacter::HoldGoalkeeperBallInHands(
 		return false;
 	}
 
-	// Si por alg�n caso excepcional ya controlaba otra pelota,
-	// liberamos primero la posesi�n anterior.
+	// Si por algï¿½n caso excepcional ya controlaba otra pelota,
+	// liberamos primero la posesiï¿½n anterior.
 	if (
 		bAIIsPossessingBall &&
 		IsValid(ControlledBall) &&
@@ -1319,7 +1319,7 @@ bool ASoccerAICharacter::HoldGoalkeeperBallInHands(
 		ReleaseAIBall();
 	}
 
-	// Registra la posesi�n l�gica y actualiza sus tiempos.
+	// Registra la posesiï¿½n lï¿½gica y actualiza sus tiempos.
 	PossessAIBall(SoccerBall);
 
 	if (
@@ -1330,7 +1330,7 @@ bool ASoccerAICharacter::HoldGoalkeeperBallInHands(
 		return false;
 	}
 
-	// La pelota deja de simular f�sica mientras permanece
+	// La pelota deja de simular fï¿½sica mientras permanece
 	// adjunta a la mano.
 	ControlledBall->SetPossessed(true);
 
@@ -2982,6 +2982,17 @@ float ASoccerAICharacter::GetAIPlayerEnergyPercent() const
 	);
 }
 
+void ASoccerAICharacter::ResetRuntimeStateForIncomingSubstitute()
+{
+	ReleaseAIBall();
+	ClearAIAutoPassState();
+	ClearAIAerialHeaderDecision();
+	ClearScriptedLocomotionVelocity();
+	AIPlayerEnergy = FMath::Max(0.0f, MaxAIPlayerEnergy);
+	Super::ResetRuntimeStateForIncomingSubstitute();
+	RequestAIMovementReevaluation();
+}
+
 void ASoccerAICharacter::RequestAIMovementReevaluation()
 {
 	bAIMovementReevaluationRequested = true;
@@ -3710,9 +3721,9 @@ void ASoccerAICharacter::UpdateGoalkeeperActionState()
 	if (CurrentTime >= GoalkeeperActionEndTime)
 	{
 		/*
-		 * Aplicamos una �ltima evaluaci�n para evitar
-		 * perder el peque�o desplazamiento existente
-		 * entre el �ltimo Tick y el final del montage.
+		 * Aplicamos una ï¿½ltima evaluaciï¿½n para evitar
+		 * perder el pequeï¿½o desplazamiento existente
+		 * entre el ï¿½ltimo Tick y el final del montage.
 		 */
 		CommitGoalkeeperSaveCurveMotionToEnd();
 
@@ -3964,8 +3975,8 @@ bool ASoccerAICharacter::StartGoalkeeperAction(
 		: MontageDuration;
 
 	/*
-	 * Eliminamos cualquier velocidad anterior de navegaci�n.
-	 * Desde este punto el movimiento horizontal ser� controlado
+	 * Eliminamos cualquier velocidad anterior de navegaciï¿½n.
+	 * Desde este punto el movimiento horizontal serï¿½ controlado
 	 * por la CurveTable de la atajada.
 	 */
 	if (GetCharacterMovement() != nullptr)
@@ -3975,8 +3986,8 @@ bool ASoccerAICharacter::StartGoalkeeperAction(
 	}
 
 	/*
-	 * Que no exista una curva no impide reproducir la animaci�n.
-	 * Simplemente se ejecutar� como una animaci�n in place.
+	 * Que no exista una curva no impide reproducir la animaciï¿½n.
+	 * Simplemente se ejecutarï¿½ como una animaciï¿½n in place.
 	 */
 	InitializeGoalkeeperSaveCurveMotion();
 
@@ -4045,8 +4056,8 @@ UAnimMontage* ASoccerAICharacter::GetGoalkeeperMontageForAction(
 		/*
 		 * Casos legacy temporales.
 		 *
-		 * Estos se eliminar�n cuando el selector autom�tico y la l�gica
-		 * de contacto ya no produzcan ninguna acci�n anterior.
+		 * Estos se eliminarï¿½n cuando el selector automï¿½tico y la lï¿½gica
+		 * de contacto ya no produzcan ninguna acciï¿½n anterior.
 		 */
 	case ESoccerGoalkeeperAction::CatchLow:
 		return GoalkeeperCatchLowMontage;
@@ -4180,11 +4191,11 @@ TryGetGoalkeeperSaveCurveMotionLocalOffset(
 		FVector2D::ZeroVector;
 
 	/*
-	 * Si el movimiento por curvas est� apagado,
-	 * la c�psula realmente no se desplazar�.
+	 * Si el movimiento por curvas estï¿½ apagado,
+	 * la cï¿½psula realmente no se desplazarï¿½.
 	 *
 	 * Por lo tanto, un desplazamiento cero es una
-	 * evaluaci�n v�lida.
+	 * evaluaciï¿½n vï¿½lida.
 	 */
 	if (!bUseGoalkeeperSaveCurveMotion)
 	{
@@ -4231,8 +4242,8 @@ TryGetGoalkeeperSaveCurveMotionLocalOffset(
 	}
 
 	/*
-	 * Debe coincidir exactamente con la l�gica utilizada
-	 * al mover la c�psula durante el montage.
+	 * Debe coincidir exactamente con la lï¿½gica utilizada
+	 * al mover la cï¿½psula durante el montage.
 	 */
 	OutLocalOffset =
 		(
@@ -4544,7 +4555,7 @@ UpdateGoalkeeperSaveCurveMotion()
 	float MontageLength = 0.0f;
 
 	/*
-	 * Este m�todo ya fue agregado para el tester.
+	 * Este mï¿½todo ya fue agregado para el tester.
 	 * No vuelvas a declararlo ni a implementarlo.
 	 */
 	if (

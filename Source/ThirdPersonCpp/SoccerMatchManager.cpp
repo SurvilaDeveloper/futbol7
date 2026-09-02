@@ -53,6 +53,7 @@
 #include "SoccerCoachPlanningLibrary.h"
 
 #include "Engine/CurveTable.h"
+#include "Engine/Engine.h"
 #include "Curves/RealCurve.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -485,6 +486,7 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 	DrawIndividualMarkingDebug();
 
 	UpdateMatchClock(DeltaTime);
+	UpdatePendingMatchSubstitutions();
 	UpdateOpponentCoachAI(DeltaTime);
 	UpdateLiveTacticalShapeTransitions();
 
@@ -2228,6 +2230,457 @@ ASoccerMatchManager::GetLastOpponentCoachRuntimeDecision() const
 	return LastOpponentCoachRuntimeDecision;
 }
 
+FSoccerMatchSquadState ASoccerMatchManager::GetMatchSquadState(
+	ESoccerTeam Team
+) const
+{
+	return GetMatchSquadStateRef(Team);
+}
+
+FSoccerMatchSquadState& ASoccerMatchManager::GetMutableMatchSquadState(
+	ESoccerTeam Team
+)
+{
+	return Team == ESoccerTeam::OpponentTeam
+		? OpponentTeamMatchSquadState
+		: PlayerTeamMatchSquadState;
+}
+
+const FSoccerMatchSquadState& ASoccerMatchManager::GetMatchSquadStateRef(
+	ESoccerTeam Team
+) const
+{
+	return Team == ESoccerTeam::OpponentTeam
+		? OpponentTeamMatchSquadState
+		: PlayerTeamMatchSquadState;
+}
+
+void ASoccerMatchManager::InitializeMatchSquadState(
+	ESoccerTeam Team,
+	FName ClubId,
+	const TMap<FName, FName>& StartingLineupBySlot,
+	const TArray<FName>& BenchPlayerIds
+)
+{
+	FSoccerMatchSquadState& State = GetMutableMatchSquadState(Team);
+	State = FSoccerMatchSquadState();
+	State.ClubId = ClubId;
+	State.ActivePlayerByFormationSlot = StartingLineupBySlot;
+	State.AvailableBenchPlayerIds = BenchPlayerIds;
+	State.MaximumSubstitutions = FMath::Max(0, MaximumSubstitutionsPerTeam);
+	State.bInitialized = StartingLineupBySlot.Num() == 7;
+	if (Team == ESoccerTeam::PlayerTeam)
+	{
+		DebugSelectedPlayerTeamOutgoingId = NAME_None;
+		DebugSelectedPlayerTeamIncomingId = NAME_None;
+	}
+
+	PendingMatchSubstitutions.RemoveAll(
+		[Team](const FSoccerMatchSubstitutionRequest& Request)
+		{
+			return Request.Team == Team;
+		}
+	);
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[MatchSquad] team=%d club=%s initialized=%s starters=%d bench=%d maxSubs=%d."),
+		static_cast<int32>(Team),
+		*ClubId.ToString(),
+		State.bInitialized ? TEXT("YES") : TEXT("NO"),
+		State.ActivePlayerByFormationSlot.Num(),
+		State.AvailableBenchPlayerIds.Num(),
+		State.MaximumSubstitutions
+	);
+}
+
+bool ASoccerMatchManager::HasPendingMatchSubstitution(ESoccerTeam Team) const
+{
+	return PendingMatchSubstitutions.ContainsByPredicate(
+		[Team](const FSoccerMatchSubstitutionRequest& Request)
+		{
+			return Request.Team == Team;
+		}
+	);
+}
+
+bool ASoccerMatchManager::RequestMatchSubstitution(
+	ESoccerTeam Team,
+	FName OutgoingPlayerId,
+	FName IncomingPlayerId
+)
+{
+	FSoccerMatchSquadState& State = GetMutableMatchSquadState(Team);
+	if (
+		!State.bInitialized ||
+		OutgoingPlayerId.IsNone() ||
+		IncomingPlayerId.IsNone() ||
+		OutgoingPlayerId == IncomingPlayerId ||
+		State.SubstitutionHistory.Num() >= State.MaximumSubstitutions ||
+		!State.AvailableBenchPlayerIds.Contains(IncomingPlayerId) ||
+		State.WithdrawnPlayerIds.Contains(IncomingPlayerId) ||
+		HasPendingMatchSubstitution(Team)
+	)
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[Substitution] Rejected team=%d outgoing=%s incoming=%s."),
+			static_cast<int32>(Team),
+			*OutgoingPlayerId.ToString(),
+			*IncomingPlayerId.ToString()
+		);
+		return false;
+	}
+
+	FName FormationSlotId = NAME_None;
+	for (const TPair<FName, FName>& Pair : State.ActivePlayerByFormationSlot)
+	{
+		if (Pair.Value == OutgoingPlayerId)
+		{
+			FormationSlotId = Pair.Key;
+			break;
+		}
+	}
+	if (FormationSlotId.IsNone())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Substitution] Player %s is not active."), *OutgoingPlayerId.ToString());
+		return false;
+	}
+
+	FSoccerMatchSubstitutionRequest Request;
+	Request.Team = Team;
+	Request.OutgoingPlayerId = OutgoingPlayerId;
+	Request.IncomingPlayerId = IncomingPlayerId;
+	Request.FormationSlotId = FormationSlotId;
+	Request.RequestedAtMatchSeconds = TotalMatchElapsedSeconds;
+	PendingMatchSubstitutions.Add(Request);
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[Substitution] Queued team=%d slot=%s outgoing=%s incoming=%s."),
+		static_cast<int32>(Team),
+		*FormationSlotId.ToString(),
+		*OutgoingPlayerId.ToString(),
+		*IncomingPlayerId.ToString()
+	);
+	UpdatePendingMatchSubstitutions();
+	return true;
+}
+
+bool ASoccerMatchManager::CancelPendingMatchSubstitution(ESoccerTeam Team)
+{
+	const int32 Removed = PendingMatchSubstitutions.RemoveAll(
+		[Team](const FSoccerMatchSubstitutionRequest& Request)
+		{
+			return Request.Team == Team;
+		}
+	);
+	return Removed > 0;
+}
+
+void ASoccerMatchManager::ShowDebugPlayerTeamSubstitutionSelection(
+	const FString& Prefix
+) const
+{
+	const UWorld* World = GetWorld();
+	const USoccerGameInstance* SoccerGameInstance = World != nullptr
+		? Cast<USoccerGameInstance>(World->GetGameInstance())
+		: nullptr;
+	const auto DescribePlayer = [SoccerGameInstance](FName PlayerId)
+	{
+		if (PlayerId.IsNone())
+		{
+			return FString(TEXT("sin seleccionar"));
+		}
+		const USoccerPlayerProfile* Profile = IsValid(SoccerGameInstance)
+			? SoccerGameInstance->FindPlayerProfileById(PlayerId)
+			: nullptr;
+		if (IsValid(Profile) && !Profile->Identity.DisplayName.IsEmpty())
+		{
+			return FString::Printf(
+				TEXT("%s [%s]"),
+				*Profile->Identity.DisplayName.ToString(),
+				*PlayerId.ToString()
+			);
+		}
+		return PlayerId.ToString();
+	};
+	const FString OutgoingText =
+		DescribePlayer(DebugSelectedPlayerTeamOutgoingId);
+	const FString IncomingText =
+		DescribePlayer(DebugSelectedPlayerTeamIncomingId);
+	const FString Message = FString::Printf(
+		TEXT("%s\nCAMBIO HUMANO  |  Sale: %s  |  Entra: %s\nNumPad 1: sale  2: entra  3: confirmar  4: cancelar"),
+		*Prefix,
+		*OutgoingText,
+		*IncomingText
+	);
+	UE_LOG(LogTemp, Display, TEXT("[SubstitutionDebug] %s OUT=%s IN=%s."), *Prefix, *OutgoingText, *IncomingText);
+	if (GEngine != nullptr)
+	{
+		GEngine->AddOnScreenDebugMessage(-9410, 8.0f, FColor::Cyan, Message);
+	}
+}
+
+void ASoccerMatchManager::DebugCyclePlayerTeamOutgoingSubstitute()
+{
+	const FSoccerMatchSquadState& State = PlayerTeamMatchSquadState;
+	if (!State.bInitialized)
+	{
+		ShowDebugPlayerTeamSubstitutionSelection(TEXT("Plantel de partido no inicializado"));
+		return;
+	}
+
+	const FSoccerFormationDefinition& Formation =
+		SoccerFormationLibrary::GetDefinition(PlayerTeamFormationSystem);
+	TArray<FName> Candidates;
+	for (const FSoccerFormationSlot& Slot : Formation.Slots)
+	{
+		const FName* PlayerId = State.ActivePlayerByFormationSlot.Find(Slot.SlotId);
+		if (PlayerId != nullptr && !PlayerId->IsNone())
+		{
+			Candidates.Add(*PlayerId);
+		}
+	}
+	if (Candidates.Num() == 0)
+	{
+		ShowDebugPlayerTeamSubstitutionSelection(TEXT("No hay titulares disponibles"));
+		return;
+	}
+
+	const int32 CurrentIndex = Candidates.IndexOfByKey(DebugSelectedPlayerTeamOutgoingId);
+	DebugSelectedPlayerTeamOutgoingId =
+		Candidates[(CurrentIndex + 1) % Candidates.Num()];
+	ShowDebugPlayerTeamSubstitutionSelection(TEXT("Titular seleccionado"));
+}
+
+void ASoccerMatchManager::DebugCyclePlayerTeamIncomingSubstitute()
+{
+	const TArray<FName>& Candidates =
+		PlayerTeamMatchSquadState.AvailableBenchPlayerIds;
+	if (Candidates.Num() == 0)
+	{
+		ShowDebugPlayerTeamSubstitutionSelection(TEXT("No hay suplentes disponibles"));
+		return;
+	}
+
+	const int32 CurrentIndex = Candidates.IndexOfByKey(DebugSelectedPlayerTeamIncomingId);
+	DebugSelectedPlayerTeamIncomingId =
+		Candidates[(CurrentIndex + 1) % Candidates.Num()];
+	ShowDebugPlayerTeamSubstitutionSelection(TEXT("Suplente seleccionado"));
+}
+
+void ASoccerMatchManager::DebugConfirmPlayerTeamSubstitution()
+{
+	if (
+		DebugSelectedPlayerTeamOutgoingId.IsNone() ||
+		DebugSelectedPlayerTeamIncomingId.IsNone()
+	)
+	{
+		ShowDebugPlayerTeamSubstitutionSelection(TEXT("Falta elegir quien sale o quien entra"));
+		return;
+	}
+
+	if (RequestMatchSubstitution(
+		ESoccerTeam::PlayerTeam,
+		DebugSelectedPlayerTeamOutgoingId,
+		DebugSelectedPlayerTeamIncomingId
+	))
+	{
+		ShowDebugPlayerTeamSubstitutionSelection(
+			HasPendingMatchSubstitution(ESoccerTeam::PlayerTeam)
+				? TEXT("Cambio confirmado; se ejecutara en una pausa segura")
+				: TEXT("Cambio ejecutado")
+		);
+		DebugSelectedPlayerTeamOutgoingId = NAME_None;
+		DebugSelectedPlayerTeamIncomingId = NAME_None;
+	}
+	else
+	{
+		ShowDebugPlayerTeamSubstitutionSelection(TEXT("No se pudo solicitar el cambio"));
+	}
+}
+
+void ASoccerMatchManager::DebugCancelPlayerTeamSubstitution()
+{
+	const bool bCancelled =
+		CancelPendingMatchSubstitution(ESoccerTeam::PlayerTeam);
+	DebugSelectedPlayerTeamOutgoingId = NAME_None;
+	DebugSelectedPlayerTeamIncomingId = NAME_None;
+	ShowDebugPlayerTeamSubstitutionSelection(
+		bCancelled
+			? TEXT("Solicitud pendiente cancelada")
+			: TEXT("Seleccion cancelada")
+	);
+}
+
+void ASoccerMatchManager::DebugRequestAutomaticSubstitution(ESoccerTeam Team)
+{
+	const FSoccerMatchSquadState& State = GetMatchSquadStateRef(Team);
+	if (!State.bInitialized)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SubstitutionDebug] team=%d has no initialized match squad."), static_cast<int32>(Team));
+		return;
+	}
+	if (State.AvailableBenchPlayerIds.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SubstitutionDebug] team=%d has no available bench players."), static_cast<int32>(Team));
+		return;
+	}
+	if (HasPendingMatchSubstitution(Team))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SubstitutionDebug] team=%d already has a pending substitution."), static_cast<int32>(Team));
+		return;
+	}
+
+	const ESoccerFormationSystem FormationSystem =
+		Team == ESoccerTeam::OpponentTeam
+			? OpponentTeamFormationSystem
+			: PlayerTeamFormationSystem;
+	const FSoccerFormationDefinition& Formation =
+		SoccerFormationLibrary::GetDefinition(FormationSystem);
+
+	FName OutgoingPlayerId = NAME_None;
+	for (const FSoccerFormationSlot& Slot : Formation.Slots)
+	{
+		if (Slot.PlayerRole == ESoccerPlayerRole::Goalkeeper)
+		{
+			continue;
+		}
+		const FName* ActivePlayerId =
+			State.ActivePlayerByFormationSlot.Find(Slot.SlotId);
+		if (ActivePlayerId != nullptr && !ActivePlayerId->IsNone())
+		{
+			OutgoingPlayerId = *ActivePlayerId;
+			break;
+		}
+	}
+
+	if (OutgoingPlayerId.IsNone())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SubstitutionDebug] team=%d has no active field player to replace."), static_cast<int32>(Team));
+		return;
+	}
+
+	const FName IncomingPlayerId = State.AvailableBenchPlayerIds[0];
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[SubstitutionDebug] key test team=%d selected OUT=%s IN=%s."),
+		static_cast<int32>(Team),
+		*OutgoingPlayerId.ToString(),
+		*IncomingPlayerId.ToString()
+	);
+	RequestMatchSubstitution(Team, OutgoingPlayerId, IncomingPlayerId);
+}
+
+bool ASoccerMatchManager::IsSafeMomentForSubstitution() const
+{
+	return
+		CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime ||
+		(IsMatchPeriodGameplayActive() && IsKickoffMatchStateActive());
+}
+
+void ASoccerMatchManager::UpdatePendingMatchSubstitutions()
+{
+	if (!IsSafeMomentForSubstitution())
+	{
+		return;
+	}
+
+	bool bRebuildKickoff = false;
+	for (int32 Index = PendingMatchSubstitutions.Num() - 1; Index >= 0; --Index)
+	{
+		const bool bExecuted =
+			ExecuteMatchSubstitution(PendingMatchSubstitutions[Index]);
+		PendingMatchSubstitutions.RemoveAt(Index);
+		bRebuildKickoff =
+			bRebuildKickoff || (bExecuted && IsKickoffMatchStateActive());
+	}
+
+	if (bRebuildKickoff)
+	{
+		StartKickoff(PendingKickoffTeam);
+	}
+}
+
+bool ASoccerMatchManager::ExecuteMatchSubstitution(
+	const FSoccerMatchSubstitutionRequest& Request
+)
+{
+	FSoccerMatchSquadState& State = GetMutableMatchSquadState(Request.Team);
+	const FName* CurrentPlayerId =
+		State.ActivePlayerByFormationSlot.Find(Request.FormationSlotId);
+	if (
+		CurrentPlayerId == nullptr ||
+		*CurrentPlayerId != Request.OutgoingPlayerId ||
+		!State.AvailableBenchPlayerIds.Contains(Request.IncomingPlayerId)
+	)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Substitution] Queued request became invalid and was cancelled."));
+		return false;
+	}
+
+	ASoccerCharacterBase* MatchCharacter = GetFormationSlotAssignedCharacter(
+		Request.Team,
+		Request.FormationSlotId
+	);
+	UWorld* World = GetWorld();
+	USoccerGameInstance* SoccerGameInstance = World != nullptr
+		? Cast<USoccerGameInstance>(World->GetGameInstance())
+		: nullptr;
+	USoccerPlayerProfile* IncomingProfile = IsValid(SoccerGameInstance)
+		? SoccerGameInstance->FindPlayerProfileById(Request.IncomingPlayerId)
+		: nullptr;
+	if (!IsValid(MatchCharacter) || !IsValid(IncomingProfile))
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[Substitution] Cannot materialize incoming player=%s slot=%s."),
+			*Request.IncomingPlayerId.ToString(),
+			*Request.FormationSlotId.ToString()
+		);
+		return false;
+	}
+
+	MatchCharacter->ResetRuntimeStateForIncomingSubstitute();
+	MatchCharacter->SetPlayerProfileForMatch(IncomingProfile);
+	ApplySelectedClubKitToCharacter(MatchCharacter);
+
+	State.ActivePlayerByFormationSlot.Add(
+		Request.FormationSlotId,
+		Request.IncomingPlayerId
+	);
+	State.AvailableBenchPlayerIds.RemoveSingle(Request.IncomingPlayerId);
+	State.WithdrawnPlayerIds.AddUnique(Request.OutgoingPlayerId);
+
+	FSoccerMatchSubstitutionRecord Record;
+	Record.Team = Request.Team;
+	Record.OutgoingPlayerId = Request.OutgoingPlayerId;
+	Record.IncomingPlayerId = Request.IncomingPlayerId;
+	Record.FormationSlotId = Request.FormationSlotId;
+	Record.ExecutedAtMatchSeconds = TotalMatchElapsedSeconds;
+	State.SubstitutionHistory.Add(Record);
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[Substitution] Executed team=%d slot=%s OUT=%s IN=%s used=%d/%d actor=%s."),
+		static_cast<int32>(Request.Team),
+		*Request.FormationSlotId.ToString(),
+		*Request.OutgoingPlayerId.ToString(),
+		*Request.IncomingPlayerId.ToString(),
+		State.SubstitutionHistory.Num(),
+		State.MaximumSubstitutions,
+		*MatchCharacter->GetName()
+	);
+	return true;
+}
+
 bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
 {
 	UWorld* World = GetWorld();
@@ -2299,6 +2752,16 @@ bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
 		ApplySelectedClubKitsToTeam(ESoccerTeam::PlayerTeam);
 	const int32 OpponentKitsApplied =
 		ApplySelectedClubKitsToTeam(ESoccerTeam::OpponentTeam);
+
+	if (bCoachPlanBuilt)
+	{
+		InitializeMatchSquadState(
+			ESoccerTeam::OpponentTeam,
+			MatchSetup.OpponentTeamClubId,
+			OpponentTeamCoachPlan.StartingLineupBySlot,
+			OpponentTeamCoachPlan.BenchPlayerIds
+		);
+	}
 
 	UE_LOG(
 		LogTemp,
@@ -16491,6 +16954,16 @@ bool ASoccerMatchManager::ApplyPersistentDirectorTechnicalSetupToPlayerTeam(
 			TEXT("[DirectorMatch] Saved formation is invalid; keeping match defaults.")
 		);
 		return false;
+	}
+
+	if (bApplyStartingLineupProfiles && TotalMatchElapsedSeconds <= 0.01f)
+	{
+		InitializeMatchSquadState(
+			ESoccerTeam::PlayerTeam,
+			SoccerGameInstance->GetCurrentMatchSetup().PlayerTeamClubId,
+			PersistentSetup.StartingLineupBySlot,
+			PersistentSetup.BenchPlayerIds
+		);
 	}
 
 	const ESoccerFormationSystem PreviousFormationSystem =

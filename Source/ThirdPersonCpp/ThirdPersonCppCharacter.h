@@ -84,6 +84,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Energy")
 		float GetPlayerEnergyPercent() const;
 
+	virtual void ResetRuntimeStateForIncomingSubstitute() override;
+
 	UFUNCTION(BlueprintPure, Category = "Soccer|Animation")
 		bool ShouldForceDribbleTurnLocomotion() const;
 
@@ -148,6 +150,13 @@ protected:
 	/** Debug tester: starts a PlayerTeam penalty (NumPad 7). */
 	void DebugStartPlayerTeamPenalty();
 
+	/** Temporary Stage 9K substitution selector (NumPad 1 through 5). */
+	void DebugCyclePlayerTeamOutgoingSubstitute();
+	void DebugCyclePlayerTeamIncomingSubstitute();
+	void DebugConfirmPlayerTeamSubstitution();
+	void DebugCancelPlayerTeamSubstitution();
+	void DebugRequestOpponentTeamSubstitution();
+
 	/** Opens the coach menu from gameplay. Bound to M and Gamepad Menu/Options. */
 	void ToggleFormationMenu();
 
@@ -179,7 +188,7 @@ protected:
 	/** Handler for when a touch input stops. */
 	void TouchStopped(ETouchIndex::Type FingerIndex, FVector Location);
 
-	// Selección de velocidad con teclas 1, 2, 3, 4.
+	// SelecciÃ³n de velocidad con teclas 1, 2, 3, 4.
 	void SelectWalkSpeed();
 	void SelectJogSpeed();
 	void SelectRunSpeed();

@@ -254,6 +254,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|AI Movement")
 		float GetAIPlayerEnergyPercent() const;
 
+	virtual void ResetRuntimeStateForIncomingSubstitute() override;
+
 	void UpdateAIMovementModeForOrder(
 		ESoccerAIOrder CurrentOrder,
 		const FVector& DesiredMoveLocation,
@@ -401,8 +403,8 @@ private:
 
 	float AIAerialHeaderHorizontalSpeedOverride = -1.0f;
 
-	// Indica que la posesiÛn actual no es con los pies:
-	// la pelota est· fÌsicamente adjunta a las manos del arquero.
+	// Indica que la posesi√≥n actual no es con los pies:
+	// la pelota est√° f√≠sicamente adjunta a las manos del arquero.
 	bool bGoalkeeperHoldingBall = false;
 
 	UPROPERTY(
