@@ -17,6 +17,7 @@
 #include "SoccerFreeKickRestart.h"
 #include "SoccerGoalLineRestart.h"
 #include "SoccerCoachMatchPlanTypes.h"
+#include "SoccerCoachRuntimeDecisionTypes.h"
 #include "SoccerMatchManager.generated.h"
 
 class ASoccerBall;
@@ -32,6 +33,7 @@ class USkeletalMesh;
 class USoccerPlayerAppearanceCatalog;
 class USoccerClubProfile;
 class USoccerSquadCatalog;
+class USoccerCoachProfile;
 
 enum class ESoccerRestartRestrictionShape : uint8
 {
@@ -110,6 +112,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|AI Coach|Planning")
 	FSoccerCoachMatchPlan GetOpponentTeamCoachPlan() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|AI Coach|Runtime")
+	FSoccerCoachRuntimeDecision GetLastOpponentCoachRuntimeDecision() const;
 
 	/* Instant-replay recorder/playback manager. */
 	ASoccerInstantReplayManager* GetInstantReplayManager() const;
@@ -700,6 +705,12 @@ private:
 	UPROPERTY(Transient)
 	FSoccerCoachMatchPlan OpponentTeamCoachPlan;
 
+	UPROPERTY(Transient)
+	USoccerCoachProfile* OpponentCoachProfile = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Soccer|Coach|Opponent", meta = (AllowPrivateAccess = "true"))
+	FSoccerCoachRuntimeDecision LastOpponentCoachRuntimeDecision;
+
 	int32 ApplySquadCatalogProfilesToTeam(
 		ESoccerTeam Team,
 		USoccerSquadCatalog* SquadCatalog
@@ -756,7 +767,20 @@ bool IsPenaltyMatchStateActive() const;
 	void InitializeOpponentCoachAI();
 	void UpdateOpponentCoachAI(float DeltaTime);
 	bool CanOpponentCoachChangePlanNow() const;
-	ESoccerOpponentCoachMode DetermineDesiredOpponentCoachMode() const;
+	ESoccerOpponentCoachMode DetermineDesiredOpponentCoachMode(
+		float& OutEffectiveThreshold,
+		FString& OutReason
+	) const;
+	USoccerCoachProfile* ResolveOpponentCoachProfile() const;
+	float GetOpponentCoachEffectiveDecisionInterval() const;
+	float GetOpponentCoachEffectiveMinimumChangeGap() const;
+	float GetOpponentCoachAdjustedModeThreshold(
+		ESoccerOpponentCoachMode Mode,
+		bool bLargeScoreDifference
+	) const;
+	float CalculateFormationAttackBias(
+		ESoccerFormationSystem FormationSystem
+	) const;
 	void ApplyOpponentCoachMode(ESoccerOpponentCoachMode NewMode);
 	ESoccerFormationSystem GetOpponentCoachFormationForMode(
 		ESoccerOpponentCoachMode Mode

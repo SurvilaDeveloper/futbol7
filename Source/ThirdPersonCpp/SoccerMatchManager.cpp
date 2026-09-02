@@ -1328,7 +1328,27 @@ void ASoccerMatchManager::InitializeOpponentCoachAI()
 	OpponentCoachLastModeChangeProgress = -1.0f;
 	OpponentCoachLastObservedPlayerScore = PlayerTeamScore;
 	OpponentCoachLastObservedOpponentScore = OpponentTeamScore;
+	LastOpponentCoachRuntimeDecision = FSoccerCoachRuntimeDecision();
 	bOpponentCoachInitialized = true;
+
+	const USoccerCoachProfile* CoachProfile = ResolveOpponentCoachProfile();
+	if (IsValid(CoachProfile))
+	{
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("[CoachRuntime] initialized coach=%s baselineFormation=%d reading=%d flexibility=%d risk=%d attackingIntent=%d composure=%d interval=%.2fs minGap=%.3f."),
+			*CoachProfile->Identity.CoachId.ToString(),
+			static_cast<int32>(OpponentCoachBaselineFormation),
+			CoachProfile->Abilities.MatchReading,
+			CoachProfile->Abilities.TacticalFlexibility,
+			CoachProfile->Philosophy.RiskTolerance,
+			CoachProfile->Philosophy.AttackingIntent,
+			CoachProfile->Abilities.Composure,
+			GetOpponentCoachEffectiveDecisionInterval(),
+			GetOpponentCoachEffectiveMinimumChangeGap()
+		);
+	}
 }
 
 bool ASoccerMatchManager::CanOpponentCoachChangePlanNow() const
@@ -1360,8 +1380,173 @@ bool ASoccerMatchManager::CanOpponentCoachChangePlanNow() const
 		!IsRestartContextActive();
 }
 
-ESoccerOpponentCoachMode ASoccerMatchManager::DetermineDesiredOpponentCoachMode() const
+USoccerCoachProfile* ASoccerMatchManager::ResolveOpponentCoachProfile() const
 {
+	if (IsValid(OpponentCoachProfile))
+	{
+		return OpponentCoachProfile;
+	}
+
+	UWorld* World = GetWorld();
+	USoccerGameInstance* SoccerGameInstance = World != nullptr
+		? Cast<USoccerGameInstance>(World->GetGameInstance())
+		: nullptr;
+	return IsValid(SoccerGameInstance)
+		? SoccerGameInstance->GetCoachProfileForClubId(
+			GetClubIdForTeam(ESoccerTeam::OpponentTeam)
+		)
+		: nullptr;
+}
+
+float ASoccerMatchManager::GetOpponentCoachEffectiveDecisionInterval() const
+{
+	const USoccerCoachProfile* CoachProfile = ResolveOpponentCoachProfile();
+	const float MatchReadingAlpha = IsValid(CoachProfile)
+		? FMath::Clamp(
+			static_cast<float>(CoachProfile->Abilities.MatchReading) / 100.0f,
+			0.0f,
+			1.0f
+		)
+		: 0.5f;
+	return FMath::Clamp(
+		OpponentCoachDecisionIntervalSeconds *
+			FMath::Lerp(1.60f, 0.55f, MatchReadingAlpha),
+		0.10f,
+		5.0f
+	);
+}
+
+float ASoccerMatchManager::GetOpponentCoachEffectiveMinimumChangeGap() const
+{
+	const USoccerCoachProfile* CoachProfile = ResolveOpponentCoachProfile();
+	const float FlexibilityAlpha = IsValid(CoachProfile)
+		? FMath::Clamp(
+			static_cast<float>(CoachProfile->Abilities.TacticalFlexibility) / 100.0f,
+			0.0f,
+			1.0f
+		)
+		: 0.5f;
+	const float ComposureAlpha = IsValid(CoachProfile)
+		? FMath::Clamp(
+			static_cast<float>(CoachProfile->Abilities.Composure) / 100.0f,
+			0.0f,
+			1.0f
+		)
+		: 0.5f;
+	return FMath::Clamp(
+		OpponentCoachMinimumProgressBetweenChanges *
+			FMath::Lerp(1.25f, 0.65f, FlexibilityAlpha) *
+			FMath::Lerp(0.75f, 1.20f, ComposureAlpha),
+		0.0f,
+		0.5f
+	);
+}
+
+float ASoccerMatchManager::GetOpponentCoachAdjustedModeThreshold(
+	ESoccerOpponentCoachMode Mode,
+	bool bLargeScoreDifference
+) const
+{
+	float BaseThreshold = 1.0f;
+	switch (Mode)
+	{
+	case ESoccerOpponentCoachMode::ProtectLead:
+		BaseThreshold = bLargeScoreDifference
+			? OpponentCoachProtectTwoGoalLeadProgress
+			: OpponentCoachProtectLeadProgress;
+		break;
+	case ESoccerOpponentCoachMode::LockDown:
+		BaseThreshold = bLargeScoreDifference
+			? OpponentCoachLockDownTwoGoalLeadProgress
+			: OpponentCoachLockDownProgress;
+		break;
+	case ESoccerOpponentCoachMode::ChaseGame:
+		BaseThreshold = bLargeScoreDifference
+			? OpponentCoachChaseTwoGoalDeficitProgress
+			: OpponentCoachChaseGameProgress;
+		break;
+	case ESoccerOpponentCoachMode::AllOutAttack:
+		BaseThreshold = bLargeScoreDifference
+			? OpponentCoachAllOutAttackTwoGoalDeficitProgress
+			: OpponentCoachAllOutAttackProgress;
+		break;
+	case ESoccerOpponentCoachMode::Baseline:
+	default:
+		return 1.0f;
+	}
+
+	const USoccerCoachProfile* CoachProfile = ResolveOpponentCoachProfile();
+	if (!IsValid(CoachProfile))
+	{
+		return FMath::Clamp(BaseThreshold, 0.0f, 1.0f);
+	}
+
+	const float RiskAlpha = FMath::Clamp(
+		static_cast<float>(CoachProfile->Philosophy.RiskTolerance) / 100.0f,
+		0.0f,
+		1.0f
+	);
+	const float AttackAlpha = FMath::Clamp(
+		static_cast<float>(CoachProfile->Philosophy.AttackingIntent) / 100.0f,
+		0.0f,
+		1.0f
+	);
+	const float FlexibilityAlpha = FMath::Clamp(
+		static_cast<float>(CoachProfile->Abilities.TacticalFlexibility) / 100.0f,
+		0.0f,
+		1.0f
+	);
+	const float ComposureAlpha = FMath::Clamp(
+		static_cast<float>(CoachProfile->Abilities.Composure) / 100.0f,
+		0.0f,
+		1.0f
+	);
+
+	float Adjustment = 0.0f;
+	if (
+		Mode == ESoccerOpponentCoachMode::ProtectLead ||
+		Mode == ESoccerOpponentCoachMode::LockDown
+	)
+	{
+		const float ConservativeAlpha =
+			((1.0f - RiskAlpha) + (1.0f - AttackAlpha)) * 0.5f;
+		const float DefensiveSkillAlpha = FMath::Clamp(
+			static_cast<float>(CoachProfile->Abilities.DefensiveCoaching) / 100.0f,
+			0.0f,
+			1.0f
+		);
+		Adjustment =
+			-0.14f * ConservativeAlpha -
+			0.05f * FlexibilityAlpha -
+			0.03f * DefensiveSkillAlpha +
+			0.06f * RiskAlpha;
+	}
+	else
+	{
+		const float AggressionAlpha = (RiskAlpha + AttackAlpha) * 0.5f;
+		const float OffensiveSkillAlpha = FMath::Clamp(
+			static_cast<float>(CoachProfile->Abilities.OffensiveCoaching) / 100.0f,
+			0.0f,
+			1.0f
+		);
+		Adjustment =
+			-0.14f * AggressionAlpha -
+			0.05f * FlexibilityAlpha -
+			0.03f * OffensiveSkillAlpha -
+			0.04f * (1.0f - ComposureAlpha) +
+			0.04f * (1.0f - AggressionAlpha);
+	}
+
+	return FMath::Clamp(BaseThreshold + Adjustment, 0.05f, 0.95f);
+}
+
+ESoccerOpponentCoachMode ASoccerMatchManager::DetermineDesiredOpponentCoachMode(
+	float& OutEffectiveThreshold,
+	FString& OutReason
+) const
+{
+	OutEffectiveThreshold = 1.0f;
+	OutReason = TEXT("Marcador equilibrado: mantener plan base");
 	const int32 ScoreDifference = OpponentTeamScore - PlayerTeamScore;
 	const int32 AbsoluteDifference = FMath::Abs(ScoreDifference);
 	const float MatchProgress = GetMatchProgress();
@@ -1369,46 +1554,70 @@ ESoccerOpponentCoachMode ASoccerMatchManager::DetermineDesiredOpponentCoachMode(
 	if (ScoreDifference > 0)
 	{
 		const bool bLargeLead = AbsoluteDifference >= 2;
-		const float LockDownThreshold =
+		const float LockDownThreshold = GetOpponentCoachAdjustedModeThreshold(
+			ESoccerOpponentCoachMode::LockDown,
 			bLargeLead
-			? OpponentCoachLockDownTwoGoalLeadProgress
-			: OpponentCoachLockDownProgress;
-		const float ProtectThreshold =
+		);
+		const float ProtectThreshold = GetOpponentCoachAdjustedModeThreshold(
+			ESoccerOpponentCoachMode::ProtectLead,
 			bLargeLead
-			? OpponentCoachProtectTwoGoalLeadProgress
-			: OpponentCoachProtectLeadProgress;
+		);
 
 		if (MatchProgress >= LockDownThreshold)
 		{
+			OutEffectiveThreshold = LockDownThreshold;
+			OutReason = FString::Printf(
+				TEXT("Ventaja de %d: cerrar el partido"),
+				AbsoluteDifference
+			);
 			return ESoccerOpponentCoachMode::LockDown;
 		}
 
 		if (MatchProgress >= ProtectThreshold)
 		{
+			OutEffectiveThreshold = ProtectThreshold;
+			OutReason = FString::Printf(
+				TEXT("Ventaja de %d: proteger el resultado"),
+				AbsoluteDifference
+			);
 			return ESoccerOpponentCoachMode::ProtectLead;
 		}
+		OutEffectiveThreshold = ProtectThreshold;
+		OutReason = TEXT("Ventaja todavia temprana: sostener plan base");
 	}
 	else if (ScoreDifference < 0)
 	{
 		const bool bLargeDeficit = AbsoluteDifference >= 2;
-		const float AllOutThreshold =
+		const float AllOutThreshold = GetOpponentCoachAdjustedModeThreshold(
+			ESoccerOpponentCoachMode::AllOutAttack,
 			bLargeDeficit
-			? OpponentCoachAllOutAttackTwoGoalDeficitProgress
-			: OpponentCoachAllOutAttackProgress;
-		const float ChaseThreshold =
+		);
+		const float ChaseThreshold = GetOpponentCoachAdjustedModeThreshold(
+			ESoccerOpponentCoachMode::ChaseGame,
 			bLargeDeficit
-			? OpponentCoachChaseTwoGoalDeficitProgress
-			: OpponentCoachChaseGameProgress;
+		);
 
 		if (MatchProgress >= AllOutThreshold)
 		{
+			OutEffectiveThreshold = AllOutThreshold;
+			OutReason = FString::Printf(
+				TEXT("Desventaja de %d: asumir riesgo maximo"),
+				AbsoluteDifference
+			);
 			return ESoccerOpponentCoachMode::AllOutAttack;
 		}
 
 		if (MatchProgress >= ChaseThreshold)
 		{
+			OutEffectiveThreshold = ChaseThreshold;
+			OutReason = FString::Printf(
+				TEXT("Desventaja de %d: buscar el resultado"),
+				AbsoluteDifference
+			);
 			return ESoccerOpponentCoachMode::ChaseGame;
 		}
+		OutEffectiveThreshold = ChaseThreshold;
+		OutReason = TEXT("Desventaja todavia temprana: sostener plan base");
 	}
 
 	return ESoccerOpponentCoachMode::Baseline;
@@ -1428,7 +1637,7 @@ void ASoccerMatchManager::UpdateOpponentCoachAI(float DeltaTime)
 	}
 
 	OpponentCoachDecisionAccumulator += FMath::Max(0.0f, DeltaTime);
-	const float SafeInterval = FMath::Max(0.10f, OpponentCoachDecisionIntervalSeconds);
+	const float SafeInterval = GetOpponentCoachEffectiveDecisionInterval();
 
 	if (OpponentCoachDecisionAccumulator < SafeInterval)
 	{
@@ -1449,8 +1658,13 @@ void ASoccerMatchManager::UpdateOpponentCoachAI(float DeltaTime)
 	OpponentCoachLastObservedPlayerScore = PlayerTeamScore;
 	OpponentCoachLastObservedOpponentScore = OpponentTeamScore;
 
+	float EffectiveThreshold = 1.0f;
+	FString DecisionReason;
 	const ESoccerOpponentCoachMode DesiredMode =
-		DetermineDesiredOpponentCoachMode();
+		DetermineDesiredOpponentCoachMode(
+			EffectiveThreshold,
+			DecisionReason
+		);
 
 	if (DesiredMode == CurrentOpponentCoachMode)
 	{
@@ -1459,7 +1673,7 @@ void ASoccerMatchManager::UpdateOpponentCoachAI(float DeltaTime)
 
 	const float MatchProgress = GetMatchProgress();
 	const float SafeMinimumGap =
-		FMath::Max(0.0f, OpponentCoachMinimumProgressBetweenChanges);
+		GetOpponentCoachEffectiveMinimumChangeGap();
 
 	if (
 		!bScoreChanged &&
@@ -1470,28 +1684,155 @@ void ASoccerMatchManager::UpdateOpponentCoachAI(float DeltaTime)
 		return;
 	}
 
+	const ESoccerOpponentCoachMode PreviousMode = CurrentOpponentCoachMode;
 	ApplyOpponentCoachMode(DesiredMode);
 	OpponentCoachLastModeChangeProgress = MatchProgress;
+
+	const USoccerCoachProfile* CoachProfile = ResolveOpponentCoachProfile();
+	LastOpponentCoachRuntimeDecision = FSoccerCoachRuntimeDecision();
+	LastOpponentCoachRuntimeDecision.CoachId = IsValid(CoachProfile)
+		? CoachProfile->Identity.CoachId
+		: NAME_None;
+	LastOpponentCoachRuntimeDecision.PreviousMode = PreviousMode;
+	LastOpponentCoachRuntimeDecision.NewMode = DesiredMode;
+	LastOpponentCoachRuntimeDecision.ScoreDifference =
+		OpponentTeamScore - PlayerTeamScore;
+	LastOpponentCoachRuntimeDecision.MatchProgress = MatchProgress;
+	LastOpponentCoachRuntimeDecision.EffectiveDecisionIntervalSeconds =
+		SafeInterval;
+	LastOpponentCoachRuntimeDecision.EffectiveChangeThreshold =
+		EffectiveThreshold;
+	LastOpponentCoachRuntimeDecision.Reason = DecisionReason;
+	LastOpponentCoachRuntimeDecision.bValid = true;
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[CoachRuntime] coach=%s mode=%s -> %s scoreDiff=%d progress=%.3f threshold=%.3f interval=%.2fs minGap=%.3f reason='%s'."),
+		*LastOpponentCoachRuntimeDecision.CoachId.ToString(),
+		*GetOpponentCoachModeDisplayNameForMode(PreviousMode),
+		*GetOpponentCoachModeDisplayNameForMode(DesiredMode),
+		LastOpponentCoachRuntimeDecision.ScoreDifference,
+		MatchProgress,
+		EffectiveThreshold,
+		SafeInterval,
+		SafeMinimumGap,
+		*DecisionReason
+	);
 }
 
 ESoccerFormationSystem ASoccerMatchManager::GetOpponentCoachFormationForMode(
 	ESoccerOpponentCoachMode Mode
 ) const
 {
-	switch (Mode)
+	if (Mode == ESoccerOpponentCoachMode::Baseline)
 	{
-	case ESoccerOpponentCoachMode::ProtectLead:
-		return ESoccerFormationSystem::OneFourOneOne;
-	case ESoccerOpponentCoachMode::LockDown:
-		return ESoccerFormationSystem::OneFiveOne;
-	case ESoccerOpponentCoachMode::ChaseGame:
-		return ESoccerFormationSystem::OneTwoTwoTwo;
-	case ESoccerOpponentCoachMode::AllOutAttack:
-		return ESoccerFormationSystem::OneTwoOneThree;
-	case ESoccerOpponentCoachMode::Baseline:
-	default:
 		return OpponentCoachBaselineFormation;
 	}
+
+	float TargetAttackBias = 50.0f;
+	switch (Mode)
+	{
+	case ESoccerOpponentCoachMode::LockDown:
+		TargetAttackBias = 5.0f;
+		break;
+	case ESoccerOpponentCoachMode::ProtectLead:
+		TargetAttackBias = 22.0f;
+		break;
+	case ESoccerOpponentCoachMode::ChaseGame:
+		TargetAttackBias = 72.0f;
+		break;
+	case ESoccerOpponentCoachMode::AllOutAttack:
+		TargetAttackBias = 95.0f;
+		break;
+	case ESoccerOpponentCoachMode::Baseline:
+	default:
+		break;
+	}
+
+	const USoccerCoachProfile* CoachProfile = ResolveOpponentCoachProfile();
+	const float FlexibilityAlpha = IsValid(CoachProfile)
+		? FMath::Clamp(
+			static_cast<float>(CoachProfile->Abilities.TacticalFlexibility) / 100.0f,
+			0.0f,
+			1.0f
+		)
+		: 0.5f;
+	ESoccerFormationSystem BestFormation = OpponentCoachBaselineFormation;
+	float BestScore = -BIG_NUMBER;
+
+	for (const ESoccerFormationSystem CandidateFormation :
+		SoccerFormationLibrary::GetAllSystems())
+	{
+		const float ShapeFit = 100.0f - FMath::Abs(
+			CalculateFormationAttackBias(CandidateFormation) - TargetAttackBias
+		);
+		const float Preference = IsValid(CoachProfile)
+			? static_cast<float>(CoachProfile->GetFormationPreference(CandidateFormation))
+			: 50.0f;
+		const float DeparturePenalty =
+			CandidateFormation == OpponentCoachBaselineFormation
+				? 0.0f
+				: (1.0f - FlexibilityAlpha) * 35.0f;
+		const float CandidateScore =
+			ShapeFit * (0.70f + 0.20f * FlexibilityAlpha) +
+			Preference * (0.30f - 0.20f * FlexibilityAlpha) -
+			DeparturePenalty;
+		if (
+			CandidateScore > BestScore ||
+			(
+				FMath::IsNearlyEqual(CandidateScore, BestScore) &&
+				static_cast<uint8>(CandidateFormation) <
+					static_cast<uint8>(BestFormation)
+			)
+		)
+		{
+			BestScore = CandidateScore;
+			BestFormation = CandidateFormation;
+		}
+	}
+
+	return BestFormation;
+}
+
+float ASoccerMatchManager::CalculateFormationAttackBias(
+	ESoccerFormationSystem FormationSystem
+) const
+{
+	const FSoccerFormationDefinition& Formation =
+		SoccerFormationLibrary::GetDefinition(FormationSystem);
+	float TotalBias = 0.0f;
+	int32 OutfieldSlotCount = 0;
+	for (const FSoccerFormationSlot& Slot : Formation.Slots)
+	{
+		float SlotBias = 0.0f;
+		switch (Slot.FormationLine)
+		{
+		case ESoccerFormationLine::Defense:
+			SlotBias = 15.0f;
+			break;
+		case ESoccerFormationLine::DefensiveMidfield:
+			SlotBias = 32.0f;
+			break;
+		case ESoccerFormationLine::Midfield:
+			SlotBias = 50.0f;
+			break;
+		case ESoccerFormationLine::AttackingMidfield:
+			SlotBias = 70.0f;
+			break;
+		case ESoccerFormationLine::Attack:
+			SlotBias = 90.0f;
+			break;
+		case ESoccerFormationLine::Goalkeeper:
+		default:
+			continue;
+		}
+		TotalBias += SlotBias;
+		++OutfieldSlotCount;
+	}
+	return OutfieldSlotCount > 0
+		? TotalBias / static_cast<float>(OutfieldSlotCount)
+		: 50.0f;
 }
 
 FSoccerTeamTacticalPlan ASoccerMatchManager::BuildOpponentCoachTacticalPlanForMode(
@@ -1503,24 +1844,49 @@ FSoccerTeamTacticalPlan ASoccerMatchManager::BuildOpponentCoachTacticalPlanForMo
 		return OpponentCoachBaselineTacticalPlan;
 	}
 
-	FSoccerTeamTacticalPlan Plan;
-	Plan.AttackChannel = ESoccerAttackChannel::Balanced;
+	FSoccerTeamTacticalPlan Plan = OpponentCoachBaselineTacticalPlan;
+	const USoccerCoachProfile* CoachProfile = ResolveOpponentCoachProfile();
+	const FSoccerCoachPhilosophy* Philosophy = IsValid(CoachProfile)
+		? &CoachProfile->Philosophy
+		: nullptr;
+	const bool bStrongOffensiveAdjustment =
+		!IsValid(CoachProfile) ||
+		(
+			CoachProfile->Abilities.OffensiveCoaching +
+			CoachProfile->Abilities.TacticalFlexibility
+		) >= 100;
+	const bool bStrongDefensiveAdjustment =
+		!IsValid(CoachProfile) ||
+		(
+			CoachProfile->Abilities.DefensiveCoaching +
+			CoachProfile->Abilities.TacticalFlexibility
+		) >= 100;
 
 	switch (Mode)
 	{
 	case ESoccerOpponentCoachMode::ProtectLead:
-		Plan.BuildUpStyle = ESoccerBuildUpStyle::ShortPossession;
-		Plan.AttackingWidth = ESoccerAttackingWidth::Narrow;
+		Plan.BuildUpStyle = Philosophy != nullptr && Philosophy->PossessionPreference >= 55
+			? ESoccerBuildUpStyle::ShortPossession
+			: Plan.BuildUpStyle;
+		Plan.AttackingWidth = Philosophy != nullptr && Philosophy->Compactness >= 55
+			? ESoccerAttackingWidth::Narrow
+			: Plan.AttackingWidth;
 		Plan.AttackingTempo = ESoccerAttackingTempo::Patient;
-		Plan.AttackingTransition = ESoccerAttackingTransition::RetainPossession;
-		Plan.DefensiveBlock = ESoccerDefensiveBlock::Low;
+		Plan.AttackingTransition = Philosophy != nullptr && Philosophy->CounterAttackPreference >= 65
+			? ESoccerAttackingTransition::CounterAttack
+			: ESoccerAttackingTransition::RetainPossession;
+		Plan.DefensiveBlock = bStrongDefensiveAdjustment
+			? ESoccerDefensiveBlock::Low
+			: ESoccerDefensiveBlock::Medium;
 		Plan.PressingIntensity = ESoccerPressingIntensity::Low;
 		Plan.MarkingStyle = ESoccerMarkingStyle::Zonal;
 		Plan.DefensiveTransition = ESoccerDefensiveTransition::Regroup;
 		break;
 
 	case ESoccerOpponentCoachMode::LockDown:
-		Plan.BuildUpStyle = ESoccerBuildUpStyle::Direct;
+		Plan.BuildUpStyle = Philosophy != nullptr && Philosophy->Directness < 50
+			? ESoccerBuildUpStyle::ShortPossession
+			: ESoccerBuildUpStyle::Direct;
 		Plan.AttackingWidth = ESoccerAttackingWidth::Narrow;
 		Plan.AttackingTempo = ESoccerAttackingTempo::Balanced;
 		Plan.AttackingTransition = ESoccerAttackingTransition::CounterAttack;
@@ -1531,18 +1897,35 @@ FSoccerTeamTacticalPlan ASoccerMatchManager::BuildOpponentCoachTacticalPlanForMo
 		break;
 
 	case ESoccerOpponentCoachMode::ChaseGame:
-		Plan.BuildUpStyle = ESoccerBuildUpStyle::Direct;
-		Plan.AttackingWidth = ESoccerAttackingWidth::Wide;
+		if (bStrongOffensiveAdjustment)
+		{
+			Plan.BuildUpStyle = Philosophy != nullptr && Philosophy->Directness < 45
+				? Plan.BuildUpStyle
+				: ESoccerBuildUpStyle::Direct;
+		}
+		Plan.AttackingWidth = Philosophy != nullptr && Philosophy->TeamWidth < 35
+			? ESoccerAttackingWidth::Balanced
+			: ESoccerAttackingWidth::Wide;
 		Plan.AttackingTempo = ESoccerAttackingTempo::Fast;
-		Plan.AttackingTransition = ESoccerAttackingTransition::CounterAttack;
-		Plan.DefensiveBlock = ESoccerDefensiveBlock::High;
-		Plan.PressingIntensity = ESoccerPressingIntensity::High;
+		Plan.AttackingTransition = Philosophy != nullptr && Philosophy->CounterAttackPreference < 45
+			? ESoccerAttackingTransition::Balanced
+			: ESoccerAttackingTransition::CounterAttack;
+		Plan.DefensiveBlock = Philosophy != nullptr && Philosophy->DefensiveLineHeight < 35
+			? ESoccerDefensiveBlock::Medium
+			: ESoccerDefensiveBlock::High;
+		Plan.PressingIntensity = Philosophy != nullptr && Philosophy->PressingIntensity < 35
+			? ESoccerPressingIntensity::Medium
+			: ESoccerPressingIntensity::High;
 		Plan.MarkingStyle = ESoccerMarkingStyle::Mixed;
-		Plan.DefensiveTransition = ESoccerDefensiveTransition::CounterPress;
+		Plan.DefensiveTransition = Plan.PressingIntensity == ESoccerPressingIntensity::High
+			? ESoccerDefensiveTransition::CounterPress
+			: ESoccerDefensiveTransition::Balanced;
 		break;
 
 	case ESoccerOpponentCoachMode::AllOutAttack:
-		Plan.BuildUpStyle = ESoccerBuildUpStyle::Direct;
+		Plan.BuildUpStyle = Philosophy != nullptr && Philosophy->Directness < 35
+			? Plan.BuildUpStyle
+			: ESoccerBuildUpStyle::Direct;
 		Plan.AttackingWidth = ESoccerAttackingWidth::Wide;
 		Plan.AttackingTempo = ESoccerAttackingTempo::Fast;
 		Plan.AttackingTransition = ESoccerAttackingTransition::CounterAttack;
@@ -1839,6 +2222,12 @@ FSoccerCoachMatchPlan ASoccerMatchManager::GetOpponentTeamCoachPlan() const
 	return OpponentTeamCoachPlan;
 }
 
+FSoccerCoachRuntimeDecision
+ASoccerMatchManager::GetLastOpponentCoachRuntimeDecision() const
+{
+	return LastOpponentCoachRuntimeDecision;
+}
+
 bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
 {
 	UWorld* World = GetWorld();
@@ -1877,13 +2266,13 @@ bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
 	// independent coach now chooses formation, starters, slots and bench.
 	ApplyPersistentDirectorTechnicalSetupToPlayerTeam(true);
 	OpponentTeamCoachPlan = FSoccerCoachMatchPlan();
-	USoccerCoachProfile* OpponentCoach =
+	OpponentCoachProfile =
 		SoccerGameInstance->GetCoachProfileForClubId(
 			MatchSetup.OpponentTeamClubId
 		);
 	const bool bCoachPlanBuilt =
 		USoccerCoachPlanningLibrary::BuildPreMatchPlan(
-			OpponentCoach,
+			OpponentCoachProfile,
 			OpponentSquad,
 			OpponentTeamCoachPlan
 		);
