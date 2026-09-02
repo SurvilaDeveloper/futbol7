@@ -46,6 +46,7 @@
 #include "SoccerGameInstance.h"
 #include "SoccerPlayerProfile.h"
 #include "SoccerPlayerAppearanceCatalog.h"
+#include "SoccerClubProfile.h"
 
 #include "Engine/CurveTable.h"
 #include "Curves/RealCurve.h"
@@ -394,6 +395,14 @@ ASoccerMatchManager::ASoccerMatchManager()
 void ASoccerMatchManager::BeginPlay()
 {
 	Super::BeginPlay();
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[ClubMatch] PlayerTeam=%s | OpponentTeam=%s."),
+		*GetClubIdForTeam(ESoccerTeam::PlayerTeam).ToString(),
+		*GetClubIdForTeam(ESoccerTeam::OpponentTeam).ToString()
+	);
 
 	FindSoccerBall();
 	InitializeInstantReplayRecorder();
@@ -1773,6 +1782,24 @@ USkeletalMesh* ASoccerMatchManager::ResolvePlayerBodyVariantMesh(
 	}
 
 	return PlayerAppearanceCatalog->LoadBodyVariantMesh(BodyVariantId);
+}
+
+USoccerClubProfile* ASoccerMatchManager::GetClubProfileForTeam(
+	ESoccerTeam Team
+) const
+{
+	return
+		Team == ESoccerTeam::PlayerTeam
+			? PlayerTeamClubProfile
+			: OpponentTeamClubProfile;
+}
+
+FName ASoccerMatchManager::GetClubIdForTeam(ESoccerTeam Team) const
+{
+	const USoccerClubProfile* ClubProfile = GetClubProfileForTeam(Team);
+	return IsValid(ClubProfile) && ClubProfile->HasValidClubId()
+		? ClubProfile->ClubId
+		: NAME_None;
 }
 
 const ASoccerField* ASoccerMatchManager::GetSoccerField() const

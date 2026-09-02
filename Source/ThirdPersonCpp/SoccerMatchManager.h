@@ -29,6 +29,7 @@ class ASoccerInstantReplayManager;
 class UCurveTable;
 class USkeletalMesh;
 class USoccerPlayerAppearanceCatalog;
+class USoccerClubProfile;
 
 enum class ESoccerRestartRestrictionShape : uint8
 {
@@ -82,6 +83,16 @@ public:
 
 	/** Stage 9B central BodyVariantId -> SkeletalMesh resolver. */
 	USkeletalMesh* ResolvePlayerBodyVariantMesh(FName BodyVariantId) const;
+
+	/**
+	 * Club identity occupying a temporary match side. PlayerTeam/OpponentTeam
+	 * describe this match only and are not permanent club identities.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Soccer|Club")
+	USoccerClubProfile* GetClubProfileForTeam(ESoccerTeam Team) const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Club")
+	FName GetClubIdForTeam(ESoccerTeam Team) const;
 
 	/* Instant-replay recorder/playback manager. */
 	ASoccerInstantReplayManager* GetInstantReplayManager() const;
@@ -657,6 +668,14 @@ private:
 	/** Shared visual catalog used by human and AI player profiles in this match. */
 	UPROPERTY(EditAnywhere, Category = "Soccer|Player Appearance")
 	USoccerPlayerAppearanceCatalog* PlayerAppearanceCatalog = nullptr;
+
+	/** Club controlled by the human side for this match. */
+	UPROPERTY(EditAnywhere, Category = "Soccer|Clubs")
+	USoccerClubProfile* PlayerTeamClubProfile = nullptr;
+
+	/** Rival club occupying OpponentTeam for this match. */
+	UPROPERTY(EditAnywhere, Category = "Soccer|Clubs")
+	USoccerClubProfile* OpponentTeamClubProfile = nullptr;
 
 	// Explicit match-state machine. Concrete restart families and Playing are
 	// migrated incrementally; MatchPlayState remains only as a compatibility bridge.
