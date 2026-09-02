@@ -49,6 +49,8 @@
 #include "SoccerClubProfile.h"
 #include "SoccerSquadCatalog.h"
 #include "SoccerLineupEvaluationLibrary.h"
+#include "SoccerCoachProfile.h"
+#include "SoccerCoachPlanningLibrary.h"
 
 #include "Engine/CurveTable.h"
 #include "Curves/RealCurve.h"
@@ -1832,6 +1834,11 @@ bool ASoccerMatchManager::ShouldShowClubSelectionAtMatchStart() const
 	return bShowClubSelectionAtMatchStart;
 }
 
+FSoccerCoachMatchPlan ASoccerMatchManager::GetOpponentTeamCoachPlan() const
+{
+	return OpponentTeamCoachPlan;
+}
+
 bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
 {
 	UWorld* World = GetWorld();
@@ -1866,14 +1873,38 @@ bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
 		return false;
 	}
 
-	// The human team keeps the lineup chosen in Director Technical. The rival
-	// has no user lineup yet, so its best available seven are selected for the
-	// current formation by the shared suitability evaluator.
+	// The human team keeps the lineup chosen in Director Technical. The rival's
+	// independent coach now chooses formation, starters, slots and bench.
 	ApplyPersistentDirectorTechnicalSetupToPlayerTeam(true);
-	const int32 OpponentProfilesApplied = ApplySquadCatalogProfilesToTeam(
-		ESoccerTeam::OpponentTeam,
-		OpponentSquad
-	);
+	OpponentTeamCoachPlan = FSoccerCoachMatchPlan();
+	USoccerCoachProfile* OpponentCoach =
+		SoccerGameInstance->GetCoachProfileForClubId(
+			MatchSetup.OpponentTeamClubId
+		);
+	const bool bCoachPlanBuilt =
+		USoccerCoachPlanningLibrary::BuildPreMatchPlan(
+			OpponentCoach,
+			OpponentSquad,
+			OpponentTeamCoachPlan
+		);
+	const int32 OpponentProfilesApplied = bCoachPlanBuilt
+		? ApplyCoachMatchPlanToTeam(
+			ESoccerTeam::OpponentTeam,
+			OpponentTeamCoachPlan
+		)
+		: ApplySquadCatalogProfilesToTeam(
+			ESoccerTeam::OpponentTeam,
+			OpponentSquad
+		);
+	if (!bCoachPlanBuilt)
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[CoachPlan] Rival club '%s' has no valid complete AI plan; legacy automatic selection used."),
+			*MatchSetup.OpponentTeamClubId.ToString()
+		);
+	}
 
 	const int32 PlayerKitsApplied =
 		ApplySelectedClubKitsToTeam(ESoccerTeam::PlayerTeam);
@@ -1891,6 +1922,88 @@ bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
 		OpponentKitsApplied
 	);
 	return OpponentProfilesApplied > 0;
+}
+
+int32 ASoccerMatchManager::ApplyCoachMatchPlanToTeam(
+	ESoccerTeam Team,
+	const FSoccerCoachMatchPlan& CoachPlan
+)
+{
+	if (!CoachPlan.bComplete || Team != ESoccerTeam::OpponentTeam)
+	{
+		return 0;
+	}
+
+	UWorld* World = GetWorld();
+	USoccerGameInstance* SoccerGameInstance = World != nullptr
+		? Cast<USoccerGameInstance>(World->GetGameInstance())
+		: nullptr;
+	if (!IsValid(SoccerGameInstance))
+	{
+		return 0;
+	}
+
+	const ESoccerFormationSystem PreviousFormation =
+		OpponentTeamFormationSystem;
+	OpponentTeamFormationSystem = CoachPlan.FormationSystem;
+	OpponentTeamTacticalPlan = CoachPlan.TacticalPlan;
+	RebuildFormationAssignmentsForTeam(
+		Team,
+		PreviousFormation,
+		false
+	);
+	EnsureSlotTacticalInstructionsForTeam(Team);
+	InitializeOpponentCoachAI();
+
+	const FSoccerFormationDefinition& Formation =
+		SoccerFormationLibrary::GetDefinition(CoachPlan.FormationSystem);
+	int32 AppliedCount = 0;
+	for (const FSoccerFormationSlot& FormationSlot : Formation.Slots)
+	{
+		const FName* PlayerId =
+			CoachPlan.StartingLineupBySlot.Find(FormationSlot.SlotId);
+		ASoccerCharacterBase* MatchCharacter =
+			GetFormationSlotAssignedCharacter(Team, FormationSlot.SlotId);
+		USoccerPlayerProfile* PlayerProfile = PlayerId != nullptr
+			? SoccerGameInstance->FindPlayerProfileById(*PlayerId)
+			: nullptr;
+		if (!IsValid(MatchCharacter) || !IsValid(PlayerProfile))
+		{
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("[CoachPlan] Could not materialize team=%d slot=%s player=%s."),
+				static_cast<int32>(Team),
+				*FormationSlot.SlotId.ToString(),
+				PlayerId != nullptr ? *PlayerId->ToString() : TEXT("None")
+			);
+			continue;
+		}
+
+		MatchCharacter->SetPlayerProfileForMatch(PlayerProfile);
+		ApplySelectedClubKitToCharacter(MatchCharacter);
+		++AppliedCount;
+	}
+
+	if (
+		TotalMatchElapsedSeconds <= 0.01f &&
+		IsKickoffMatchStateActive()
+	)
+	{
+		StartKickoff(PendingKickoffTeam);
+	}
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[CoachPlan] Materialized coach=%s club=%s formation=%d profiles=%d/7 bench=%d."),
+		*CoachPlan.CoachId.ToString(),
+		*CoachPlan.ClubId.ToString(),
+		static_cast<int32>(CoachPlan.FormationSystem),
+		AppliedCount,
+		CoachPlan.BenchPlayerIds.Num()
+	);
+	return AppliedCount;
 }
 
 int32 ASoccerMatchManager::ApplySquadCatalogProfilesToTeam(

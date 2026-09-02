@@ -16,6 +16,7 @@
 #include "SoccerPenaltyKickRestart.h"
 #include "SoccerFreeKickRestart.h"
 #include "SoccerGoalLineRestart.h"
+#include "SoccerCoachMatchPlanTypes.h"
 #include "SoccerMatchManager.generated.h"
 
 class ASoccerBall;
@@ -106,6 +107,9 @@ public:
 	/** Applies both selected rosters and their match kits to existing actors. */
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Match Setup")
 	bool MaterializeConfiguredMatchTeams();
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|AI Coach|Planning")
+	FSoccerCoachMatchPlan GetOpponentTeamCoachPlan() const;
 
 	/* Instant-replay recorder/playback manager. */
 	ASoccerInstantReplayManager* GetInstantReplayManager() const;
@@ -693,9 +697,16 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|Clubs")
 	bool bShowClubSelectionAtMatchStart = true;
 
+	UPROPERTY(Transient)
+	FSoccerCoachMatchPlan OpponentTeamCoachPlan;
+
 	int32 ApplySquadCatalogProfilesToTeam(
 		ESoccerTeam Team,
 		USoccerSquadCatalog* SquadCatalog
+	);
+	int32 ApplyCoachMatchPlanToTeam(
+		ESoccerTeam Team,
+		const FSoccerCoachMatchPlan& CoachPlan
 	);
 	int32 ApplySelectedClubKitsToTeam(ESoccerTeam Team);
 	void ApplySelectedClubKitToCharacter(ASoccerCharacterBase* Character);
