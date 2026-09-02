@@ -488,6 +488,7 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 	UpdateMatchClock(DeltaTime);
 	UpdatePendingMatchSubstitutions();
 	UpdateOpponentCoachAI(DeltaTime);
+	UpdateOpponentCoachSubstitutionAI(DeltaTime);
 	UpdateLiveTacticalShapeTransitions();
 
 	// Half-time and full-time deliberately have no active football state.
@@ -1330,6 +1331,9 @@ void ASoccerMatchManager::InitializeOpponentCoachAI()
 	OpponentCoachLastModeChangeProgress = -1.0f;
 	OpponentCoachLastObservedPlayerScore = PlayerTeamScore;
 	OpponentCoachLastObservedOpponentScore = OpponentTeamScore;
+	OpponentCoachSubstitutionEvaluationAccumulator = 0.0f;
+	OpponentCoachLastSubstitutionDecisionProgress = -1.0f;
+	OpponentCoachLastSubstitutionDiagnosticProgress = -1.0f;
 	LastOpponentCoachRuntimeDecision = FSoccerCoachRuntimeDecision();
 	bOpponentCoachInitialized = true;
 
@@ -1721,6 +1725,429 @@ void ASoccerMatchManager::UpdateOpponentCoachAI(float DeltaTime)
 		SafeMinimumGap,
 		*DecisionReason
 	);
+}
+
+void ASoccerMatchManager::SynchronizeMatchSquadActiveSlotsFromActors(
+	ESoccerTeam Team
+)
+{
+	FSoccerMatchSquadState& State = GetMutableMatchSquadState(Team);
+	if (!State.bInitialized)
+	{
+		return;
+	}
+
+	const FSoccerFormationDefinition& Formation =
+		SoccerFormationLibrary::GetDefinition(GetFormationSystemForTeam(Team));
+	TMap<FName, FName> SynchronizedLineup;
+	for (const FSoccerFormationSlot& Slot : Formation.Slots)
+	{
+		ASoccerCharacterBase* Character =
+			GetFormationSlotAssignedCharacter(Team, Slot.SlotId);
+		if (IsValid(Character) && !Character->GetPlayerProfileId().IsNone())
+		{
+			SynchronizedLineup.Add(
+				Slot.SlotId,
+				Character->GetPlayerProfileId()
+			);
+		}
+	}
+	if (SynchronizedLineup.Num() == Formation.Slots.Num())
+	{
+		State.ActivePlayerByFormationSlot = MoveTemp(SynchronizedLineup);
+	}
+}
+
+void ASoccerMatchManager::DebugForceOpponentCoachSubstitutionDecision()
+{
+	bForceOpponentCoachSubstitutionEvaluation = true;
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[CoachSubstitutionEvaluation] NumPad 0 requested an immediate real coach evaluation.")
+	);
+	UpdateOpponentCoachSubstitutionAI(0.0f);
+}
+
+void ASoccerMatchManager::UpdateOpponentCoachSubstitutionAI(float DeltaTime)
+{
+	const bool bForcedDebugEvaluation =
+		bForceOpponentCoachSubstitutionEvaluation;
+	bForceOpponentCoachSubstitutionEvaluation = false;
+
+	if (
+		(
+			!bForcedDebugEvaluation &&
+			(
+				!bEnableOpponentCoachAI ||
+				!bEnableOpponentCoachAutomaticSubstitutions
+			)
+		) ||
+		!bOpponentCoachInitialized ||
+		!OpponentTeamMatchSquadState.HasPendingEligibleSubstitutes() ||
+		HasPendingMatchSubstitution(ESoccerTeam::OpponentTeam) ||
+		CurrentMatchPeriod == ESoccerMatchPeriod::FullTime
+	)
+	{
+		if (bForcedDebugEvaluation)
+		{
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("[CoachSubstitutionEvaluation] result=WAIT reason='coach/squad unavailable, no bench, limit reached, pending change or full time'.")
+			);
+		}
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (
+		!bForcedDebugEvaluation &&
+		World != nullptr &&
+		UGameplayStatics::IsGamePaused(World)
+	)
+	{
+		return;
+	}
+	const bool bCanEvaluateNow =
+		bForcedDebugEvaluation ||
+		CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime ||
+		(
+			IsMatchPeriodGameplayActive() &&
+			MatchPlayState == ESoccerMatchPlayState::Playing &&
+			!IsRestartContextActive()
+		);
+	if (!bCanEvaluateNow)
+	{
+		return;
+	}
+
+	const USoccerCoachProfile* CoachProfile = ResolveOpponentCoachProfile();
+	if (!IsValid(CoachProfile))
+	{
+		if (bForcedDebugEvaluation)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[CoachSubstitutionEvaluation] result=WAIT reason='opponent coach profile unavailable'."));
+		}
+		return;
+	}
+	const float ReadingAlpha = FMath::Clamp(
+		static_cast<float>(CoachProfile->Abilities.MatchReading) / 100.0f,
+		0.0f,
+		1.0f
+	);
+	const float EffectiveInterval = FMath::Clamp(
+		OpponentCoachSubstitutionEvaluationIntervalSeconds *
+			FMath::Lerp(1.40f, 0.70f, ReadingAlpha),
+		0.25f,
+		10.0f
+	);
+	OpponentCoachSubstitutionEvaluationAccumulator += FMath::Max(0.0f, DeltaTime);
+	if (
+		!bForcedDebugEvaluation &&
+		OpponentCoachSubstitutionEvaluationAccumulator < EffectiveInterval
+	)
+	{
+		return;
+	}
+	OpponentCoachSubstitutionEvaluationAccumulator = 0.0f;
+
+	SynchronizeMatchSquadActiveSlotsFromActors(ESoccerTeam::OpponentTeam);
+	const FSoccerMatchSquadState& State = OpponentTeamMatchSquadState;
+	const float MatchProgress = GetMatchProgress();
+	const float TimingAlpha = FMath::Clamp(
+		static_cast<float>(CoachProfile->Abilities.SubstitutionTiming) / 100.0f,
+		0.0f,
+		1.0f
+	);
+	const float FatigueManagementAlpha = FMath::Clamp(
+		static_cast<float>(CoachProfile->Abilities.FatigueManagement) / 100.0f,
+		0.0f,
+		1.0f
+	);
+	const float PlayerEvaluationAlpha = FMath::Clamp(
+		static_cast<float>(CoachProfile->Abilities.PlayerEvaluation) / 100.0f,
+		0.0f,
+		1.0f
+	);
+	const float RiskAlpha = FMath::Clamp(
+		static_cast<float>(CoachProfile->Philosophy.RiskTolerance) / 100.0f,
+		0.0f,
+		1.0f
+	);
+	const int32 ScoreDifference = OpponentTeamScore - PlayerTeamScore;
+	const auto LogWait = [
+		this,
+		bForcedDebugEvaluation,
+		MatchProgress,
+		ScoreDifference
+	](
+		const TCHAR* Reason,
+		FName OutgoingId,
+		FName IncomingId,
+		float EnergyPercent,
+		int32 IncomingSuitability,
+		float DecisionScore,
+		float RequiredScore
+	)
+	{
+		if (
+			!bForcedDebugEvaluation &&
+			(
+				!bLogOpponentCoachSubstitutionEvaluations ||
+				(
+					OpponentCoachLastSubstitutionDiagnosticProgress >= 0.0f &&
+					MatchProgress - OpponentCoachLastSubstitutionDiagnosticProgress < 0.10f
+				)
+			)
+		)
+		{
+			return;
+		}
+		OpponentCoachLastSubstitutionDiagnosticProgress = MatchProgress;
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("[CoachSubstitutionEvaluation] result=WAIT forced=%s reason='%s' bestOUT=%s bestIN=%s energy=%.2f fit=%d decision=%.1f reference=%.1f progress=%.3f scoreDiff=%d."),
+			bForcedDebugEvaluation ? TEXT("YES") : TEXT("NO"),
+			Reason,
+			*OutgoingId.ToString(),
+			*IncomingId.ToString(),
+			EnergyPercent,
+			IncomingSuitability,
+			DecisionScore,
+			RequiredScore,
+			MatchProgress,
+			ScoreDifference
+		);
+	};
+
+	float EarliestNormalProgress = FMath::Lerp(0.68f, 0.38f, TimingAlpha);
+	if (ScoreDifference <= -2)
+	{
+		EarliestNormalProgress -= FMath::Lerp(0.04f, 0.12f, RiskAlpha);
+	}
+	EarliestNormalProgress = FMath::Clamp(EarliestNormalProgress, 0.20f, 0.75f);
+	const float EffectiveMinimumGap =
+		OpponentCoachMinimumProgressBetweenSubstitutions *
+		FMath::Lerp(1.25f, 0.70f, TimingAlpha);
+	if (
+		!bForcedDebugEvaluation &&
+		OpponentCoachLastSubstitutionDecisionProgress >= 0.0f &&
+		MatchProgress - OpponentCoachLastSubstitutionDecisionProgress <
+			EffectiveMinimumGap
+	)
+	{
+		return;
+	}
+
+	const ESoccerFormationSystem FormationSystem =
+		GetFormationSystemForTeam(ESoccerTeam::OpponentTeam);
+	const FSoccerFormationDefinition& Formation =
+		SoccerFormationLibrary::GetDefinition(FormationSystem);
+	USoccerGameInstance* SoccerGameInstance = World != nullptr
+		? Cast<USoccerGameInstance>(World->GetGameInstance())
+		: nullptr;
+	if (!IsValid(SoccerGameInstance))
+	{
+		if (bForcedDebugEvaluation)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[CoachSubstitutionEvaluation] result=WAIT reason='SoccerGameInstance unavailable'."));
+		}
+		return;
+	}
+
+	float BestDecisionScore = -BIG_NUMBER;
+	float BestEnergyPercent = 1.0f;
+	int32 BestIncomingSuitability = 0;
+	FName BestOutgoingId = NAME_None;
+	FName BestIncomingId = NAME_None;
+	FName BestSlotId = NAME_None;
+
+	for (const FSoccerFormationSlot& Slot : Formation.Slots)
+	{
+		if (Slot.PlayerRole == ESoccerPlayerRole::Goalkeeper)
+		{
+			continue;
+		}
+		const FName* OutgoingId = State.ActivePlayerByFormationSlot.Find(Slot.SlotId);
+		ASoccerAICharacter* ActiveCharacter = Cast<ASoccerAICharacter>(
+			GetFormationSlotAssignedCharacter(
+				ESoccerTeam::OpponentTeam,
+				Slot.SlotId
+			)
+		);
+		if (OutgoingId == nullptr || OutgoingId->IsNone() || !IsValid(ActiveCharacter))
+		{
+			continue;
+		}
+		USoccerPlayerProfile* OutgoingProfile =
+			SoccerGameInstance->FindPlayerProfileById(*OutgoingId);
+		if (!IsValid(OutgoingProfile))
+		{
+			continue;
+		}
+
+		const float EnergyPercent = ActiveCharacter->GetAIPlayerEnergyPercent();
+		const FSoccerPlayerSlotSuitability OutgoingSuitability =
+			USoccerLineupEvaluationLibrary::EvaluatePlayerForFormationSlot(
+				OutgoingProfile,
+				FormationSystem,
+				Slot.SlotId
+			);
+
+		for (const FName IncomingId : State.AvailableBenchPlayerIds)
+		{
+			USoccerPlayerProfile* IncomingProfile =
+				SoccerGameInstance->FindPlayerProfileById(IncomingId);
+			if (!IsValid(IncomingProfile))
+			{
+				continue;
+			}
+			const FSoccerPlayerSlotSuitability IncomingSuitability =
+				USoccerLineupEvaluationLibrary::EvaluatePlayerForFormationSlot(
+					IncomingProfile,
+					FormationSystem,
+					Slot.SlotId
+				);
+			if (!IncomingSuitability.bValid)
+			{
+				continue;
+			}
+
+			const float PerceivedIncomingFit = FMath::Lerp(
+				50.0f,
+				static_cast<float>(IncomingSuitability.OverallScore),
+				PlayerEvaluationAlpha
+			);
+			const float PerceivedOutgoingFit = FMath::Lerp(
+				50.0f,
+				static_cast<float>(OutgoingSuitability.OverallScore),
+				PlayerEvaluationAlpha
+			);
+			const float FatigueNeed = (1.0f - EnergyPercent) * 100.0f;
+			const float FatigueWeight =
+				FMath::Lerp(0.45f, 0.70f, FatigueManagementAlpha);
+			float TacticalUrgency = 0.0f;
+			if (ScoreDifference < 0)
+			{
+				if (Slot.FormationLine == ESoccerFormationLine::Attack)
+				{
+					TacticalUrgency = 14.0f;
+				}
+				else if (
+					Slot.FormationLine == ESoccerFormationLine::Midfield ||
+					Slot.FormationLine == ESoccerFormationLine::AttackingMidfield
+				)
+				{
+					TacticalUrgency = 8.0f;
+				}
+			}
+			else if (
+				ScoreDifference > 0 &&
+				Slot.FormationLine == ESoccerFormationLine::Defense
+			)
+			{
+				TacticalUrgency = 9.0f;
+			}
+
+			const float DecisionScore =
+				FatigueNeed * FatigueWeight +
+				PerceivedIncomingFit * 0.30f +
+				FMath::Max(0.0f, PerceivedIncomingFit - PerceivedOutgoingFit) * 0.15f +
+				TacticalUrgency;
+			if (DecisionScore > BestDecisionScore)
+			{
+				BestDecisionScore = DecisionScore;
+				BestEnergyPercent = EnergyPercent;
+				BestIncomingSuitability = IncomingSuitability.OverallScore;
+				BestOutgoingId = *OutgoingId;
+				BestIncomingId = IncomingId;
+				BestSlotId = Slot.SlotId;
+			}
+		}
+	}
+
+	if (BestOutgoingId.IsNone() || BestIncomingId.IsNone())
+	{
+		LogWait(
+			TEXT("no valid starter/bench pairing"),
+			NAME_None,
+			NAME_None,
+			1.0f,
+			0,
+			0.0f,
+			0.0f
+		);
+		return;
+	}
+	const bool bEmergencyFatigue = BestEnergyPercent <= 0.15f;
+	if (
+		!bForcedDebugEvaluation &&
+		!bEmergencyFatigue &&
+		MatchProgress < EarliestNormalProgress
+	)
+	{
+		LogWait(
+			TEXT("too early for this coach"),
+			BestOutgoingId,
+			BestIncomingId,
+			BestEnergyPercent,
+			BestIncomingSuitability,
+			BestDecisionScore,
+			EarliestNormalProgress
+		);
+		return;
+	}
+	const float DecisionThreshold = FMath::Lerp(62.0f, 50.0f, TimingAlpha);
+	if (
+		BestIncomingSuitability < 35 ||
+		(
+			!bForcedDebugEvaluation &&
+			!bEmergencyFatigue &&
+			BestDecisionScore < DecisionThreshold
+		)
+	)
+	{
+		LogWait(
+			BestIncomingSuitability < 35
+				? TEXT("best substitute is not suitable enough for the slot")
+				: TEXT("decision score below coach threshold"),
+			BestOutgoingId,
+			BestIncomingId,
+			BestEnergyPercent,
+			BestIncomingSuitability,
+			BestDecisionScore,
+			DecisionThreshold
+		);
+		return;
+	}
+
+	if (RequestMatchSubstitution(
+		ESoccerTeam::OpponentTeam,
+		BestOutgoingId,
+		BestIncomingId
+	))
+	{
+		OpponentCoachLastSubstitutionDecisionProgress = MatchProgress;
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("[CoachSubstitution] coach=%s slot=%s OUT=%s IN=%s energy=%.2f fit=%d decision=%.1f threshold=%.1f progress=%.3f scoreDiff=%d emergency=%s forced=%s."),
+			*CoachProfile->Identity.CoachId.ToString(),
+			*BestSlotId.ToString(),
+			*BestOutgoingId.ToString(),
+			*BestIncomingId.ToString(),
+			BestEnergyPercent,
+			BestIncomingSuitability,
+			BestDecisionScore,
+			DecisionThreshold,
+			MatchProgress,
+			ScoreDifference,
+			bEmergencyFatigue ? TEXT("YES") : TEXT("NO"),
+			bForcedDebugEvaluation ? TEXT("YES") : TEXT("NO")
+		);
+	}
 }
 
 ESoccerFormationSystem ASoccerMatchManager::GetOpponentCoachFormationForMode(
@@ -2611,12 +3038,19 @@ bool ASoccerMatchManager::ExecuteMatchSubstitution(
 	const FSoccerMatchSubstitutionRequest& Request
 )
 {
+	SynchronizeMatchSquadActiveSlotsFromActors(Request.Team);
 	FSoccerMatchSquadState& State = GetMutableMatchSquadState(Request.Team);
-	const FName* CurrentPlayerId =
-		State.ActivePlayerByFormationSlot.Find(Request.FormationSlotId);
+	FName ExecutionSlotId = NAME_None;
+	for (const TPair<FName, FName>& Pair : State.ActivePlayerByFormationSlot)
+	{
+		if (Pair.Value == Request.OutgoingPlayerId)
+		{
+			ExecutionSlotId = Pair.Key;
+			break;
+		}
+	}
 	if (
-		CurrentPlayerId == nullptr ||
-		*CurrentPlayerId != Request.OutgoingPlayerId ||
+		ExecutionSlotId.IsNone() ||
 		!State.AvailableBenchPlayerIds.Contains(Request.IncomingPlayerId)
 	)
 	{
@@ -2626,7 +3060,7 @@ bool ASoccerMatchManager::ExecuteMatchSubstitution(
 
 	ASoccerCharacterBase* MatchCharacter = GetFormationSlotAssignedCharacter(
 		Request.Team,
-		Request.FormationSlotId
+		ExecutionSlotId
 	);
 	UWorld* World = GetWorld();
 	USoccerGameInstance* SoccerGameInstance = World != nullptr
@@ -2642,7 +3076,7 @@ bool ASoccerMatchManager::ExecuteMatchSubstitution(
 			Warning,
 			TEXT("[Substitution] Cannot materialize incoming player=%s slot=%s."),
 			*Request.IncomingPlayerId.ToString(),
-			*Request.FormationSlotId.ToString()
+			*ExecutionSlotId.ToString()
 		);
 		return false;
 	}
@@ -2652,7 +3086,7 @@ bool ASoccerMatchManager::ExecuteMatchSubstitution(
 	ApplySelectedClubKitToCharacter(MatchCharacter);
 
 	State.ActivePlayerByFormationSlot.Add(
-		Request.FormationSlotId,
+		ExecutionSlotId,
 		Request.IncomingPlayerId
 	);
 	State.AvailableBenchPlayerIds.RemoveSingle(Request.IncomingPlayerId);
@@ -2662,7 +3096,7 @@ bool ASoccerMatchManager::ExecuteMatchSubstitution(
 	Record.Team = Request.Team;
 	Record.OutgoingPlayerId = Request.OutgoingPlayerId;
 	Record.IncomingPlayerId = Request.IncomingPlayerId;
-	Record.FormationSlotId = Request.FormationSlotId;
+	Record.FormationSlotId = ExecutionSlotId;
 	Record.ExecutedAtMatchSeconds = TotalMatchElapsedSeconds;
 	State.SubstitutionHistory.Add(Record);
 
@@ -2671,7 +3105,7 @@ bool ASoccerMatchManager::ExecuteMatchSubstitution(
 		Display,
 		TEXT("[Substitution] Executed team=%d slot=%s OUT=%s IN=%s used=%d/%d actor=%s."),
 		static_cast<int32>(Request.Team),
-		*Request.FormationSlotId.ToString(),
+		*ExecutionSlotId.ToString(),
 		*Request.OutgoingPlayerId.ToString(),
 		*Request.IncomingPlayerId.ToString(),
 		State.SubstitutionHistory.Num(),

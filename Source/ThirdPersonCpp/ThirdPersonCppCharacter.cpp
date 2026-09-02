@@ -140,6 +140,7 @@ void AThirdPersonCppCharacter::SetupPlayerInputComponent(class UInputComponent* 
 	PlayerInputComponent->BindKey(EKeys::NumPadThree, IE_Pressed, this, &AThirdPersonCppCharacter::DebugConfirmPlayerTeamSubstitution);
 	PlayerInputComponent->BindKey(EKeys::NumPadFour, IE_Pressed, this, &AThirdPersonCppCharacter::DebugCancelPlayerTeamSubstitution);
 	PlayerInputComponent->BindKey(EKeys::NumPadFive, IE_Pressed, this, &AThirdPersonCppCharacter::DebugRequestOpponentTeamSubstitution);
+	PlayerInputComponent->BindKey(EKeys::NumPadZero, IE_Pressed, this, &AThirdPersonCppCharacter::DebugForceOpponentCoachSubstitutionDecision);
 
 	// Stage 12B: one dedicated toggle is available on keyboard and gamepad.
 	// When the menu is open, UIOnly input means the widget owns the same keys
@@ -353,6 +354,22 @@ void AThirdPersonCppCharacter::DebugRequestOpponentTeamSubstitution()
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[SubstitutionDebug] NUMPAD 5: SoccerMatchManager not found."));
+	}
+}
+
+void AThirdPersonCppCharacter::DebugForceOpponentCoachSubstitutionDecision()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+	if (IsValid(MatchManager))
+	{
+		MatchManager->DebugForceOpponentCoachSubstitutionDecision();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CoachSubstitutionEvaluation] NUMPAD 0: SoccerMatchManager not found."));
 	}
 }
 

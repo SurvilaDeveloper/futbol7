@@ -140,6 +140,7 @@ public:
 	void DebugCyclePlayerTeamIncomingSubstitute();
 	void DebugConfirmPlayerTeamSubstitution();
 	void DebugCancelPlayerTeamSubstitution();
+	void DebugForceOpponentCoachSubstitutionDecision();
 
 	/* Instant-replay recorder/playback manager. */
 	ASoccerInstantReplayManager* GetInstantReplayManager() const;
@@ -819,6 +820,8 @@ bool IsPenaltyMatchStateActive() const;
 
 	void InitializeOpponentCoachAI();
 	void UpdateOpponentCoachAI(float DeltaTime);
+	void UpdateOpponentCoachSubstitutionAI(float DeltaTime);
+	void SynchronizeMatchSquadActiveSlotsFromActors(ESoccerTeam Team);
 	bool CanOpponentCoachChangePlanNow() const;
 	ESoccerOpponentCoachMode DetermineDesiredOpponentCoachMode(
 		float& OutEffectiveThreshold,
@@ -3270,6 +3273,24 @@ bool IsPenaltyMatchStateActive() const;
 	int32 OpponentCoachLastObservedPlayerScore = 0;
 	int32 OpponentCoachLastObservedOpponentScore = 0;
 	bool bOpponentCoachInitialized = false;
+
+	// Stage 9L: the rival coach uses the Stage 9K safe substitution queue.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Coach|Opponent|Substitutions")
+	bool bEnableOpponentCoachAutomaticSubstitutions = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Coach|Opponent|Substitutions", meta = (ClampMin = "0.25", ClampMax = "10.0"))
+	float OpponentCoachSubstitutionEvaluationIntervalSeconds = 2.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Coach|Opponent|Substitutions", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float OpponentCoachMinimumProgressBetweenSubstitutions = 0.12f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Coach|Opponent|Substitutions|Debug")
+	bool bLogOpponentCoachSubstitutionEvaluations = true;
+
+	float OpponentCoachSubstitutionEvaluationAccumulator = 0.0f;
+	float OpponentCoachLastSubstitutionDecisionProgress = -1.0f;
+	float OpponentCoachLastSubstitutionDiagnosticProgress = -1.0f;
+	bool bForceOpponentCoachSubstitutionEvaluation = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Soccer|Match", meta = (AllowPrivateAccess = "true"))
 		ESoccerMatchPlayState MatchPlayState = ESoccerMatchPlayState::KickoffSetup;

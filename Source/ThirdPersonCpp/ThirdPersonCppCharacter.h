@@ -156,6 +156,7 @@ protected:
 	void DebugConfirmPlayerTeamSubstitution();
 	void DebugCancelPlayerTeamSubstitution();
 	void DebugRequestOpponentTeamSubstitution();
+	void DebugForceOpponentCoachSubstitutionDecision();
 
 	/** Opens the coach menu from gameplay. Bound to M and Gamepad Menu/Options. */
 	void ToggleFormationMenu();
