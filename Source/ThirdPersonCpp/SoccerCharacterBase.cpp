@@ -2560,6 +2560,8 @@ void ASoccerCharacterBase::ApplyPlayerProfileAppearance()
 		CharacterMesh->SetSkeletalMesh(DesiredMesh, true);
 	}
 
+	ApplyPlayerProfilePersonalMaterials();
+
 	// A replacement mesh starts with its own material array, so team uniform
 	// materials must be applied again after every effective profile change.
 	ApplyTeamUniform();
@@ -2573,6 +2575,108 @@ void ASoccerCharacterBase::ApplyPlayerProfileAppearance()
 		DesiredMesh != nullptr ? *DesiredMesh->GetName() : TEXT("None"),
 		MeshSource
 	);
+}
+
+void ASoccerCharacterBase::ApplyPlayerProfilePersonalMaterials()
+{
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	if (CharacterMesh == nullptr)
+	{
+		return;
+	}
+
+	const int32 MaterialCount = CharacterMesh->GetNumMaterials();
+
+	auto ApplyPersonalSlot = [this, CharacterMesh, MaterialCount](
+		int32 MaterialIndex,
+		const TSoftObjectPtr<UMaterialInterface>& MaterialReference,
+		const TCHAR* SlotLabel
+	)
+	{
+		if (MaterialIndex < 0 || MaterialIndex >= MaterialCount)
+		{
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("[PlayerAppearance] %s cannot apply %s: material index %d is outside mesh material count %d."),
+				*GetName(),
+				SlotLabel,
+				MaterialIndex,
+				MaterialCount
+			);
+			return;
+		}
+
+		UMaterialInterface* PersonalMaterial = nullptr;
+		if (!MaterialReference.IsNull())
+		{
+			PersonalMaterial = MaterialReference.LoadSynchronous();
+			if (PersonalMaterial == nullptr)
+			{
+				UE_LOG(
+					LogTemp,
+					Warning,
+					TEXT("[PlayerAppearance] %s could not load %s for profile %s; mesh default material restored."),
+					*GetName(),
+					SlotLabel,
+					*GetPlayerProfileId().ToString()
+				);
+			}
+		}
+
+		// A null override deliberately restores the material authored on the
+		// SkeletalMesh. This prevents a previous profile's material from leaking
+		// into a later profile that leaves this field empty.
+		CharacterMesh->SetMaterial(MaterialIndex, PersonalMaterial);
+	};
+
+	if (HasPlayerProfile())
+	{
+		ApplyPersonalSlot(
+			EyelashesMaterialIndex,
+			PlayerProfile->Appearance.EyelashesMaterial,
+			TEXT("EyelashesMaterial")
+		);
+		ApplyPersonalSlot(
+			BodyMaterialIndex,
+			PlayerProfile->Appearance.BodyMaterial,
+			TEXT("BodyMaterial")
+		);
+		ApplyPersonalSlot(
+			HairMaterialIndex,
+			PlayerProfile->Appearance.HairMaterial,
+			TEXT("HairMaterial")
+		);
+		ApplyPersonalSlot(
+			ShoesMaterialIndex,
+			PlayerProfile->Appearance.ShoesMaterial,
+			TEXT("ShoesMaterial")
+		);
+	}
+	else
+	{
+		const TSoftObjectPtr<UMaterialInterface> EmptyMaterialReference;
+		ApplyPersonalSlot(
+			EyelashesMaterialIndex,
+			EmptyMaterialReference,
+			TEXT("EyelashesMaterial")
+		);
+		ApplyPersonalSlot(
+			BodyMaterialIndex,
+			EmptyMaterialReference,
+			TEXT("BodyMaterial")
+		);
+		ApplyPersonalSlot(
+			HairMaterialIndex,
+			EmptyMaterialReference,
+			TEXT("HairMaterial")
+		);
+		ApplyPersonalSlot(
+			ShoesMaterialIndex,
+			EmptyMaterialReference,
+			TEXT("ShoesMaterial")
+		);
+	}
 }
 
 float ASoccerCharacterBase::GetPlayerProfileDefensiveReactionAlpha() const

@@ -472,6 +472,7 @@ protected:
 	// Blueprint mesh as the reversible legacy fallback.
 	void ApplyPlayerProfileAppearance();
 	void CapturePlayerProfileAppearanceBaseline();
+	void ApplyPlayerProfilePersonalMaterials();
 
 	virtual void UpdateSoccerAnimationState();
 
@@ -1561,6 +1562,20 @@ private:
 	USkeletalMesh* PlayerProfileBaselineSkeletalMesh = nullptr;
 
 	bool bPlayerProfileAppearanceBaselineCaptured = false;
+
+	// Current seven-slot imported mesh convention. Personal materials are kept
+	// separate from the club-owned socks/shirt/shorts slots.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Appearance Slots", meta = (ClampMin = "0"))
+	int32 EyelashesMaterialIndex = 1;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Appearance Slots", meta = (ClampMin = "0"))
+	int32 BodyMaterialIndex = 3;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Appearance Slots", meta = (ClampMin = "0"))
+	int32 HairMaterialIndex = 5;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Appearance Slots", meta = (ClampMin = "0"))
+	int32 ShoesMaterialIndex = 6;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer|Team", meta = (AllowPrivateAccess = "true"))
 		ESoccerTeam Team = ESoccerTeam::PlayerTeam;

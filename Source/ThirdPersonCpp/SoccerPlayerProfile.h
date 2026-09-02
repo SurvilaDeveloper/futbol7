@@ -7,6 +7,7 @@
 
 class USkeletalMesh;
 class UTexture2D;
+class UMaterialInterface;
 
 /**
  * Optional appearance references for a player profile.
@@ -35,6 +36,22 @@ struct FSoccerPlayerAppearance
     /** Optional per-player mesh override. Leave empty when the body variant system chooses it. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Appearance")
     TSoftObjectPtr<USkeletalMesh> MeshOverride;
+
+    /** Personal slot 1. Belongs to the person and follows them between clubs. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Appearance | Personal Materials")
+    TSoftObjectPtr<UMaterialInterface> EyelashesMaterial;
+
+    /** Personal slot 3: skin/body material. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Appearance | Personal Materials")
+    TSoftObjectPtr<UMaterialInterface> BodyMaterial;
+
+    /** Personal slot 5: the haircut geometry remains part of the selected body mesh. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Appearance | Personal Materials")
+    TSoftObjectPtr<UMaterialInterface> HairMaterial;
+
+    /** Personal slot 6. Shoes belong to the person, not to the club kit. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Appearance | Personal Materials")
+    TSoftObjectPtr<UMaterialInterface> ShoesMaterial;
 
     /** Optional image for future squad / manager UI. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Appearance")
