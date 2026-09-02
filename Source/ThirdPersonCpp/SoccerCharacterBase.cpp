@@ -2588,11 +2588,17 @@ void ASoccerCharacterBase::ApplyPlayerProfilePersonalMaterials()
 	const int32 MaterialCount = CharacterMesh->GetNumMaterials();
 
 	auto ApplyPersonalSlot = [this, CharacterMesh, MaterialCount](
-		int32 MaterialIndex,
+		FName SemanticSlotName,
+		int32 FallbackIndex,
 		const TSoftObjectPtr<UMaterialInterface>& MaterialReference,
 		const TCHAR* SlotLabel
 	)
 	{
+		const int32 MaterialIndex = ResolveCharacterMaterialSlotIndex(
+			CharacterMesh,
+			SemanticSlotName,
+			FallbackIndex
+		);
 		if (MaterialIndex < 0 || MaterialIndex >= MaterialCount)
 		{
 			UE_LOG(
@@ -2633,21 +2639,25 @@ void ASoccerCharacterBase::ApplyPlayerProfilePersonalMaterials()
 	if (HasPlayerProfile())
 	{
 		ApplyPersonalSlot(
+			TEXT("M_Eyelashes"),
 			EyelashesMaterialIndex,
 			PlayerProfile->Appearance.EyelashesMaterial,
 			TEXT("EyelashesMaterial")
 		);
 		ApplyPersonalSlot(
+			TEXT("M_Body"),
 			BodyMaterialIndex,
 			PlayerProfile->Appearance.BodyMaterial,
 			TEXT("BodyMaterial")
 		);
 		ApplyPersonalSlot(
+			TEXT("M_Hair"),
 			HairMaterialIndex,
 			PlayerProfile->Appearance.HairMaterial,
 			TEXT("HairMaterial")
 		);
 		ApplyPersonalSlot(
+			TEXT("M_Shoes"),
 			ShoesMaterialIndex,
 			PlayerProfile->Appearance.ShoesMaterial,
 			TEXT("ShoesMaterial")
@@ -2657,26 +2667,58 @@ void ASoccerCharacterBase::ApplyPlayerProfilePersonalMaterials()
 	{
 		const TSoftObjectPtr<UMaterialInterface> EmptyMaterialReference;
 		ApplyPersonalSlot(
+			TEXT("M_Eyelashes"),
 			EyelashesMaterialIndex,
 			EmptyMaterialReference,
 			TEXT("EyelashesMaterial")
 		);
 		ApplyPersonalSlot(
+			TEXT("M_Body"),
 			BodyMaterialIndex,
 			EmptyMaterialReference,
 			TEXT("BodyMaterial")
 		);
 		ApplyPersonalSlot(
+			TEXT("M_Hair"),
 			HairMaterialIndex,
 			EmptyMaterialReference,
 			TEXT("HairMaterial")
 		);
 		ApplyPersonalSlot(
+			TEXT("M_Shoes"),
 			ShoesMaterialIndex,
 			EmptyMaterialReference,
 			TEXT("ShoesMaterial")
 		);
 	}
+}
+
+int32 ASoccerCharacterBase::ResolveCharacterMaterialSlotIndex(
+	USkeletalMeshComponent* CharacterMesh,
+	FName SemanticSlotName,
+	int32 FallbackIndex
+) const
+{
+	if (CharacterMesh == nullptr || SemanticSlotName.IsNone())
+	{
+		return FallbackIndex;
+	}
+
+	const int32 ExactIndex = CharacterMesh->GetMaterialIndex(SemanticSlotName);
+	if (ExactIndex != INDEX_NONE)
+	{
+		return ExactIndex;
+	}
+
+	const FName ImportedVariantName(*FString::Printf(
+		TEXT("%s_001"),
+		*SemanticSlotName.ToString()
+	));
+	const int32 ImportedVariantIndex =
+		CharacterMesh->GetMaterialIndex(ImportedVariantName);
+	return ImportedVariantIndex != INDEX_NONE
+		? ImportedVariantIndex
+		: FallbackIndex;
 }
 
 float ASoccerCharacterBase::GetPlayerProfileDefensiveReactionAlpha() const
@@ -3481,13 +3523,95 @@ void ASoccerCharacterBase::ApplyTeamUniform()
 
 	if (ShirtMaterial != nullptr && ShirtMaterialIndex >= 0)
 	{
-		CharacterMesh->SetMaterial(ShirtMaterialIndex, ShirtMaterial);
+		CharacterMesh->SetMaterial(
+			ResolveCharacterMaterialSlotIndex(
+				CharacterMesh,
+				TEXT("M_Shirt"),
+				ShirtMaterialIndex
+			),
+			ShirtMaterial
+		);
 	}
 
 	if (ShortsMaterial != nullptr && ShortsMaterialIndex >= 0)
 	{
-		CharacterMesh->SetMaterial(ShortsMaterialIndex, ShortsMaterial);
+		CharacterMesh->SetMaterial(
+			ResolveCharacterMaterialSlotIndex(
+				CharacterMesh,
+				TEXT("M_Shorts"),
+				ShortsMaterialIndex
+			),
+			ShortsMaterial
+		);
 	}
+}
+
+void ASoccerCharacterBase::ApplyClubKitMaterials(
+	UMaterialInterface* SocksMaterial,
+	UMaterialInterface* ShirtMaterial,
+	UMaterialInterface* ShortsMaterial
+)
+{
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	if (CharacterMesh == nullptr)
+	{
+		return;
+	}
+
+	const int32 MaterialCount = CharacterMesh->GetNumMaterials();
+	auto ApplyClubMaterial = [this, CharacterMesh, MaterialCount](
+		FName SemanticSlotName,
+		int32 FallbackIndex,
+		UMaterialInterface* Material,
+		const TCHAR* SlotLabel
+	)
+	{
+		if (Material == nullptr)
+		{
+			return;
+		}
+
+		const int32 MaterialIndex = ResolveCharacterMaterialSlotIndex(
+			CharacterMesh,
+			SemanticSlotName,
+			FallbackIndex
+		);
+
+		if (MaterialIndex < 0 || MaterialIndex >= MaterialCount)
+		{
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("[ClubKit] %s cannot apply %s: index %d is outside material count %d."),
+				*GetName(),
+				SlotLabel,
+				MaterialIndex,
+				MaterialCount
+			);
+			return;
+		}
+
+		CharacterMesh->SetMaterial(MaterialIndex, Material);
+	};
+
+	ApplyClubMaterial(
+		TEXT("M_Socks"),
+		SocksMaterialIndex,
+		SocksMaterial,
+		TEXT("Socks")
+	);
+	ApplyClubMaterial(
+		TEXT("M_Shirt"),
+		ShirtMaterialIndex,
+		ShirtMaterial,
+		TEXT("Shirt")
+	);
+	ApplyClubMaterial(
+		TEXT("M_Shorts"),
+		ShortsMaterialIndex,
+		ShortsMaterial,
+		TEXT("Shorts")
+	);
 }
 
 void ASoccerCharacterBase::UpdateSoccerAnimationState()

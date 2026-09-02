@@ -47,6 +47,8 @@
 #include "SoccerPlayerProfile.h"
 #include "SoccerPlayerAppearanceCatalog.h"
 #include "SoccerClubProfile.h"
+#include "SoccerSquadCatalog.h"
+#include "SoccerLineupEvaluationLibrary.h"
 
 #include "Engine/CurveTable.h"
 #include "Curves/RealCurve.h"
@@ -1828,6 +1830,203 @@ void ASoccerMatchManager::SetClubProfileForTeam(
 bool ASoccerMatchManager::ShouldShowClubSelectionAtMatchStart() const
 {
 	return bShowClubSelectionAtMatchStart;
+}
+
+bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
+{
+	UWorld* World = GetWorld();
+	USoccerGameInstance* SoccerGameInstance =
+		World != nullptr
+			? Cast<USoccerGameInstance>(World->GetGameInstance())
+			: nullptr;
+	if (!IsValid(SoccerGameInstance))
+	{
+		return false;
+	}
+
+	const FSoccerMatchSetup MatchSetup =
+		SoccerGameInstance->GetCurrentMatchSetup();
+	if (!MatchSetup.HasTwoDifferentClubs())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MatchMaterialization] Match setup has no two valid clubs."));
+		return false;
+	}
+
+	USoccerSquadCatalog* PlayerSquad =
+		SoccerGameInstance->FindSquadCatalogByClubId(
+			MatchSetup.PlayerTeamClubId
+		);
+	USoccerSquadCatalog* OpponentSquad =
+		SoccerGameInstance->FindSquadCatalogByClubId(
+			MatchSetup.OpponentTeamClubId
+		);
+	if (!IsValid(PlayerSquad) || !IsValid(OpponentSquad))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MatchMaterialization] Could not resolve both selected squad catalogs."));
+		return false;
+	}
+
+	// The human team keeps the lineup chosen in Director Technical. The rival
+	// has no user lineup yet, so its best available seven are selected for the
+	// current formation by the shared suitability evaluator.
+	ApplyPersistentDirectorTechnicalSetupToPlayerTeam(true);
+	const int32 OpponentProfilesApplied = ApplySquadCatalogProfilesToTeam(
+		ESoccerTeam::OpponentTeam,
+		OpponentSquad
+	);
+
+	const int32 PlayerKitsApplied =
+		ApplySelectedClubKitsToTeam(ESoccerTeam::PlayerTeam);
+	const int32 OpponentKitsApplied =
+		ApplySelectedClubKitsToTeam(ESoccerTeam::OpponentTeam);
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[MatchMaterialization] %s vs %s ready: opponentProfiles=%d, playerKits=%d, opponentKits=%d."),
+		*MatchSetup.PlayerTeamClubId.ToString(),
+		*MatchSetup.OpponentTeamClubId.ToString(),
+		OpponentProfilesApplied,
+		PlayerKitsApplied,
+		OpponentKitsApplied
+	);
+	return OpponentProfilesApplied > 0;
+}
+
+int32 ASoccerMatchManager::ApplySquadCatalogProfilesToTeam(
+	ESoccerTeam Team,
+	USoccerSquadCatalog* SquadCatalog
+)
+{
+	if (!IsValid(SquadCatalog))
+	{
+		return 0;
+	}
+
+	const ESoccerFormationSystem FormationSystem =
+		GetFormationSystemForTeam(Team);
+	const FSoccerFormationDefinition& Formation =
+		SoccerFormationLibrary::GetDefinition(FormationSystem);
+	TSet<USoccerPlayerProfile*> UsedProfiles;
+	int32 AppliedCount = 0;
+
+	for (const FSoccerFormationSlot& FormationSlot : Formation.Slots)
+	{
+		USoccerPlayerProfile* BestProfile = nullptr;
+		int32 BestScore = MIN_int32;
+
+		for (USoccerPlayerProfile* CandidateProfile : SquadCatalog->PlayerProfiles)
+		{
+			if (
+				!IsValid(CandidateProfile) ||
+				UsedProfiles.Contains(CandidateProfile)
+			)
+			{
+				continue;
+			}
+
+			const FSoccerPlayerSlotSuitability Suitability =
+				USoccerLineupEvaluationLibrary::EvaluatePlayerForFormationSlot(
+					CandidateProfile,
+					FormationSystem,
+					FormationSlot.SlotId
+				);
+			if (BestProfile == nullptr || Suitability.OverallScore > BestScore)
+			{
+				BestProfile = CandidateProfile;
+				BestScore = Suitability.OverallScore;
+			}
+		}
+
+		ASoccerCharacterBase* MatchCharacter =
+			GetFormationSlotAssignedCharacter(Team, FormationSlot.SlotId);
+		if (!IsValid(BestProfile) || !IsValid(MatchCharacter))
+		{
+			continue;
+		}
+
+		MatchCharacter->SetPlayerProfileForMatch(BestProfile);
+		UsedProfiles.Add(BestProfile);
+		ApplySelectedClubKitToCharacter(MatchCharacter);
+		++AppliedCount;
+
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("[MatchRoster] team=%d slot=%s player=%s actor=%s suitability=%d."),
+			static_cast<int32>(Team),
+			*FormationSlot.SlotId.ToString(),
+			*BestProfile->Identity.PlayerId.ToString(),
+			*MatchCharacter->GetName(),
+			BestScore
+		);
+	}
+
+	return AppliedCount;
+}
+
+int32 ASoccerMatchManager::ApplySelectedClubKitsToTeam(ESoccerTeam Team)
+{
+	TArray<ASoccerCharacterBase*> TeamPlayers;
+	CollectFormationPlayersForTeam(Team, TeamPlayers);
+	int32 AppliedCount = 0;
+	for (ASoccerCharacterBase* Character : TeamPlayers)
+	{
+		if (IsValid(Character))
+		{
+			ApplySelectedClubKitToCharacter(Character);
+			++AppliedCount;
+		}
+	}
+	return AppliedCount;
+}
+
+void ASoccerMatchManager::ApplySelectedClubKitToCharacter(
+	ASoccerCharacterBase* Character
+)
+{
+	if (!IsValid(Character))
+	{
+		return;
+	}
+
+	USoccerClubProfile* ClubProfile =
+		GetClubProfileForTeam(Character->GetTeam());
+	if (!IsValid(ClubProfile))
+	{
+		return;
+	}
+
+	ESoccerClubKitType KitType = ESoccerClubKitType::Home;
+	if (Character->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
+	{
+		KitType = ESoccerClubKitType::Goalkeeper;
+	}
+	else
+	{
+		UWorld* World = GetWorld();
+		USoccerGameInstance* SoccerGameInstance =
+			World != nullptr
+				? Cast<USoccerGameInstance>(World->GetGameInstance())
+				: nullptr;
+		const bool bPlayerTeamIsHome = IsValid(SoccerGameInstance)
+			? SoccerGameInstance->GetCurrentMatchSetup().bPlayerTeamIsHome
+			: true;
+		const bool bCharacterTeamIsHome =
+			Character->GetTeam() == ESoccerTeam::PlayerTeam
+				? bPlayerTeamIsHome
+				: !bPlayerTeamIsHome;
+		KitType = bCharacterTeamIsHome
+			? ESoccerClubKitType::Home
+			: ESoccerClubKitType::Away;
+	}
+
+	const FSoccerClubKitDefinition& Kit = ClubProfile->GetKit(KitType);
+	Character->ApplyClubKitMaterials(
+		Kit.SocksMaterial.IsNull() ? nullptr : Kit.SocksMaterial.LoadSynchronous(),
+		Kit.ShirtMaterial.IsNull() ? nullptr : Kit.ShirtMaterial.LoadSynchronous(),
+		Kit.ShortsMaterial.IsNull() ? nullptr : Kit.ShortsMaterial.LoadSynchronous()
+	);
 }
 
 const ASoccerField* ASoccerMatchManager::GetSoccerField() const
@@ -15862,6 +16061,7 @@ bool ASoccerMatchManager::ApplyPersistentDirectorTechnicalSetupToPlayerTeam(
 			}
 
 			MatchCharacter->SetPlayerProfileForMatch(PlayerProfile);
+			ApplySelectedClubKitToCharacter(MatchCharacter);
 			++AppliedProfileCount;
 
 			UE_LOG(

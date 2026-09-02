@@ -266,6 +266,8 @@ void USoccerClubSelectionWidget::HandleConfirmClicked()
         IsValid(OpponentSquad) ? OpponentSquad->ClubProfile : nullptr
     );
 
+	MatchManager->MaterializeConfiguredMatchTeams();
+
     CloseMenu();
     OnSelectionConfirmed.Broadcast();
 }

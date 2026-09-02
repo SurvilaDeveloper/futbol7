@@ -30,6 +30,7 @@ class UCurveTable;
 class USkeletalMesh;
 class USoccerPlayerAppearanceCatalog;
 class USoccerClubProfile;
+class USoccerSquadCatalog;
 
 enum class ESoccerRestartRestrictionShape : uint8
 {
@@ -101,6 +102,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Club Selection")
 	bool ShouldShowClubSelectionAtMatchStart() const;
+
+	/** Applies both selected rosters and their match kits to existing actors. */
+	UFUNCTION(BlueprintCallable, Category = "Soccer|Match Setup")
+	bool MaterializeConfiguredMatchTeams();
 
 	/* Instant-replay recorder/playback manager. */
 	ASoccerInstantReplayManager* GetInstantReplayManager() const;
@@ -687,6 +692,13 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Clubs")
 	bool bShowClubSelectionAtMatchStart = true;
+
+	int32 ApplySquadCatalogProfilesToTeam(
+		ESoccerTeam Team,
+		USoccerSquadCatalog* SquadCatalog
+	);
+	int32 ApplySelectedClubKitsToTeam(ESoccerTeam Team);
+	void ApplySelectedClubKitToCharacter(ASoccerCharacterBase* Character);
 
 	// Explicit match-state machine. Concrete restart families and Playing are
 	// migrated incrementally; MatchPlayState remains only as a compatibility bridge.

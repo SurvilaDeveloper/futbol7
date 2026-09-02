@@ -17,6 +17,7 @@ class UCurveTable;
 class UCurveFloat;
 class USoccerPlayerProfile;
 class USkeletalMesh;
+class USkeletalMeshComponent;
 
 UCLASS(Blueprintable)
 class THIRDPERSONCPP_API ASoccerCharacterBase : public ACharacter
@@ -107,6 +108,17 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Uniform")
 		void ApplyTeamUniform();
+
+	/**
+	 * Applies the temporary club kit chosen for this encounter. These three
+	 * slots belong to the club; personal skin, hair and shoes remain driven by
+	 * USoccerPlayerProfile.
+	 */
+	void ApplyClubKitMaterials(
+		UMaterialInterface* SocksMaterial,
+		UMaterialInterface* ShirtMaterial,
+		UMaterialInterface* ShortsMaterial
+	);
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Animation", meta = (DisplayName = "Is Possessing Ball"))
 		bool GetSoccerIsPossessingBall() const;
@@ -473,6 +485,11 @@ protected:
 	void ApplyPlayerProfileAppearance();
 	void CapturePlayerProfileAppearanceBaseline();
 	void ApplyPlayerProfilePersonalMaterials();
+	int32 ResolveCharacterMaterialSlotIndex(
+		USkeletalMeshComponent* CharacterMesh,
+		FName SemanticSlotName,
+		int32 FallbackIndex
+	) const;
 
 	virtual void UpdateSoccerAnimationState();
 
@@ -1584,10 +1601,13 @@ private:
 		ESoccerPlayerRole PlayerRole = ESoccerPlayerRole::Midfielder;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Uniform")
-		int32 ShirtMaterialIndex = 1;
+		int32 SocksMaterialIndex = 0;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Uniform")
-		int32 ShortsMaterialIndex = 2;
+		int32 ShirtMaterialIndex = 2;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Uniform")
+		int32 ShortsMaterialIndex = 4;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Uniform")
 		UMaterialInterface* PlayerTeamShirtMaterial = nullptr;
