@@ -8,6 +8,7 @@
 
 class USoccerPlayerProfile;
 class USoccerSquadCatalog;
+class USoccerCoachProfile;
 
 /**
  * Session owner for the persistent coach/team configuration.
@@ -168,6 +169,19 @@ public:
     UFUNCTION(BlueprintPure, Category = "Soccer|Clubs")
     FName GetInitialClubIdForPlayer(FName PlayerIdToFind) const;
 
+    UFUNCTION(BlueprintPure, Category = "Soccer|Coaches")
+    TArray<FName> GetAvailableCoachIds() const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Coaches")
+    USoccerCoachProfile* FindCoachProfileById(FName CoachIdToFind) const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Coaches")
+    USoccerCoachProfile* GetCoachProfileForClubId(FName ClubIdToFind) const;
+
+    /** Initial employment relationship. Future career saves can override it. */
+    UFUNCTION(BlueprintPure, Category = "Soccer|Coaches")
+    FName GetInitialClubIdForCoach(FName CoachIdToFind) const;
+
     UFUNCTION(BlueprintPure, Category = "Soccer|Match Clubs")
     FName GetDefaultHumanClubId() const;
 
@@ -221,6 +235,15 @@ private:
 
     UPROPERTY(Transient)
     TMap<FName, FName> RuntimeInitialClubIdByPlayerId;
+
+    UPROPERTY(Transient)
+    TMap<FName, USoccerCoachProfile*> RuntimeCoachProfilesById;
+
+    UPROPERTY(Transient)
+    TMap<FName, USoccerCoachProfile*> RuntimeCoachByClubId;
+
+    UPROPERTY(Transient)
+    TMap<FName, FName> RuntimeInitialClubIdByCoachId;
 
     UPROPERTY(Transient)
     FSoccerMatchSetup CurrentMatchSetup;

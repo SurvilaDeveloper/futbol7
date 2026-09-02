@@ -6,6 +6,7 @@
 
 class UMaterialInterface;
 class UTexture2D;
+class USoccerCoachProfile;
 
 UENUM(BlueprintType)
 enum class ESoccerClubKitType : uint8
@@ -70,6 +71,10 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer Club | Colors")
     FLinearColor SecondaryColor = FLinearColor::Black;
+
+    /** Current employment relationship. The coach profile remains independent. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer Club | Staff")
+    USoccerCoachProfile* CurrentCoach = nullptr;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer Club | Kits")
     FSoccerClubKitDefinition HomeKit;

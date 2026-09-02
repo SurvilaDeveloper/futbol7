@@ -5,6 +5,8 @@
 #include "SoccerTeamSaveGame.h"
 #include "SoccerPlayerProfile.h"
 #include "SoccerSquadCatalog.h"
+#include "SoccerClubProfile.h"
+#include "SoccerCoachProfile.h"
 #include "AssetRegistryModule.h"
 #include "Modules/ModuleManager.h"
 
@@ -114,6 +116,9 @@ bool USoccerGameInstance::RefreshPlayerProfileRegistry()
     RuntimePlayerTeamCatalog = nullptr;
     RuntimeSquadCatalogsByClubId.Reset();
     RuntimeInitialClubIdByPlayerId.Reset();
+    RuntimeCoachProfilesById.Reset();
+    RuntimeCoachByClubId.Reset();
+    RuntimeInitialClubIdByCoachId.Reset();
 
     FAssetRegistryModule& AssetRegistryModule =
         FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
@@ -195,6 +200,127 @@ bool USoccerGameInstance::RefreshPlayerProfileRegistry()
             : (LegacyDefaultCatalog != nullptr
                 ? LegacyDefaultCatalog
                 : FirstValidCatalog);
+
+    TArray<FAssetData> CoachAssets;
+    AssetRegistryModule.Get().GetAssetsByClass(
+        USoccerCoachProfile::StaticClass()->GetFName(),
+        CoachAssets,
+        true
+    );
+
+    for (const FAssetData& CoachAssetData : CoachAssets)
+    {
+        USoccerCoachProfile* CoachProfile = Cast<USoccerCoachProfile>(
+            CoachAssetData.GetAsset()
+        );
+        if (!IsValid(CoachProfile))
+        {
+            continue;
+        }
+        if (!CoachProfile->HasValidCoachId())
+        {
+            UE_LOG(
+                LogSoccerTeamPersistence,
+                Warning,
+                TEXT("[CoachRegistry] Coach asset '%s' has no CoachId and was ignored."),
+                *CoachProfile->GetName()
+            );
+            continue;
+        }
+
+        const FName CoachId = CoachProfile->Identity.CoachId;
+        if (RuntimeCoachProfilesById.Contains(CoachId))
+        {
+            UE_LOG(
+                LogSoccerTeamPersistence,
+                Error,
+                TEXT("[CoachRegistry] Duplicate CoachId '%s'. Keeping first profile."),
+                *CoachId.ToString()
+            );
+            continue;
+        }
+        RuntimeCoachProfilesById.Add(CoachId, CoachProfile);
+    }
+
+    const TArray<FName> RegisteredClubIds = GetAvailableClubIds();
+    for (const FName RegisteredClubId : RegisteredClubIds)
+    {
+        USoccerSquadCatalog* SquadCatalog =
+            FindSquadCatalogByClubId(RegisteredClubId);
+        USoccerClubProfile* ClubProfile = IsValid(SquadCatalog)
+            ? SquadCatalog->ClubProfile
+            : nullptr;
+        USoccerCoachProfile* CoachProfile = IsValid(ClubProfile)
+            ? ClubProfile->CurrentCoach
+            : nullptr;
+        if (!IsValid(CoachProfile))
+        {
+            UE_LOG(
+                LogSoccerTeamPersistence,
+                Warning,
+                TEXT("[CoachRegistry] Club '%s' has no current coach."),
+                *RegisteredClubId.ToString()
+            );
+            continue;
+        }
+
+        if (!CoachProfile->HasValidCoachId())
+        {
+            UE_LOG(
+                LogSoccerTeamPersistence,
+                Error,
+                TEXT("[CoachRegistry] Club '%s' references coach asset '%s' without CoachId."),
+                *RegisteredClubId.ToString(),
+                *CoachProfile->GetName()
+            );
+            continue;
+        }
+
+        const FName CoachId = CoachProfile->Identity.CoachId;
+        USoccerCoachProfile* RegisteredCoach =
+            FindCoachProfileById(CoachId);
+        if (IsValid(RegisteredCoach) && RegisteredCoach != CoachProfile)
+        {
+            UE_LOG(
+                LogSoccerTeamPersistence,
+                Error,
+                TEXT("[CoachRegistry] Club '%s' references duplicate CoachId '%s' through asset '%s'; assignment ignored."),
+                *RegisteredClubId.ToString(),
+                *CoachId.ToString(),
+                *CoachProfile->GetName()
+            );
+            continue;
+        }
+        const FName* ExistingClubId =
+            RuntimeInitialClubIdByCoachId.Find(CoachId);
+        if (ExistingClubId != nullptr && *ExistingClubId != RegisteredClubId)
+        {
+            UE_LOG(
+                LogSoccerTeamPersistence,
+                Error,
+                TEXT("[CoachRegistry] Coach '%s' is assigned to clubs '%s' and '%s'. Keeping first assignment."),
+                *CoachId.ToString(),
+                *ExistingClubId->ToString(),
+                *RegisteredClubId.ToString()
+            );
+            continue;
+        }
+
+        if (!RuntimeCoachProfilesById.Contains(CoachId))
+        {
+            RuntimeCoachProfilesById.Add(CoachId, CoachProfile);
+        }
+        RuntimeCoachByClubId.Add(RegisteredClubId, CoachProfile);
+        RuntimeInitialClubIdByCoachId.Add(CoachId, RegisteredClubId);
+    }
+
+    UE_LOG(
+        LogSoccerTeamPersistence,
+        Display,
+        TEXT("[CoachRegistry] Ready: coaches=%d, clubAssignments=%d."),
+        RuntimeCoachProfilesById.Num(),
+        RuntimeCoachByClubId.Num()
+    );
 
     TArray<USoccerPlayerProfile*> CandidateProfiles;
 
@@ -389,6 +515,50 @@ FName USoccerGameInstance::GetInitialClubIdForPlayer(
     const FName* FoundClubId =
         RuntimeInitialClubIdByPlayerId.Find(PlayerIdToFind);
 
+    return FoundClubId != nullptr ? *FoundClubId : NAME_None;
+}
+
+TArray<FName> USoccerGameInstance::GetAvailableCoachIds() const
+{
+    TArray<FName> CoachIds;
+    RuntimeCoachProfilesById.GetKeys(CoachIds);
+    for (int32 LeftIndex = 0; LeftIndex < CoachIds.Num(); ++LeftIndex)
+    {
+        for (int32 RightIndex = LeftIndex + 1; RightIndex < CoachIds.Num(); ++RightIndex)
+        {
+            if (CoachIds[RightIndex].ToString() < CoachIds[LeftIndex].ToString())
+            {
+                CoachIds.Swap(LeftIndex, RightIndex);
+            }
+        }
+    }
+    return CoachIds;
+}
+
+USoccerCoachProfile* USoccerGameInstance::FindCoachProfileById(
+    FName CoachIdToFind
+) const
+{
+    USoccerCoachProfile* const* FoundCoach =
+        RuntimeCoachProfilesById.Find(CoachIdToFind);
+    return FoundCoach != nullptr ? *FoundCoach : nullptr;
+}
+
+USoccerCoachProfile* USoccerGameInstance::GetCoachProfileForClubId(
+    FName ClubIdToFind
+) const
+{
+    USoccerCoachProfile* const* FoundCoach =
+        RuntimeCoachByClubId.Find(ClubIdToFind);
+    return FoundCoach != nullptr ? *FoundCoach : nullptr;
+}
+
+FName USoccerGameInstance::GetInitialClubIdForCoach(
+    FName CoachIdToFind
+) const
+{
+    const FName* FoundClubId =
+        RuntimeInitialClubIdByCoachId.Find(CoachIdToFind);
     return FoundClubId != nullptr ? *FoundClubId : NAME_None;
 }
 
