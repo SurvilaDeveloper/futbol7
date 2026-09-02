@@ -561,6 +561,12 @@ void USoccerDirectorTechnicalWidget::DiscoverPlayerProfiles()
     ProfilesById.Reset();
     ActiveSquadCatalog = nullptr;
 
+    if (IsValid(SoccerGameInstance))
+    {
+        ActiveSquadCatalog =
+            SoccerGameInstance->GetDefaultHumanSquadCatalog();
+    }
+
     FAssetRegistryModule& AssetRegistryModule =
         FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 
@@ -572,31 +578,49 @@ void USoccerDirectorTechnicalWidget::DiscoverPlayerProfiles()
     );
 
     USoccerSquadCatalog* FirstValidCatalog = nullptr;
-    for (const FAssetData& CatalogAssetData : CatalogAssets)
-    {
-        USoccerSquadCatalog* CandidateCatalog = Cast<USoccerSquadCatalog>(
-            CatalogAssetData.GetAsset()
-        );
-        if (!IsValid(CandidateCatalog))
-        {
-            continue;
-        }
-
-        if (FirstValidCatalog == nullptr)
-        {
-            FirstValidCatalog = CandidateCatalog;
-        }
-
-        if (CandidateCatalog->bDefaultPlayerTeamCatalog)
-        {
-            ActiveSquadCatalog = CandidateCatalog;
-            break;
-        }
-    }
+    USoccerSquadCatalog* LegacyDefaultCatalog = nullptr;
+    USoccerSquadCatalog* ExplicitHumanDefaultCatalog = nullptr;
 
     if (ActiveSquadCatalog == nullptr)
     {
-        ActiveSquadCatalog = FirstValidCatalog;
+        for (const FAssetData& CatalogAssetData : CatalogAssets)
+        {
+            USoccerSquadCatalog* CandidateCatalog = Cast<USoccerSquadCatalog>(
+                CatalogAssetData.GetAsset()
+            );
+            if (!IsValid(CandidateCatalog))
+            {
+                continue;
+            }
+
+            if (FirstValidCatalog == nullptr)
+            {
+                FirstValidCatalog = CandidateCatalog;
+            }
+
+            if (
+                CandidateCatalog->bDefaultHumanControlledClub &&
+                ExplicitHumanDefaultCatalog == nullptr
+            )
+            {
+                ExplicitHumanDefaultCatalog = CandidateCatalog;
+            }
+
+            if (
+                CandidateCatalog->bDefaultPlayerTeamCatalog &&
+                LegacyDefaultCatalog == nullptr
+            )
+            {
+                LegacyDefaultCatalog = CandidateCatalog;
+            }
+        }
+
+        ActiveSquadCatalog =
+            ExplicitHumanDefaultCatalog != nullptr
+                ? ExplicitHumanDefaultCatalog
+                : (LegacyDefaultCatalog != nullptr
+                    ? LegacyDefaultCatalog
+                    : FirstValidCatalog);
     }
 
     if (IsValid(ActiveSquadCatalog))

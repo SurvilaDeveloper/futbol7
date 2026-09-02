@@ -112,6 +112,8 @@ bool USoccerGameInstance::RefreshPlayerProfileRegistry()
 {
     RuntimePlayerProfilesById.Reset();
     RuntimePlayerTeamCatalog = nullptr;
+    RuntimeSquadCatalogsByClubId.Reset();
+    RuntimeInitialClubIdByPlayerId.Reset();
 
     FAssetRegistryModule& AssetRegistryModule =
         FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
@@ -124,6 +126,10 @@ bool USoccerGameInstance::RefreshPlayerProfileRegistry()
     );
 
     USoccerSquadCatalog* FirstValidCatalog = nullptr;
+    USoccerSquadCatalog* LegacyDefaultCatalog = nullptr;
+    USoccerSquadCatalog* ExplicitHumanDefaultCatalog = nullptr;
+    TArray<USoccerSquadCatalog*> ValidCatalogs;
+
     for (const FAssetData& CatalogAssetData : CatalogAssets)
     {
         USoccerSquadCatalog* CandidateCatalog = Cast<USoccerSquadCatalog>(
@@ -139,23 +145,102 @@ bool USoccerGameInstance::RefreshPlayerProfileRegistry()
             FirstValidCatalog = CandidateCatalog;
         }
 
-        if (CandidateCatalog->bDefaultPlayerTeamCatalog)
+        if (
+            CandidateCatalog->bDefaultHumanControlledClub &&
+            ExplicitHumanDefaultCatalog == nullptr
+        )
         {
-            RuntimePlayerTeamCatalog = CandidateCatalog;
-            break;
+            ExplicitHumanDefaultCatalog = CandidateCatalog;
         }
+
+        if (
+            CandidateCatalog->bDefaultPlayerTeamCatalog &&
+            LegacyDefaultCatalog == nullptr
+        )
+        {
+            LegacyDefaultCatalog = CandidateCatalog;
+        }
+
+        const FName ClubId = CandidateCatalog->GetClubId();
+        if (ClubId.IsNone())
+        {
+            ValidCatalogs.Add(CandidateCatalog);
+            UE_LOG(
+                LogSoccerTeamPersistence,
+                Warning,
+                TEXT("[ClubRoster] Squad catalog '%s' has no valid ClubProfile; it remains available only as a legacy fallback."),
+                *CandidateCatalog->GetName()
+            );
+            continue;
+        }
+
+        if (RuntimeSquadCatalogsByClubId.Contains(ClubId))
+        {
+            UE_LOG(
+                LogSoccerTeamPersistence,
+                Error,
+                TEXT("[ClubRoster] Duplicate squad catalog for ClubId '%s'. Keeping first catalog."),
+                *ClubId.ToString()
+            );
+            continue;
+        }
+
+        RuntimeSquadCatalogsByClubId.Add(ClubId, CandidateCatalog);
+        ValidCatalogs.Add(CandidateCatalog);
     }
 
-    if (RuntimePlayerTeamCatalog == nullptr)
-    {
-        RuntimePlayerTeamCatalog = FirstValidCatalog;
-    }
+    RuntimePlayerTeamCatalog =
+        ExplicitHumanDefaultCatalog != nullptr
+            ? ExplicitHumanDefaultCatalog
+            : (LegacyDefaultCatalog != nullptr
+                ? LegacyDefaultCatalog
+                : FirstValidCatalog);
 
     TArray<USoccerPlayerProfile*> CandidateProfiles;
 
-    if (IsValid(RuntimePlayerTeamCatalog))
+    if (ValidCatalogs.Num() > 0)
     {
-        CandidateProfiles = RuntimePlayerTeamCatalog->PlayerProfiles;
+        for (USoccerSquadCatalog* SquadCatalog : ValidCatalogs)
+        {
+            if (!IsValid(SquadCatalog))
+            {
+                continue;
+            }
+
+            const FName ClubId = SquadCatalog->GetClubId();
+            for (USoccerPlayerProfile* Profile : SquadCatalog->PlayerProfiles)
+            {
+                if (!IsValid(Profile) || !Profile->HasValidPlayerId())
+                {
+                    continue;
+                }
+
+                CandidateProfiles.AddUnique(Profile);
+
+                if (!ClubId.IsNone())
+                {
+                    const FName PlayerId = Profile->Identity.PlayerId;
+                    const FName* ExistingClubId =
+                        RuntimeInitialClubIdByPlayerId.Find(PlayerId);
+
+                    if (ExistingClubId == nullptr)
+                    {
+                        RuntimeInitialClubIdByPlayerId.Add(PlayerId, ClubId);
+                    }
+                    else if (*ExistingClubId != ClubId)
+                    {
+                        UE_LOG(
+                            LogSoccerTeamPersistence,
+                            Error,
+                            TEXT("[ClubRoster] PlayerId '%s' appears in clubs '%s' and '%s'. Keeping first membership."),
+                            *PlayerId.ToString(),
+                            *ExistingClubId->ToString(),
+                            *ClubId.ToString()
+                        );
+                    }
+                }
+            }
+        }
     }
     else
     {
@@ -205,7 +290,8 @@ bool USoccerGameInstance::RefreshPlayerProfileRegistry()
     UE_LOG(
         LogSoccerTeamPersistence,
         Display,
-        TEXT("[TeamSetup] Runtime player-profile registry ready: %d profiles, source=%s."),
+        TEXT("[ClubRoster] Registry ready: clubs=%d, profiles=%d, defaultHumanSquad=%s."),
+        RuntimeSquadCatalogsByClubId.Num(),
         RuntimePlayerProfilesById.Num(),
         IsValid(RuntimePlayerTeamCatalog)
             ? *RuntimePlayerTeamCatalog->GetName()
@@ -233,6 +319,57 @@ USoccerPlayerProfile* USoccerGameInstance::FindPlayerProfileById(
 int32 USoccerGameInstance::GetResolvedPlayerProfileCount() const
 {
     return RuntimePlayerProfilesById.Num();
+}
+
+TArray<FName> USoccerGameInstance::GetAvailableClubIds() const
+{
+    TArray<FName> ClubIds;
+    RuntimeSquadCatalogsByClubId.GetKeys(ClubIds);
+
+    // Deterministic UE4-compatible order without relying on comparator helper
+    // types that differ between engine versions.
+    for (int32 LeftIndex = 0; LeftIndex < ClubIds.Num(); ++LeftIndex)
+    {
+        for (int32 RightIndex = LeftIndex + 1; RightIndex < ClubIds.Num(); ++RightIndex)
+        {
+            if (ClubIds[RightIndex].ToString() < ClubIds[LeftIndex].ToString())
+            {
+                ClubIds.Swap(LeftIndex, RightIndex);
+            }
+        }
+    }
+
+    return ClubIds;
+}
+
+USoccerSquadCatalog* USoccerGameInstance::FindSquadCatalogByClubId(
+    FName ClubIdToFind
+) const
+{
+    if (ClubIdToFind.IsNone())
+    {
+        return nullptr;
+    }
+
+    USoccerSquadCatalog* const* FoundCatalog =
+        RuntimeSquadCatalogsByClubId.Find(ClubIdToFind);
+
+    return FoundCatalog != nullptr ? *FoundCatalog : nullptr;
+}
+
+USoccerSquadCatalog* USoccerGameInstance::GetDefaultHumanSquadCatalog() const
+{
+    return RuntimePlayerTeamCatalog;
+}
+
+FName USoccerGameInstance::GetInitialClubIdForPlayer(
+    FName PlayerIdToFind
+) const
+{
+    const FName* FoundClubId =
+        RuntimeInitialClubIdByPlayerId.Find(PlayerIdToFind);
+
+    return FoundClubId != nullptr ? *FoundClubId : NAME_None;
 }
 
 bool USoccerGameInstance::SaveTeamSetup()

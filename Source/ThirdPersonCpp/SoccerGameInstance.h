@@ -153,6 +153,20 @@ public:
     UFUNCTION(BlueprintPure, Category = "Soccer|Player Profiles")
     int32 GetResolvedPlayerProfileCount() const;
 
+    /** Stage 9E: all valid club IDs discovered from SoccerSquadCatalog assets. */
+    UFUNCTION(BlueprintPure, Category = "Soccer|Clubs")
+    TArray<FName> GetAvailableClubIds() const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Clubs")
+    USoccerSquadCatalog* FindSquadCatalogByClubId(FName ClubIdToFind) const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer|Clubs")
+    USoccerSquadCatalog* GetDefaultHumanSquadCatalog() const;
+
+    /** Initial content-side membership. Future transfers will override this in SaveGame. */
+    UFUNCTION(BlueprintPure, Category = "Soccer|Clubs")
+    FName GetInitialClubIdForPlayer(FName PlayerIdToFind) const;
+
     static FString GetTeamSaveSlotName();
     static int32 GetCurrentSaveFormatVersion();
     static int32 GetCurrentTeamSetupDataVersion();
@@ -183,6 +197,12 @@ private:
 
     UPROPERTY(Transient)
     USoccerSquadCatalog* RuntimePlayerTeamCatalog = nullptr;
+
+    UPROPERTY(Transient)
+    TMap<FName, USoccerSquadCatalog*> RuntimeSquadCatalogsByClubId;
+
+    UPROPERTY(Transient)
+    TMap<FName, FName> RuntimeInitialClubIdByPlayerId;
 
     bool bTeamSetupLoaded = false;
     bool bTeamSetupDirty = false;

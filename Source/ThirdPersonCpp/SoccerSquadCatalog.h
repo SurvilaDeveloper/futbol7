@@ -5,6 +5,7 @@
 #include "SoccerSquadCatalog.generated.h"
 
 class USoccerPlayerProfile;
+class USoccerClubProfile;
 
 /**
  * Content-side roster catalog for the technical-director layer.
@@ -26,14 +27,29 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer Squad")
     FText DisplayName;
 
+    /** Club that owns this initial content-side roster. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer Squad | Club")
+    USoccerClubProfile* ClubProfile = nullptr;
+
+    /** Preferred club when the Director Technical screen starts. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer Squad | Club")
+    bool bDefaultHumanControlledClub = false;
+
     /**
-     * When several catalogs exist, the manager screen prefers the one marked as
-     * the default PlayerTeam roster. Only one should normally be checked.
+     * Legacy compatibility flag from the single-PlayerTeam model. Existing
+     * assets keep working; new club catalogs should use
+     * bDefaultHumanControlledClub instead.
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer Squad")
-    bool bDefaultPlayerTeamCatalog = true;
+    bool bDefaultPlayerTeamCatalog = false;
 
     /** Permanent player definitions available to the coach. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Soccer Squad")
     TArray<USoccerPlayerProfile*> PlayerProfiles;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer Squad")
+    FName GetClubId() const;
+
+    UFUNCTION(BlueprintPure, Category = "Soccer Squad")
+    bool HasValidClubAssociation() const;
 };
