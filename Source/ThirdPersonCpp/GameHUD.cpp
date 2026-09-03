@@ -6,7 +6,9 @@
 #include "Kismet/GameplayStatics.h"
 
 #include "SoccerMatchManager.h"
+#include "SoccerGameInstance.h"
 #include "SoccerInstantReplayManager.h"
+#include "SoccerPlayerProfile.h"
 #include "SoccerTeamTypes.h"
 
 #include "SoccerDebugManager.h"
@@ -455,6 +457,7 @@ void AGameHUD::DrawHUD()
 	DrawHumanPassRequestIndicator();
 	DrawHumanJumpHeaderIndicator();
 	DrawQuickTacticsFeedback();
+	DrawSubstitutionPresentation();
 	DrawSoccerDebugTextFeed();
 	DrawSoccerDebugPanel();
 
@@ -662,6 +665,164 @@ void AGameHUD::DrawHUD()
 			KickBarY + BarHeight,
 			FLinearColor::White,
 			1.0f
+		);
+	}
+}
+
+FString AGameHUD::ResolvePlayerDisplayName(FName PlayerId) const
+{
+	const USoccerGameInstance* SoccerGameInstance = GetWorld() != nullptr
+		? Cast<USoccerGameInstance>(GetWorld()->GetGameInstance())
+		: nullptr;
+	const USoccerPlayerProfile* PlayerProfile = IsValid(SoccerGameInstance)
+		? SoccerGameInstance->FindPlayerProfileById(PlayerId)
+		: nullptr;
+	if (IsValid(PlayerProfile) && !PlayerProfile->Identity.DisplayName.IsEmpty())
+	{
+		return PlayerProfile->Identity.DisplayName.ToString();
+	}
+	return PlayerId.IsNone() ? FString(TEXT("--")) : PlayerId.ToString();
+}
+
+void AGameHUD::DrawSubstitutionPresentation()
+{
+	if (Canvas == nullptr || !IsValid(MatchManager))
+	{
+		return;
+	}
+
+	const FSoccerMatchSquadState PlayerState =
+		MatchManager->GetMatchSquadState(ESoccerTeam::PlayerTeam);
+	const FSoccerMatchSquadState OpponentState =
+		MatchManager->GetMatchSquadState(ESoccerTeam::OpponentTeam);
+	if (!bSubstitutionHistoryObserved)
+	{
+		ObservedPlayerTeamSubstitutionCount = PlayerState.SubstitutionHistory.Num();
+		ObservedOpponentTeamSubstitutionCount = OpponentState.SubstitutionHistory.Num();
+		bSubstitutionHistoryObserved = true;
+	}
+
+	auto CaptureLatestExecution = [this](
+		const FSoccerMatchSquadState& SquadState,
+		int32& ObservedCount,
+		const FString& TeamLabel
+	)
+	{
+		const int32 CurrentCount = SquadState.SubstitutionHistory.Num();
+		if (CurrentCount > ObservedCount && CurrentCount > 0)
+		{
+			const FSoccerMatchSubstitutionRecord& Record =
+				SquadState.SubstitutionHistory.Last();
+			SubstitutionPresentationText = FString::Printf(
+				TEXT("CAMBIO — %s\nSALE  %s     ENTRA  %s"),
+				*TeamLabel,
+				*ResolvePlayerDisplayName(Record.OutgoingPlayerId),
+				*ResolvePlayerDisplayName(Record.IncomingPlayerId)
+			);
+			SubstitutionPresentationExpiryRealTime = FPlatformTime::Seconds() + 5.0;
+		}
+		ObservedCount = CurrentCount;
+	};
+
+	CaptureLatestExecution(
+		PlayerState,
+		ObservedPlayerTeamSubstitutionCount,
+		TEXT("TU EQUIPO")
+	);
+	CaptureLatestExecution(
+		OpponentState,
+		ObservedOpponentTeamSubstitutionCount,
+		TEXT("RIVAL")
+	);
+
+	UFont* PresentationFont = GEngine != nullptr
+		? GEngine->GetMediumFont()
+		: nullptr;
+	UFont* PendingFont = GEngine != nullptr
+		? GEngine->GetSmallFont()
+		: nullptr;
+	if (PresentationFont == nullptr)
+	{
+		return;
+	}
+
+	const double CurrentRealTime = FPlatformTime::Seconds();
+	if (
+		!SubstitutionPresentationText.IsEmpty() &&
+		CurrentRealTime <= SubstitutionPresentationExpiryRealTime
+	)
+	{
+		const float TextScale = 1.25f;
+		float TextWidth = 0.0f;
+		float TextHeight = 0.0f;
+		GetTextSize(
+			SubstitutionPresentationText,
+			TextWidth,
+			TextHeight,
+			PresentationFont,
+			TextScale
+		);
+		const float PaddingX = 28.0f;
+		const float PaddingY = 16.0f;
+		const float BoxX = Canvas->SizeX * 0.5f - TextWidth * 0.5f - PaddingX;
+		const float BoxY = Canvas->SizeY * 0.24f;
+		DrawRect(
+			FLinearColor(0.015f, 0.055f, 0.075f, 0.90f),
+			BoxX,
+			BoxY,
+			TextWidth + PaddingX * 2.0f,
+			TextHeight + PaddingY * 2.0f
+		);
+		DrawText(
+			SubstitutionPresentationText,
+			FLinearColor(0.88f, 0.96f, 1.0f, 1.0f),
+			Canvas->SizeX * 0.5f - TextWidth * 0.5f,
+			BoxY + PaddingY,
+			PresentationFont,
+			TextScale
+		);
+	}
+
+	FSoccerMatchSubstitutionRequest PendingRequest;
+	if (
+		PendingFont != nullptr &&
+		MatchManager->GetPendingMatchSubstitution(
+			ESoccerTeam::PlayerTeam,
+			PendingRequest
+		)
+	)
+	{
+		const FString PendingMessage = FString::Printf(
+			TEXT("CAMBIO SOLICITADO: %s por %s — esperando una pausa segura"),
+			*ResolvePlayerDisplayName(PendingRequest.OutgoingPlayerId),
+			*ResolvePlayerDisplayName(PendingRequest.IncomingPlayerId)
+		);
+		const float PendingScale = 1.05f;
+		float PendingWidth = 0.0f;
+		float PendingHeight = 0.0f;
+		GetTextSize(
+			PendingMessage,
+			PendingWidth,
+			PendingHeight,
+			PendingFont,
+			PendingScale
+		);
+		const float PendingX = Canvas->SizeX * 0.5f - PendingWidth * 0.5f;
+		const float PendingY = Canvas->SizeY - PendingHeight - 54.0f;
+		DrawRect(
+			FLinearColor(0.02f, 0.03f, 0.04f, 0.78f),
+			PendingX - 16.0f,
+			PendingY - 9.0f,
+			PendingWidth + 32.0f,
+			PendingHeight + 18.0f
+		);
+		DrawText(
+			PendingMessage,
+			FLinearColor(1.0f, 0.82f, 0.38f, 1.0f),
+			PendingX,
+			PendingY,
+			PendingFont,
+			PendingScale
 		);
 	}
 }

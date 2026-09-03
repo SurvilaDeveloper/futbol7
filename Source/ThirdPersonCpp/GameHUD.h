@@ -42,6 +42,8 @@ private:
 	void EnsureTacticalPresetManager();
 	void DrawQuickTacticsFeedback();
 	void DrawInstantReplayOverlay();
+	void DrawSubstitutionPresentation();
+	FString ResolvePlayerDisplayName(FName PlayerId) const;
 
 	void DrawMatchScoreboard();
 
@@ -77,4 +79,9 @@ private:
 
 	FString QuickTacticsFeedbackText;
 	double QuickTacticsFeedbackExpiryRealTime = -1.0;
+	FString SubstitutionPresentationText;
+	double SubstitutionPresentationExpiryRealTime = -1.0;
+	int32 ObservedPlayerTeamSubstitutionCount = 0;
+	int32 ObservedOpponentTeamSubstitutionCount = 0;
+	bool bSubstitutionHistoryObserved = false;
 };

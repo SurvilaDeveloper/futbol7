@@ -135,12 +135,9 @@ void AThirdPersonCppCharacter::SetupPlayerInputComponent(class UInputComponent* 
 	// Direct debug binding: no Project Settings Action Mapping is required.
 	PlayerInputComponent->BindKey(EKeys::NumPadSix, IE_Pressed, this, &AThirdPersonCppCharacter::DebugStartOpponentPenalty);
 	PlayerInputComponent->BindKey(EKeys::NumPadSeven, IE_Pressed, this, &AThirdPersonCppCharacter::DebugStartPlayerTeamPenalty);
-	PlayerInputComponent->BindKey(EKeys::NumPadOne, IE_Pressed, this, &AThirdPersonCppCharacter::DebugCyclePlayerTeamOutgoingSubstitute);
-	PlayerInputComponent->BindKey(EKeys::NumPadTwo, IE_Pressed, this, &AThirdPersonCppCharacter::DebugCyclePlayerTeamIncomingSubstitute);
-	PlayerInputComponent->BindKey(EKeys::NumPadThree, IE_Pressed, this, &AThirdPersonCppCharacter::DebugConfirmPlayerTeamSubstitution);
-	PlayerInputComponent->BindKey(EKeys::NumPadFour, IE_Pressed, this, &AThirdPersonCppCharacter::DebugCancelPlayerTeamSubstitution);
-	PlayerInputComponent->BindKey(EKeys::NumPadFive, IE_Pressed, this, &AThirdPersonCppCharacter::DebugRequestOpponentTeamSubstitution);
-	PlayerInputComponent->BindKey(EKeys::NumPadZero, IE_Pressed, this, &AThirdPersonCppCharacter::DebugForceOpponentCoachSubstitutionDecision);
+	// Stage 9N: the substitution debug keys (NumPad 0-5) were retired.
+	// Human substitutions now use the N menu and the rival coach evaluates
+	// substitutions automatically during the match.
 
 	// Stage 12B: one dedicated toggle is available on keyboard and gamepad.
 	// When the menu is open, UIOnly input means the widget owns the same keys
