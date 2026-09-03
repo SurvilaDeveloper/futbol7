@@ -8,8 +8,8 @@ class ASoccerMatchManager;
 class ASoccerDebugManager;
 class USoccerFormationMenuWidget;
 class USoccerQuickTacticsWidget;
+class USoccerSubstitutionMenuWidget;
 class USoccerTacticalPresetManager;
-class USoccerClubSelectionWidget;
 
 UCLASS()
 class THIRDPERSONCPP_API AGameHUD : public AHUD
@@ -25,18 +25,19 @@ public:
 	void ToggleFormationMenu();
 	bool IsFormationMenuVisible() const;
 
-	void ShowClubSelectionMenu();
-
 	void ShowQuickTacticsMenu();
 	void HideQuickTacticsMenu();
 	void ToggleQuickTacticsMenu();
 	bool IsQuickTacticsMenuVisible() const;
 
+	void ShowSubstitutionMenu();
+	void HideSubstitutionMenu();
+	void ToggleSubstitutionMenu();
+	bool IsSubstitutionMenuVisible() const;
+
 	void ShowQuickTacticsFeedback(const FString& Message);
 
 private:
-	UFUNCTION()
-	void HandleClubSelectionConfirmed();
 	void FindMatchManager();
 	void EnsureTacticalPresetManager();
 	void DrawQuickTacticsFeedback();
@@ -66,10 +67,10 @@ private:
 		USoccerFormationMenuWidget* FormationMenuWidget = nullptr;
 
 	UPROPERTY()
-	USoccerClubSelectionWidget* ClubSelectionWidget = nullptr;
+		USoccerQuickTacticsWidget* QuickTacticsWidget = nullptr;
 
 	UPROPERTY()
-		USoccerQuickTacticsWidget* QuickTacticsWidget = nullptr;
+		USoccerSubstitutionMenuWidget* SubstitutionMenuWidget = nullptr;
 
 	UPROPERTY()
 		USoccerTacticalPresetManager* TacticalPresetManager = nullptr;

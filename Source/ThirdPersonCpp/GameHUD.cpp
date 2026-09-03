@@ -11,8 +11,8 @@
 
 #include "SoccerDebugManager.h"
 #include "SoccerFormationMenuWidget.h"
-#include "SoccerClubSelectionWidget.h"
 #include "SoccerQuickTacticsWidget.h"
+#include "SoccerSubstitutionMenuWidget.h"
 #include "SoccerTacticalPresetManager.h"
 
 #include "Engine/Engine.h"
@@ -35,76 +35,17 @@ void AGameHUD::BeginPlay()
 	)
 	{
 		FTimerDelegate OpenMenuDelegate;
-		if (MatchManager->ShouldShowClubSelectionAtMatchStart())
-		{
-			OpenMenuDelegate.BindUObject(this, &AGameHUD::ShowClubSelectionMenu);
-		}
-		else
-		{
-			OpenMenuDelegate.BindUObject(this, &AGameHUD::ShowFormationMenu);
-		}
+		OpenMenuDelegate.BindUObject(this, &AGameHUD::ShowFormationMenu);
 		GetWorldTimerManager().SetTimerForNextTick(OpenMenuDelegate);
 	}
 }
 
-void AGameHUD::ShowClubSelectionMenu()
-{
-	if (!IsValid(MatchManager))
-	{
-		FindMatchManager();
-	}
-
-	APlayerController* PlayerController =
-		UGameplayStatics::GetPlayerController(GetWorld(), 0);
-	if (!IsValid(MatchManager) || PlayerController == nullptr)
-	{
-		return;
-	}
-
-	if (!IsValid(ClubSelectionWidget))
-	{
-		ClubSelectionWidget = CreateWidget<USoccerClubSelectionWidget>(
-			PlayerController,
-			USoccerClubSelectionWidget::StaticClass()
-		);
-		if (IsValid(ClubSelectionWidget))
-		{
-			ClubSelectionWidget->OnSelectionConfirmed.AddDynamic(
-				this,
-				&AGameHUD::HandleClubSelectionConfirmed
-			);
-		}
-	}
-
-	if (!IsValid(ClubSelectionWidget))
-	{
-		ShowFormationMenu();
-		return;
-	}
-
-	ClubSelectionWidget->InitializeForMatchManager(MatchManager);
-	if (!ClubSelectionWidget->HasSelectableOpponent())
-	{
-		ShowFormationMenu();
-		return;
-	}
-
-	if (!ClubSelectionWidget->IsInViewport())
-	{
-		ClubSelectionWidget->AddToViewport(120);
-	}
-	ClubSelectionWidget->ActivateMenu(
-		MatchManager->ShouldPauseGameWhileFormationMenuOpen()
-	);
-}
-
-void AGameHUD::HandleClubSelectionConfirmed()
-{
-	ShowFormationMenu();
-}
-
 void AGameHUD::ShowFormationMenu()
 {
+	if (IsSubstitutionMenuVisible())
+	{
+		return;
+	}
 	if (!IsValid(MatchManager))
 	{
 		FindMatchManager();
@@ -182,7 +123,7 @@ bool AGameHUD::IsFormationMenuVisible() const
 
 void AGameHUD::ShowQuickTacticsMenu()
 {
-	if (IsFormationMenuVisible())
+	if (IsFormationMenuVisible() || IsSubstitutionMenuVisible())
 	{
 		return;
 	}
@@ -251,6 +192,70 @@ bool AGameHUD::IsQuickTacticsMenuVisible() const
 	return
 		IsValid(QuickTacticsWidget) &&
 		QuickTacticsWidget->IsInViewport();
+}
+
+void AGameHUD::ShowSubstitutionMenu()
+{
+	if (IsFormationMenuVisible() || IsQuickTacticsMenuVisible())
+	{
+		return;
+	}
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+	if (!IsValid(MatchManager))
+	{
+		return;
+	}
+	APlayerController* PlayerController =
+		UGameplayStatics::GetPlayerController(GetWorld(), 0);
+	if (PlayerController == nullptr)
+	{
+		return;
+	}
+	if (!IsValid(SubstitutionMenuWidget))
+	{
+		SubstitutionMenuWidget = CreateWidget<USoccerSubstitutionMenuWidget>(
+			PlayerController,
+			USoccerSubstitutionMenuWidget::StaticClass()
+		);
+	}
+	if (!IsValid(SubstitutionMenuWidget))
+	{
+		return;
+	}
+	SubstitutionMenuWidget->InitializeForMatchManager(MatchManager);
+	if (!SubstitutionMenuWidget->IsInViewport())
+	{
+		SubstitutionMenuWidget->AddToViewport(120);
+	}
+	SubstitutionMenuWidget->ActivateMenu(true);
+}
+
+void AGameHUD::HideSubstitutionMenu()
+{
+	if (IsValid(SubstitutionMenuWidget) && SubstitutionMenuWidget->IsInViewport())
+	{
+		SubstitutionMenuWidget->CloseMenu();
+	}
+}
+
+void AGameHUD::ToggleSubstitutionMenu()
+{
+	if (IsSubstitutionMenuVisible())
+	{
+		HideSubstitutionMenu();
+	}
+	else
+	{
+		ShowSubstitutionMenu();
+	}
+}
+
+bool AGameHUD::IsSubstitutionMenuVisible() const
+{
+	return IsValid(SubstitutionMenuWidget) && SubstitutionMenuWidget->IsInViewport();
 }
 
 void AGameHUD::ShowQuickTacticsFeedback(const FString& Message)

@@ -134,6 +134,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match Squad")
 	bool HasPendingMatchSubstitution(ESoccerTeam Team) const;
 
+	UFUNCTION(BlueprintPure, Category = "Soccer|Match Squad")
+	bool GetPendingMatchSubstitution(
+		ESoccerTeam Team,
+		FSoccerMatchSubstitutionRequest& OutRequest
+	) const;
+
 	/** Temporary Stage 9K keyboard tests. */
 	void DebugRequestAutomaticSubstitution(ESoccerTeam Team);
 	void DebugCyclePlayerTeamOutgoingSubstitute();

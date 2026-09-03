@@ -164,6 +164,9 @@ protected:
 	/** Opens the four-slot quick tactics selector. Bound to Tab and Gamepad View/Back. */
 	void ToggleQuickTacticsMenu();
 
+	/** Opens the in-match human substitution screen. Bound to N. */
+	void ToggleSubstitutionMenu();
+
 	/** Resets HMD orientation in VR. */
 	void OnResetVR();
 

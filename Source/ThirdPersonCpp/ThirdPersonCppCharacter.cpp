@@ -178,6 +178,14 @@ void AThirdPersonCppCharacter::SetupPlayerInputComponent(class UInputComponent* 
 		&AThirdPersonCppCharacter::ToggleQuickTacticsMenu
 	);
 	QuickTacticsGamepadBinding.bExecuteWhenPaused = true;
+
+	FInputKeyBinding& SubstitutionMenuKeyboardBinding = PlayerInputComponent->BindKey(
+		EKeys::N,
+		IE_Pressed,
+		this,
+		&AThirdPersonCppCharacter::ToggleSubstitutionMenu
+	);
+	SubstitutionMenuKeyboardBinding.bExecuteWhenPaused = true;
 	PlayerInputComponent->BindAction("KickToTargetFollow", IE_Pressed, this, &AThirdPersonCppCharacter::HandleLeftClickTarget);
 	PlayerInputComponent->BindAction("KickToTargetRelease", IE_Pressed, this, &AThirdPersonCppCharacter::StartChargedKickRelease);
 	PlayerInputComponent->BindAction("KickToTargetRelease", IE_Released, this, &AThirdPersonCppCharacter::FinishChargedKickRelease);
@@ -230,6 +238,20 @@ void AThirdPersonCppCharacter::ToggleQuickTacticsMenu()
 	}
 
 	GameHUD->ToggleQuickTacticsMenu();
+}
+
+void AThirdPersonCppCharacter::ToggleSubstitutionMenu()
+{
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (PlayerController == nullptr)
+	{
+		return;
+	}
+	AGameHUD* GameHUD = Cast<AGameHUD>(PlayerController->GetHUD());
+	if (GameHUD != nullptr)
+	{
+		GameHUD->ToggleSubstitutionMenu();
+	}
 }
 
 void AThirdPersonCppCharacter::DebugStartOpponentPenalty()

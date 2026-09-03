@@ -2742,12 +2742,30 @@ bool ASoccerMatchManager::HasPendingMatchSubstitution(ESoccerTeam Team) const
 	);
 }
 
+bool ASoccerMatchManager::GetPendingMatchSubstitution(
+	ESoccerTeam Team,
+	FSoccerMatchSubstitutionRequest& OutRequest
+) const
+{
+	OutRequest = FSoccerMatchSubstitutionRequest();
+	for (const FSoccerMatchSubstitutionRequest& Request : PendingMatchSubstitutions)
+	{
+		if (Request.Team == Team)
+		{
+			OutRequest = Request;
+			return true;
+		}
+	}
+	return false;
+}
+
 bool ASoccerMatchManager::RequestMatchSubstitution(
 	ESoccerTeam Team,
 	FName OutgoingPlayerId,
 	FName IncomingPlayerId
 )
 {
+	SynchronizeMatchSquadActiveSlotsFromActors(Team);
 	FSoccerMatchSquadState& State = GetMutableMatchSquadState(Team);
 	if (
 		!State.bInitialized ||
