@@ -2100,17 +2100,25 @@ void ASoccerMatchManager::UpdateOpponentCoachSubstitutionAI(float DeltaTime)
 		return;
 	}
 	const float DecisionThreshold = FMath::Lerp(62.0f, 50.0f, TimingAlpha);
+	const bool bDesperateMatchSituation =
+		MatchProgress >= 0.75f && ScoreDifference <= -2;
+	const int32 MinimumIncomingSuitability =
+		(bEmergencyFatigue || bDesperateMatchSituation) ? 20 : 35;
+	const float EffectiveDecisionThreshold = FMath::Max(
+		35.0f,
+		DecisionThreshold - (bDesperateMatchSituation ? 8.0f : 0.0f)
+	);
 	if (
-		BestIncomingSuitability < 35 ||
+		BestIncomingSuitability < MinimumIncomingSuitability ||
 		(
 			!bForcedDebugEvaluation &&
 			!bEmergencyFatigue &&
-			BestDecisionScore < DecisionThreshold
+			BestDecisionScore < EffectiveDecisionThreshold
 		)
 	)
 	{
 		LogWait(
-			BestIncomingSuitability < 35
+			BestIncomingSuitability < MinimumIncomingSuitability
 				? TEXT("best substitute is not suitable enough for the slot")
 				: TEXT("decision score below coach threshold"),
 			BestOutgoingId,
@@ -2118,7 +2126,7 @@ void ASoccerMatchManager::UpdateOpponentCoachSubstitutionAI(float DeltaTime)
 			BestEnergyPercent,
 			BestIncomingSuitability,
 			BestDecisionScore,
-			DecisionThreshold
+			EffectiveDecisionThreshold
 		);
 		return;
 	}
@@ -2133,18 +2141,20 @@ void ASoccerMatchManager::UpdateOpponentCoachSubstitutionAI(float DeltaTime)
 		UE_LOG(
 			LogTemp,
 			Display,
-			TEXT("[CoachSubstitution] coach=%s slot=%s OUT=%s IN=%s energy=%.2f fit=%d decision=%.1f threshold=%.1f progress=%.3f scoreDiff=%d emergency=%s forced=%s."),
+			TEXT("[CoachSubstitution] coach=%s slot=%s OUT=%s IN=%s energy=%.2f fit=%d minFit=%d decision=%.1f threshold=%.1f progress=%.3f scoreDiff=%d emergency=%s desperation=%s forced=%s."),
 			*CoachProfile->Identity.CoachId.ToString(),
 			*BestSlotId.ToString(),
 			*BestOutgoingId.ToString(),
 			*BestIncomingId.ToString(),
 			BestEnergyPercent,
 			BestIncomingSuitability,
+			MinimumIncomingSuitability,
 			BestDecisionScore,
-			DecisionThreshold,
+			EffectiveDecisionThreshold,
 			MatchProgress,
 			ScoreDifference,
 			bEmergencyFatigue ? TEXT("YES") : TEXT("NO"),
+			bDesperateMatchSituation ? TEXT("YES") : TEXT("NO"),
 			bForcedDebugEvaluation ? TEXT("YES") : TEXT("NO")
 		);
 	}
