@@ -22111,18 +22111,19 @@ bool ASoccerMatchManager::IsOpponentBlockingLaneBetweenLocations(
 	return false;
 }
 
-FVector ASoccerMatchManager::BuildAttackPassTargetLocation(
+bool ASoccerMatchManager::BuildAttackPassTargetLocation(
 	const ASoccerAICharacter* BallCarrier,
 	const ASoccerCharacterBase* Receiver,
 	ESoccerAIOrder ReceiverOrder,
-	bool& bOutPassToSpace
+	ESoccerAttackPassType PassType,
+	FVector& OutTargetLocation
 ) const
 {
-	bOutPassToSpace = false;
+	OutTargetLocation = FVector::ZeroVector;
 
 	if (!IsValid(BallCarrier) || !IsValid(Receiver))
 	{
-		return FVector::ZeroVector;
+		return false;
 	}
 
 	const ESoccerTeam Team =
@@ -22160,24 +22161,79 @@ FVector ASoccerMatchManager::BuildAttackPassTargetLocation(
 			Team
 		);
 
-	const bool bReceiverRunningForward =
+	FVector ReceiverVelocity = Receiver->GetVelocity();
+	ReceiverVelocity.Z = 0.0f;
+
+	const float ReceiverSpeed = ReceiverVelocity.Size2D();
+	const float ForwardRunDot = ReceiverSpeed > KINDA_SMALL_NUMBER
+		? FVector::DotProduct(ReceiverVelocity / ReceiverSpeed, AttackDirection)
+		: 0.0f;
+
+	const bool bReceiverHasForwardOrder =
 		ReceiverOrder == ESoccerAIOrder::AttackRunIntoSpace ||
 		ReceiverOrder == ESoccerAIOrder::AttackWideSupport;
 
-	const bool bReceiverIsAhead =
-		ReceiverDepthAlpha > CarrierDepthAlpha + 0.05f;
-
-	if (
-		bReceiverRunningForward &&
-		bReceiverIsAhead &&
-		!AttackDirection.IsNearlyZero()
-		)
+	if (PassType == ESoccerAttackPassType::ForwardSpace)
 	{
-		TargetLocation =
-			Receiver->GetActorLocation()
-			+ AttackDirection * GetCollectivePassToSpaceLeadDistance(Team);
+		const bool bMovingForward =
+			ReceiverSpeed >= FMath::Max(0.0f, AttackPassForwardRunMinSpeed) &&
+			ForwardRunDot >= AttackPassForwardRunMinDot;
 
-		bOutPassToSpace = true;
+		const bool bReceiverIsAhead =
+			ReceiverDepthAlpha > CarrierDepthAlpha + 0.02f;
+
+		if (
+			!bEnableAttackForwardSpacePass ||
+			AttackDirection.IsNearlyZero() ||
+			(!bMovingForward && !(bReceiverHasForwardOrder && bReceiverIsAhead))
+		)
+		{
+			return false;
+		}
+
+		FVector LeadOffset = ReceiverVelocity * FMath::Max(0.0f, AttackPassForwardLeadTime);
+		float ForwardLead = FVector::DotProduct(LeadOffset, AttackDirection);
+		ForwardLead = FMath::Clamp(
+			FMath::Max(ForwardLead, AttackPassForwardMinLeadDistance),
+			0.0f,
+			FMath::Max(AttackPassForwardMinLeadDistance, AttackPassForwardMaxLeadDistance)
+		);
+
+		const FVector LateralLead = LeadOffset - AttackDirection * FVector::DotProduct(LeadOffset, AttackDirection);
+		TargetLocation = Receiver->GetActorLocation() + AttackDirection * ForwardLead + LateralLead;
+	}
+	else if (PassType == ESoccerAttackPassType::RetentionSpace)
+	{
+		if (
+			AttackDirection.IsNearlyZero() ||
+			ReceiverDepthAlpha > CarrierDepthAlpha + AttackPassRetentionMaxDepthAdvantage
+		)
+		{
+			return false;
+		}
+
+		TargetLocation = Receiver->GetActorLocation()
+			- AttackDirection * FMath::Max(0.0f, AttackPassRetentionLeadDistance);
+	}
+	else
+	{
+		FVector LeadOffset = ReceiverVelocity * FMath::Max(0.0f, AttackPassToFeetLeadTime);
+		const float MaxLead = FMath::Max(0.0f, AttackPassToFeetMaxLeadDistance);
+		if (MaxLead > 0.0f && LeadOffset.Size2D() > MaxLead)
+		{
+			LeadOffset = LeadOffset.GetSafeNormal2D() * MaxLead;
+		}
+		TargetLocation += LeadOffset;
+	}
+
+	const float FieldInset = FMath::Max(0.0f, AttackPassTargetFieldInset);
+	if (IsValid(SoccerField))
+	{
+		TargetLocation = SoccerField->ClampWorldLocationInsidePitch(TargetLocation, FieldInset);
+	}
+	else
+	{
+		TargetLocation = SoccerFieldDimensions::ClampLocationInsidePitch(TargetLocation, FieldInset);
 	}
 
 	TargetLocation.Z =
@@ -22185,14 +22241,57 @@ FVector ASoccerMatchManager::BuildAttackPassTargetLocation(
 		? SoccerBall->GetActorLocation().Z
 		: BallCarrier->GetActorLocation().Z;
 
-	return TargetLocation;
+	if (PassType == ESoccerAttackPassType::ForwardSpace)
+	{
+		const float ReceiverArrival = Receiver->EstimateArrivalTimeToLocation(TargetLocation);
+		const float OpponentArrival = GetEarliestOpponentArrivalTimeToLocation(Team, TargetLocation);
+		if (
+			FMath::IsFinite(OpponentArrival) &&
+			OpponentArrival - ReceiverArrival < AttackPassForwardMinArrivalMargin
+		)
+		{
+			return false;
+		}
+	}
+
+	OutTargetLocation = TargetLocation;
+	return true;
+}
+
+float ASoccerMatchManager::GetEarliestOpponentArrivalTimeToLocation(
+	ESoccerTeam Team,
+	const FVector& TargetLocation
+) const
+{
+	float EarliestArrival = TNumericLimits<float>::Max();
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return EarliestArrival;
+	}
+
+	for (TActorIterator<ASoccerCharacterBase> It(World); It; ++It)
+	{
+		const ASoccerCharacterBase* Candidate = *It;
+		if (!IsValid(Candidate) || Candidate->GetTeam() == Team)
+		{
+			continue;
+		}
+
+		EarliestArrival = FMath::Min(
+			EarliestArrival,
+			Candidate->EstimateArrivalTimeToLocation(TargetLocation)
+		);
+	}
+
+	return EarliestArrival;
 }
 
 float ASoccerMatchManager::ScoreAttackPassOption(
 	const ASoccerAICharacter* BallCarrier,
 	const ASoccerCharacterBase* Receiver,
 	const FVector& PassTargetLocation,
-	bool bPassToSpace
+	ESoccerAttackPassType PassType
 ) const
 {
 	if (!IsValid(BallCarrier) || !IsValid(Receiver))
@@ -22255,9 +22354,13 @@ float ASoccerMatchManager::ScoreAttackPassOption(
 	// Progresar suma, pero tampoco obligamos siempre a pasar hacia adelante.
 	Score += ProgressAlpha * 900.0f;
 
-	if (bPassToSpace)
+	if (PassType == ESoccerAttackPassType::ForwardSpace)
 	{
-		Score += 180.0f;
+		Score += 260.0f;
+	}
+	else if (PassType == ESoccerAttackPassType::RetentionSpace)
+	{
+		Score += AttackPassRetentionSafetyBonus;
 	}
 
 	const ESoccerPlayerRole ReceiverRole =
@@ -22284,6 +22387,18 @@ float ASoccerMatchManager::ScoreAttackPassOption(
 		);
 
 	Score -= OpponentsNearTarget * 260.0f;
+
+	if (
+		PassType == ESoccerAttackPassType::ToFeet &&
+		CountOpponentsAroundLocation(
+			Team,
+			Receiver->GetActorLocation(),
+			FMath::Max(0.0f, AttackPassToFeetCriticalOpponentRadius)
+		) > 0
+	)
+	{
+		Score -= FMath::Max(0.0f, AttackPassToFeetCriticalPressurePenalty);
+	}
 
 	const int32 TeammatesNearTarget =
 		CountTeammatesAroundLocation(
@@ -22360,7 +22475,7 @@ float ASoccerMatchManager::ScoreAttackPassOption(
 				Score += StyleStrength * 0.45f;
 			}
 
-			if (bPassToSpace)
+			if (PassType == ESoccerAttackPassType::ForwardSpace)
 			{
 				Score -= StyleStrength * 0.55f;
 			}
@@ -22370,7 +22485,7 @@ float ASoccerMatchManager::ScoreAttackPassOption(
 			Score += FMath::Max(0.0f, ProgressAlpha) * StyleStrength * 2.8f;
 			Score += PassDistanceAlpha * StyleStrength * 0.55f;
 
-			if (bPassToSpace)
+			if (PassType == ESoccerAttackPassType::ForwardSpace)
 			{
 				Score += StyleStrength;
 			}
@@ -22387,7 +22502,7 @@ float ASoccerMatchManager::ScoreAttackPassOption(
 		{
 			Score += FMath::Max(0.0f, ProgressAlpha) * StyleStrength * 1.8f;
 
-			if (bPassToSpace)
+			if (PassType == ESoccerAttackPassType::ForwardSpace)
 			{
 				Score += StyleStrength * 0.55f;
 			}
@@ -22439,7 +22554,7 @@ float ASoccerMatchManager::ScoreAttackPassOption(
 					Score += TransitionStrength;
 				}
 
-				if (bPassToSpace)
+				if (PassType == ESoccerAttackPassType::ForwardSpace)
 				{
 					Score -= TransitionStrength * 0.55f;
 				}
@@ -22448,7 +22563,7 @@ float ASoccerMatchManager::ScoreAttackPassOption(
 			{
 				Score += FMath::Max(0.0f, ProgressAlpha) * TransitionStrength * 2.8f;
 
-				if (bPassToSpace)
+				if (PassType == ESoccerAttackPassType::ForwardSpace)
 				{
 					Score += TransitionStrength;
 				}
@@ -22704,14 +22819,14 @@ bool ASoccerMatchManager::FindBestAttackPassOption(
 	const ASoccerAICharacter* BallCarrier,
 	ASoccerCharacterBase*& OutReceiver,
 	FVector& OutTargetLocation,
-	bool& bOutPassToSpace,
+	ESoccerAttackPassType& OutPassType,
 	float& OutScore,
 	bool bUsePossessionRetentionThreshold
 ) const
 {
 	OutReceiver = nullptr;
 	OutTargetLocation = FVector::ZeroVector;
-	bOutPassToSpace = false;
+	OutPassType = ESoccerAttackPassType::ToFeet;
 	OutScore = -TNumericLimits<float>::Max();
 
 	if (!IsValid(BallCarrier))
@@ -22768,43 +22883,56 @@ bool ASoccerMatchManager::FindBestAttackPassOption(
 				GetAIOrderForCharacter(CandidateAI);
 		}
 
-		bool bCandidatePassToSpace = false;
+		const int32 PassTypeCount = bUsePossessionRetentionThreshold ? 3 : 2;
+		const ESoccerAttackPassType PassTypes[3] =
+		{
+			ESoccerAttackPassType::ForwardSpace,
+			ESoccerAttackPassType::ToFeet,
+			ESoccerAttackPassType::RetentionSpace
+		};
 
-		const FVector CandidateTargetLocation =
-			BuildAttackPassTargetLocation(
+		for (int32 PassTypeIndex = 0; PassTypeIndex < PassTypeCount; ++PassTypeIndex)
+		{
+			const ESoccerAttackPassType CandidatePassType = PassTypes[PassTypeIndex];
+			FVector CandidateTargetLocation = FVector::ZeroVector;
+			if (!BuildAttackPassTargetLocation(
 				BallCarrier,
 				Candidate,
 				CandidateOrder,
-				bCandidatePassToSpace
-			);
+				CandidatePassType,
+				CandidateTargetLocation
+			))
+			{
+				continue;
+			}
 
-		if (
-			bUsePossessionRetentionThreshold &&
-			IsOpponentBlockingLaneBetweenLocations(
-				Team,
-				BallCarrier->GetActorLocation(),
-				CandidateTargetLocation,
-				AttackDecisionPassLaneHalfWidth
+			if (
+				CandidatePassType == ESoccerAttackPassType::RetentionSpace &&
+				IsOpponentBlockingLaneBetweenLocations(
+					Team,
+					BallCarrier->GetActorLocation(),
+					CandidateTargetLocation,
+					AttackDecisionPassLaneHalfWidth
+				)
 			)
-			)
-		{
-			continue;
-		}
+			{
+				continue;
+			}
 
-		const float CandidateScore =
-			ScoreAttackPassOption(
+			const float CandidateScore = ScoreAttackPassOption(
 				BallCarrier,
 				Candidate,
 				CandidateTargetLocation,
-				bCandidatePassToSpace
+				CandidatePassType
 			);
 
-		if (CandidateScore > OutScore)
-		{
-			OutScore = CandidateScore;
-			OutReceiver = Candidate;
-			OutTargetLocation = CandidateTargetLocation;
-			bOutPassToSpace = bCandidatePassToSpace;
+			if (CandidateScore > OutScore)
+			{
+				OutScore = CandidateScore;
+				OutReceiver = Candidate;
+				OutTargetLocation = CandidateTargetLocation;
+				OutPassType = CandidatePassType;
+			}
 		}
 	}
 

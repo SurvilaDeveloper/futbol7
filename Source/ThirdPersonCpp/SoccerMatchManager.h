@@ -43,6 +43,15 @@ enum class ESoccerRestartRestrictionShape : uint8
 	PenaltyArea
 };
 
+// Internal open-play pass alternatives. Kept as a plain C++ enum because the
+// choice is calculated at runtime and does not need to be authored as an asset.
+enum class ESoccerAttackPassType : uint8
+{
+	ToFeet,
+	ForwardSpace,
+	RetentionSpace
+};
+
 
 UCLASS()
 class THIRDPERSONCPP_API ASoccerMatchManager : public AActor
@@ -503,7 +512,7 @@ public:
 		const ASoccerAICharacter* BallCarrier,
 		ASoccerCharacterBase*& OutReceiver,
 		FVector& OutTargetLocation,
-		bool& bOutPassToSpace,
+		ESoccerAttackPassType& OutPassType,
 		float& OutScore,
 		bool bUsePossessionRetentionThreshold = false
 	) const;
@@ -1372,18 +1381,24 @@ bool IsPenaltyMatchStateActive() const;
 		float LaneHalfWidth
 	) const;
 
-	FVector BuildAttackPassTargetLocation(
+	bool BuildAttackPassTargetLocation(
 		const ASoccerAICharacter* BallCarrier,
 		const ASoccerCharacterBase* Receiver,
 		ESoccerAIOrder ReceiverOrder,
-		bool& bOutPassToSpace
+		ESoccerAttackPassType PassType,
+		FVector& OutTargetLocation
 	) const;
 
 	float ScoreAttackPassOption(
 		const ASoccerAICharacter* BallCarrier,
 		const ASoccerCharacterBase* Receiver,
 		const FVector& PassTargetLocation,
-		bool bPassToSpace
+		ESoccerAttackPassType PassType
+	) const;
+
+	float GetEarliestOpponentArrivalTimeToLocation(
+		ESoccerTeam Team,
+		const FVector& TargetLocation
 	) const;
 
 	// Stage 3: the tactical ReceiverAI remains responsible for preparation.
@@ -2994,6 +3009,54 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision")
 		float AttackDecisionPassToSpaceLeadDistance = 650.0f;
+
+	// A moving receiver can receive ahead even when it is the human player and
+	// therefore has no ESoccerAIOrder assigned by the collective AI.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		bool bEnableAttackForwardSpacePass = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassForwardRunMinSpeed = 220.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassForwardRunMinDot = 0.40f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassForwardLeadTime = 0.45f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassForwardMinLeadDistance = 220.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassForwardMaxLeadDistance = 750.0f;
+
+	// Negative values permit a small, deliberately imperfect optimistic pass.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassForwardMinArrivalMargin = -0.08f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassToFeetLeadTime = 0.12f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassToFeetMaxLeadDistance = 160.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassToFeetCriticalOpponentRadius = 180.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassToFeetCriticalPressurePenalty = 850.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassRetentionLeadDistance = 160.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassRetentionMaxDepthAdvantage = 0.04f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassRetentionSafetyBonus = 380.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision|Pass Type")
+		float AttackPassTargetFieldInset = 140.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Attack Decision")
 		float AttackDecisionPassTargetOpponentRadius = 650.0f;

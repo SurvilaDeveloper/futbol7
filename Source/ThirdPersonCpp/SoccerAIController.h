@@ -1804,6 +1804,9 @@ private:
 		float SmartAttackPassToSpaceHorizontalSpeed = 1150.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Smart Pass")
+		float SmartAttackRetentionPassHorizontalSpeed = 1000.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Smart Pass")
 		float SmartAttackPassMinTravelTime = 0.25f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Smart Pass")

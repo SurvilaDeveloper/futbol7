@@ -18063,11 +18063,18 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 	};
 
 	auto TryBestPass =
-		[this, SoccerCharacter]() -> bool
+		[this, SoccerCharacter](bool bAllowRetention) -> bool
 	{
-		if (TrySmartAttackPass(SoccerCharacter))
+		if (TrySmartAttackPass(SoccerCharacter, bAllowRetention))
 		{
 			return true;
+		}
+
+		if (bAllowRetention)
+		{
+			// The carry grid already found danger. Do not bypass the evaluated
+			// forward/feet/retention hierarchy with the old blind simple pass.
+			return false;
 		}
 
 		// Fallback temporal.
@@ -18077,49 +18084,44 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 	};
 
 	auto TryAdvanceWithBall =
-		[this, SoccerCharacter]() -> bool
+		[this, SoccerCharacter](bool& bOutRejectedByLocalSafety) -> bool
 	{
-		bool bRejectedByLocalSafety = false;
+		bOutRejectedByLocalSafety = false;
 
 		if (
 			TryStartAIAutoPass(
 				SoccerCharacter,
-				&bRejectedByLocalSafety
+				&bOutRejectedByLocalSafety
 			)
 			)
 		{
 			return true;
 		}
 
-		if (!bRejectedByLocalSafety)
+		return false;
+	};
+
+	auto TryCarryThenPass =
+		[&CompleteIfActionStarted, &TryAdvanceWithBall, &TryBestPass]() -> bool
+	{
+		bool bCarryRejectedBySafety = false;
+		if (CompleteIfActionStarted(TryAdvanceWithBall(bCarryRejectedBySafety)))
 		{
-			return false;
+			return true;
 		}
 
-		// The local grid only reports that carrying is unsafe. Receiver and
-		// pass selection remain in the higher-level attack-pass system. When
-		// normal progression has no safe dribble outlet, allow that system to
-		// accept a lower-scoring possession-retention pass before the stuck
-		// failsafe ever needs to force a touch.
-		return TrySmartAttackPass(
-			SoccerCharacter,
-			true
-		);
+		// Only a locally unsafe carry unlocks the backward-space alternative.
+		// The same evaluation still prefers a viable forward-space or feet pass.
+		return CompleteIfActionStarted(TryBestPass(bCarryRejectedBySafety));
 	};
 
 	switch (CharacterZone)
 	{
 	case ESoccerFieldZone::ZoneA:
 	case ESoccerFieldZone::ZoneB:
-		// Campo propio:
-		// 1. Prioriza pase.
-		// 2. Autopase solo si la lectura t�ctica lo permite.
-		if (CompleteIfActionStarted(TryBestPass()))
-		{
-			return true;
-		}
-
-		if (CompleteIfActionStarted(TryAdvanceWithBall()))
+		// Continue carrying when the local reading finds a useful safe route;
+		// otherwise prefer forward space, then feet, then retention space.
+		if (TryCarryThenPass())
 		{
 			return true;
 		}
@@ -18128,15 +18130,7 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 
 	case ESoccerFieldZone::ZoneC:
 	case ESoccerFieldZone::ZoneD:
-		// Zona media:
-		// 1. Pase inteligente.
-		// 2. Autopase si tiene libertad para progresar.
-		if (CompleteIfActionStarted(TryBestPass()))
-		{
-			return true;
-		}
-
-		if (CompleteIfActionStarted(TryAdvanceWithBall()))
+		if (TryCarryThenPass())
 		{
 			return true;
 		}
@@ -18146,19 +18140,13 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 	case ESoccerFieldZone::ZoneE:
 		// Zona ofensiva:
 		// 1. Remate si hay ocasi�n clara.
-		// 2. Pase inteligente.
-		// 3. Autopase si todav�a conviene avanzar.
+		// A clear shot remains exceptional; otherwise use carry/pass hierarchy.
 		if (CompleteIfActionStarted(TryPreferredShot()))
 		{
 			return true;
 		}
 
-		if (CompleteIfActionStarted(TryBestPass()))
-		{
-			return true;
-		}
-
-		if (CompleteIfActionStarted(TryAdvanceWithBall()))
+		if (TryCarryThenPass())
 		{
 			return true;
 		}
@@ -18169,15 +18157,13 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 	default:
 		// Zona de definici�n:
 		// 1. Remate claro.
-		// 2. Pase si hay mejor opci�n.
-		// 3. Remate de emergencia si no hay pase claro.
-		// 4. Autopase como �ltimo recurso.
+		// Then carry or pass; keep the emergency shot as final attacking outlet.
 		if (CompleteIfActionStarted(TryPreferredShot()))
 		{
 			return true;
 		}
 
-		if (CompleteIfActionStarted(TryBestPass()))
+		if (TryCarryThenPass())
 		{
 			return true;
 		}
@@ -18185,11 +18171,6 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 		// Fallback agresivo solo en zona de definici�n.
 		// Sirve para que no dude demasiado cerca del arco.
 		if (CompleteIfActionStarted(TryShootBallIfClose(SoccerCharacter)))
-		{
-			return true;
-		}
-
-		if (CompleteIfActionStarted(TryAdvanceWithBall()))
 		{
 			return true;
 		}
@@ -24389,7 +24370,7 @@ bool ASoccerAIController::TrySmartAttackPass(
 
 	ASoccerCharacterBase* Receiver = nullptr;
 	FVector PassTargetLocation = FVector::ZeroVector;
-	bool bPassToSpace = false;
+	ESoccerAttackPassType PassType = ESoccerAttackPassType::ToFeet;
 	float PassScore = 0.0f;
 
 	const bool bFoundPass =
@@ -24397,7 +24378,7 @@ bool ASoccerAIController::TrySmartAttackPass(
 			SoccerCharacter,
 			Receiver,
 			PassTargetLocation,
-			bPassToSpace,
+			PassType,
 			PassScore,
 			bUsePossessionRetentionThreshold
 		);
@@ -24421,10 +24402,15 @@ bool ASoccerAIController::TrySmartAttackPass(
 		return false;
 	}
 
-	const float PassHorizontalSpeed =
-		bPassToSpace
-		? SmartAttackPassToSpaceHorizontalSpeed
-		: SmartAttackPassToFeetHorizontalSpeed;
+	float PassHorizontalSpeed = SmartAttackPassToFeetHorizontalSpeed;
+	if (PassType == ESoccerAttackPassType::ForwardSpace)
+	{
+		PassHorizontalSpeed = SmartAttackPassToSpaceHorizontalSpeed;
+	}
+	else if (PassType == ESoccerAttackPassType::RetentionSpace)
+	{
+		PassHorizontalSpeed = SmartAttackRetentionPassHorizontalSpeed;
+	}
 
 	if (!TryRegisterAIKickTouchForRules(SoccerCharacter))
 	{
@@ -24444,11 +24430,32 @@ bool ASoccerAIController::TrySmartAttackPass(
 		PassTargetLocation
 	);
 
+	const TCHAR* PassTypeLogText =
+		PassType == ESoccerAttackPassType::ForwardSpace
+		? TEXT("FORWARD_SPACE")
+		: PassType == ESoccerAttackPassType::RetentionSpace
+		? TEXT("RETENTION_SPACE")
+		: TEXT("TO_FEET");
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[AttackPass] type=%s receiver=%s score=%.1f target=(%.0f, %.0f) retentionUnlocked=%s"),
+		PassTypeLogText,
+		*Receiver->GetName(),
+		PassScore,
+		PassTargetLocation.X,
+		PassTargetLocation.Y,
+		bUsePossessionRetentionThreshold ? TEXT("YES") : TEXT("NO")
+	);
+
 	if (GEngine)
 	{
 		const FString PassTypeText =
-			bPassToSpace
-			? TEXT("espacio")
+			PassType == ESoccerAttackPassType::ForwardSpace
+			? TEXT("espacio adelante")
+			: PassType == ESoccerAttackPassType::RetentionSpace
+			? TEXT("espacio atras")
 			: TEXT("pie");
 
 		const TCHAR* DecisionText =
