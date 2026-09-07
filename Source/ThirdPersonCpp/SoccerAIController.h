@@ -22,6 +22,7 @@ enum class ESoccerAIIntent : uint8
 	RecoverAndPass,
 	RecoverAndCarry,
 	RecoverAndShoot,
+	RecoverAndClear,
 	KeepPossession
 };
 
@@ -30,7 +31,8 @@ enum class ESoccerAIPendingMainAction : uint8
 	None,
 	AutoPass,
 	PassToTeammate,
-	Shoot
+	Shoot,
+	Clearance
 };
 
 struct FGoalkeeperDistributionPlan
@@ -1821,6 +1823,17 @@ private:
 		ASoccerAICharacter* SoccerCharacter
 	);
 
+	bool TryExecuteCurrentRecoveryIntentAtDefensiveContact(
+		ASoccerAICharacter* SoccerCharacter,
+		ASoccerCharacterBase* PreviousPossessor,
+		ASoccerBall* SoccerBall
+	);
+
+	FVector BuildRecoveryClearanceTargetLocation(
+		const ASoccerAICharacter* SoccerCharacter,
+		const ASoccerBall* SoccerBall
+	) const;
+
 	void ClearCurrentRecoveryIntent();
 
 	bool IsCurrentRecoveryIntentExpired() const;
@@ -1830,6 +1843,27 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Intent")
 		float AIRecoveryIntentLifetime = 1.50f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Intent|Defensive Contact")
+		bool bEnableAIRecoveryClearance = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Intent|Defensive Contact", meta = (ClampMin = "0.0"))
+		float AIRecoveryClearanceOwnGoalDistance = 2200.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Intent|Defensive Contact", meta = (ClampMin = "100.0"))
+		float AIRecoveryClearanceForwardDistance = 1800.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Intent|Defensive Contact", meta = (ClampMin = "0.0"))
+		float AIRecoveryClearanceLateralDistance = 500.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Intent|Defensive Contact", meta = (ClampMin = "100.0"))
+		float AIRecoveryClearanceHorizontalSpeed = 1500.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Intent|Defensive Contact", meta = (ClampMin = "0.05"))
+		float AIRecoveryClearanceMinTravelTime = 0.35f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Intent|Defensive Contact", meta = (ClampMin = "0.05"))
+		float AIRecoveryClearanceMaxTravelTime = 1.10f;
 
 	ESoccerAIIntent CurrentRecoveryIntent = ESoccerAIIntent::None;
 

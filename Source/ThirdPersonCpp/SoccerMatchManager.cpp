@@ -18572,6 +18572,60 @@ bool ASoccerMatchManager::RegisterGoalkeeperReboundTouch(
 	return true;
 }
 
+bool ASoccerMatchManager::BeginIntentionalLooseBallTouch(
+	ASoccerCharacterBase* TouchingCharacter
+)
+{
+	if (!IsValid(TouchingCharacter) || !TryRegisterIntentionalBallTouch(TouchingCharacter))
+	{
+		return false;
+	}
+
+	PossessingCharacter = nullptr;
+	PossessionTeam = ESoccerPossessionTeam::None;
+	const float CurrentTime = GetWorld() != nullptr
+		? GetWorld()->GetTimeSeconds()
+		: 0.0f;
+	IntentionalLooseBallClaimUnlockTime =
+		CurrentTime + FMath::Max(0.0f, IntentionalLooseBallClaimDelay);
+
+	ClearFreeBallChaserMemory();
+	ClearAssignedAI();
+	MatchStateUpdateAccumulator = 0.0f;
+
+	if (
+		MatchPlayState == ESoccerMatchPlayState::Playing &&
+		!IsRestartContextActive()
+		)
+	{
+		if (HasActiveAttack())
+		{
+			AssignAttackDefenseRoles();
+		}
+		else
+		{
+			AssignFreeBallRoles();
+		}
+	}
+
+	return true;
+}
+
+bool ASoccerMatchManager::CanCharacterClaimLooseBallNow(
+	const ASoccerCharacterBase* Character
+) const
+{
+	if (!IsValid(Character))
+	{
+		return false;
+	}
+
+	const float CurrentTime = GetWorld() != nullptr
+		? GetWorld()->GetTimeSeconds()
+		: 0.0f;
+	return CurrentTime >= IntentionalLooseBallClaimUnlockTime;
+}
+
 void ASoccerMatchManager::RegisterIntentionalBallTouch(
 	ASoccerCharacterBase* TouchingCharacter
 )

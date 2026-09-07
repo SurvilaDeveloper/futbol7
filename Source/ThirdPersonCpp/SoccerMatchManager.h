@@ -225,6 +225,16 @@ public:
 		ASoccerAICharacter* Goalkeeper
 	);
 
+	// Records exactly one rules touch and turns the current possession into a
+	// physical loose ball. Claiming is briefly locked while everyone may chase.
+	bool BeginIntentionalLooseBallTouch(
+		ASoccerCharacterBase* TouchingCharacter
+	);
+
+	bool CanCharacterClaimLooseBallNow(
+		const ASoccerCharacterBase* Character
+	) const;
+
 	bool TryRegisterIntentionalBallTouch(
 		ASoccerCharacterBase* TouchingCharacter
 	);
@@ -2696,6 +2706,11 @@ bool IsPenaltyMatchStateActive() const;
 		ASoccerCharacterBase* PossessingCharacter = nullptr;
 
 	ESoccerPossessionTeam PossessionTeam = ESoccerPossessionTeam::None;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Loose Ball|Defensive Contact", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+		float IntentionalLooseBallClaimDelay = 0.12f;
+
+	float IntentionalLooseBallClaimUnlockTime = -1000.0f;
 
 	UPROPERTY()
 		ASoccerAICharacter* PlayerTeamPressureAI = nullptr;

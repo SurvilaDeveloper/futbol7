@@ -1246,33 +1246,7 @@ void ASoccerAIController::Tick(float DeltaTime)
 			if (TryStealBallIfClose(SoccerCharacter, SoccerBall))
 			{
 				ClearDefensivePressureOvertakeState();
-
-				if (TryExecuteCurrentRecoveryIntent(SoccerCharacter))
-				{
-					ClearAIPossessionStuckTracking();
-					return;
-				}
-
-				const ESoccerFieldZone CharacterZone =
-					MatchManager->GetCharacterFieldZone(SoccerCharacter);
-
-				if (
-					TryExecuteZoneBasedPossessionDecision(
-						SoccerCharacter,
-						CharacterZone,
-						DeltaTime
-					)
-					)
-				{
-					ClearAIPossessionStuckTracking();
-					return;
-				}
-
-				if (TryForceAIPossessionActionIfStuck(SoccerCharacter))
-				{
-					return;
-				}
-
+				ClearAIPossessionStuckTracking();
 				return;
 			}
 
@@ -14963,6 +14937,11 @@ bool ASoccerAIController::TryPossessBallIfClose(
 		return false;
 	}
 
+	if (!MatchManager->CanCharacterClaimLooseBallNow(SoccerCharacter))
+	{
+		return false;
+	}
+
 	const float DistanceToBall = FVector::Dist2D(
 		SoccerCharacter->GetActorLocation(),
 		SoccerBall->GetActorLocation()
@@ -15170,17 +15149,11 @@ bool ASoccerAIController::TryStealBallIfClose(
 			return false;
 		}
 		*/
-		if (!MatchManager->TryRegisterIntentionalBallTouch(SoccerCharacter))
-		{
-			return false;
-		}
-
-		PossessingAICharacter->ReleaseAIBall();
-
-		SoccerCharacter->PossessAIBall(SoccerBall);
-		SoccerCharacter->SetAIChasingBall(false);
-
-		return true;
+		return TryExecuteCurrentRecoveryIntentAtDefensiveContact(
+			SoccerCharacter,
+			PossessingAICharacter,
+			SoccerBall
+		);
 	}
 
 	// Caso 2: bot roba al jugador humano.
@@ -15254,11 +15227,14 @@ bool ASoccerAIController::TryStealBallIfClose(
 			return false;
 		}
 
-		PossessingHumanCharacter->ReleaseBallForAISteal();
-
-		SoccerCharacter->PossessAIBall(SoccerBall);
-		MatchManager->RegisterIntentionalBallTouch(SoccerCharacter);
-		SoccerCharacter->SetAIChasingBall(false);
+		if (!TryExecuteCurrentRecoveryIntentAtDefensiveContact(
+			SoccerCharacter,
+			PossessingHumanCharacter,
+			SoccerBall
+		))
+		{
+			return false;
+		}
 
 		if (GEngine)
 		{
@@ -18570,6 +18546,16 @@ bool ASoccerAIController::TryExecutePendingMainActionAfterPreparation(
 
 	switch (ActionToExecute)
 	{
+	case ESoccerAIPendingMainAction::Clearance:
+		SoccerCharacter->KickAIBallToTarget(
+			TargetLocation,
+			AIRecoveryClearanceHorizontalSpeed,
+			AIRecoveryClearanceMinTravelTime,
+			AIRecoveryClearanceMaxTravelTime
+		);
+		StopMovement();
+		return true;
+
 	case ESoccerAIPendingMainAction::AutoPass:
 		SoccerCharacter->StartAIAutoPassToLocation(
 			TargetLocation,
@@ -23512,6 +23498,30 @@ void ASoccerAIController::CreateOrUpdateRecoveryIntent(
 		}
 	}
 
+	if (bEnableAIRecoveryClearance)
+	{
+		const FVector OwnGoalLocation =
+			MatchManager->GetOwnGoalCenterLocation(SoccerCharacter->GetTeam());
+		const float DistanceToOwnGoal = FVector::Dist2D(
+			SoccerBall->GetActorLocation(),
+			OwnGoalLocation
+		);
+
+		if (DistanceToOwnGoal <= AIRecoveryClearanceOwnGoalDistance)
+		{
+			const FVector ClearanceTarget =
+				BuildRecoveryClearanceTargetLocation(SoccerCharacter, SoccerBall);
+			if (!ClearanceTarget.IsNearlyZero())
+			{
+				CurrentRecoveryIntent = ESoccerAIIntent::RecoverAndClear;
+				RecoveryIntentPlannedAction = ESoccerAIPendingMainAction::Clearance;
+				RecoveryIntentTargetLocation = ClearanceTarget;
+				RecoveryIntentCreatedTime = CurrentTime;
+				return;
+			}
+		}
+	}
+
 	ASoccerCharacterBase* Teammate =
 		FindSimplePassTeammate(SoccerCharacter);
 
@@ -23662,6 +23672,22 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntent(
 
 	switch (ActionToExecute)
 	{
+	case ESoccerAIPendingMainAction::Clearance:
+		if (!TryRegisterAIKickTouchForRules(SoccerCharacter))
+		{
+			StopMovement();
+			return true;
+		}
+
+		SoccerCharacter->KickAIBallToTarget(
+			TargetLocation,
+			AIRecoveryClearanceHorizontalSpeed,
+			AIRecoveryClearanceMinTravelTime,
+			AIRecoveryClearanceMaxTravelTime
+		);
+		StopMovement();
+		return true;
+
 	case ESoccerAIPendingMainAction::Shoot:
 		if (
 			TryPrepareMainActionIfBlocked(
@@ -23828,6 +23854,205 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntent(
 	default:
 		return false;
 	}
+}
+
+FVector ASoccerAIController::BuildRecoveryClearanceTargetLocation(
+	const ASoccerAICharacter* SoccerCharacter,
+	const ASoccerBall* SoccerBall
+) const
+{
+	if (!IsValid(SoccerCharacter) || !IsValid(SoccerBall) || !IsValid(MatchManager))
+	{
+		return FVector::ZeroVector;
+	}
+
+	FVector AttackDirection = MatchManager->GetFieldAttackDirectionForTeam(
+		SoccerCharacter->GetTeam()
+	);
+	AttackDirection.Z = 0.0f;
+	AttackDirection = AttackDirection.GetSafeNormal();
+	if (AttackDirection.IsNearlyZero())
+	{
+		return FVector::ZeroVector;
+	}
+
+	FVector SideDirection = FVector::CrossProduct(FVector::UpVector, AttackDirection);
+	SideDirection.Z = 0.0f;
+	SideDirection = SideDirection.GetSafeNormal();
+
+	const FVector BallLocation = SoccerBall->GetActorLocation();
+	float SideSign = 1.0f;
+	const ASoccerField* SoccerField = MatchManager->GetSoccerField();
+	if (IsValid(SoccerField))
+	{
+		const FVector LocalBallLocation = SoccerField->WorldToPitchLocal(BallLocation);
+		SideSign = LocalBallLocation.Y >= 0.0f ? 1.0f : -1.0f;
+	}
+
+	FVector TargetLocation =
+		BallLocation +
+		AttackDirection * AIRecoveryClearanceForwardDistance +
+		SideDirection * SideSign * AIRecoveryClearanceLateralDistance;
+	TargetLocation.Z = BallLocation.Z;
+
+	if (IsValid(SoccerField))
+	{
+		return SoccerField->ClampWorldLocationInsidePitch(TargetLocation, 140.0f);
+	}
+
+	return SoccerFieldDimensions::ClampLocationInsidePitch(TargetLocation, 140.0f);
+}
+
+bool ASoccerAIController::TryExecuteCurrentRecoveryIntentAtDefensiveContact(
+	ASoccerAICharacter* SoccerCharacter,
+	ASoccerCharacterBase* PreviousPossessor,
+	ASoccerBall* SoccerBall
+)
+{
+	if (!IsValid(SoccerCharacter) || !IsValid(PreviousPossessor) ||
+		!IsValid(SoccerBall) || !IsValid(MatchManager))
+	{
+		return false;
+	}
+
+	if (CurrentRecoveryIntent == ESoccerAIIntent::None || IsCurrentRecoveryIntentExpired())
+	{
+		CreateOrUpdateRecoveryIntent(SoccerCharacter, SoccerBall);
+	}
+
+	ESoccerAIPendingMainAction ActionToExecute = RecoveryIntentPlannedAction;
+	FVector TargetLocation = RecoveryIntentTargetLocation;
+	ASoccerCharacterBase* TargetCharacter = RecoveryIntentTargetCharacter.Get();
+	if (ActionToExecute == ESoccerAIPendingMainAction::None)
+	{
+		// RecoveryIntent can be disabled for experiments. A successful defensive
+		// contact must still become a physical poke instead of restoring the old
+		// instantaneous possession transfer.
+		ActionToExecute = ESoccerAIPendingMainAction::AutoPass;
+	}
+
+	if (ActionToExecute == ESoccerAIPendingMainAction::PassToTeammate)
+	{
+		if (!IsValid(TargetCharacter) || TargetCharacter->GetTeam() != SoccerCharacter->GetTeam())
+		{
+			ActionToExecute = ESoccerAIPendingMainAction::AutoPass;
+		}
+		else
+		{
+			TargetLocation = BuildSimplePassTargetLocation(SoccerCharacter, TargetCharacter);
+			if (TargetLocation.IsNearlyZero())
+			{
+				ActionToExecute = ESoccerAIPendingMainAction::AutoPass;
+			}
+		}
+	}
+
+	if (ActionToExecute == ESoccerAIPendingMainAction::AutoPass)
+	{
+		TargetLocation = BuildAIAutoPassTargetLocation(SoccerCharacter);
+		if (TargetLocation.IsNearlyZero())
+		{
+			FVector EscapeDirection = SoccerCharacter->GetActorLocation() - PreviousPossessor->GetActorLocation();
+			EscapeDirection.Z = 0.0f;
+			EscapeDirection = EscapeDirection.GetSafeNormal();
+			if (EscapeDirection.IsNearlyZero())
+			{
+				EscapeDirection = MatchManager->GetFieldAttackDirectionForTeam(SoccerCharacter->GetTeam());
+			}
+			TargetLocation = SoccerBall->GetActorLocation() + EscapeDirection * 220.0f;
+		}
+	}
+	else if (ActionToExecute == ESoccerAIPendingMainAction::Clearance)
+	{
+		TargetLocation = BuildRecoveryClearanceTargetLocation(SoccerCharacter, SoccerBall);
+	}
+	else if (ActionToExecute == ESoccerAIPendingMainAction::Shoot)
+	{
+		TargetLocation = ApplyAIShotExecutionError(SoccerCharacter, TargetLocation);
+	}
+
+	if (ActionToExecute == ESoccerAIPendingMainAction::None || TargetLocation.IsNearlyZero())
+	{
+		return false;
+	}
+
+	if (!MatchManager->BeginIntentionalLooseBallTouch(SoccerCharacter))
+	{
+		return false;
+	}
+
+	if (ASoccerAICharacter* PreviousAI = Cast<ASoccerAICharacter>(PreviousPossessor))
+	{
+		PreviousAI->ReleaseAIBall(false);
+	}
+	else if (AThirdPersonCppCharacter* PreviousHuman = Cast<AThirdPersonCppCharacter>(PreviousPossessor))
+	{
+		PreviousHuman->ReleaseBallForAISteal();
+	}
+
+	ClearCurrentRecoveryIntent();
+
+	const TCHAR* ContactType = TEXT("POKE");
+	switch (ActionToExecute)
+	{
+	case ESoccerAIPendingMainAction::Shoot:
+		ContactType = TEXT("SHOT");
+		SoccerCharacter->ExecuteImmediateAIContactKick(
+			SoccerBall, TargetLocation, AIShotHorizontalSpeed,
+			AIShotMinTravelTime, AIShotMaxTravelTime, true, true, false
+		);
+		SoccerCharacter->SetAIChasingBall(false);
+		StopMovement();
+		break;
+
+	case ESoccerAIPendingMainAction::PassToTeammate:
+		ContactType = TEXT("PASS");
+		SoccerCharacter->ExecuteImmediateAIContactKick(
+			SoccerBall, TargetLocation, AISimplePassHorizontalSpeed,
+			AISimplePassMinTravelTime, AISimplePassMaxTravelTime, false, false, false
+		);
+		if (IsValid(TargetCharacter))
+		{
+			MatchManager->RegisterOpenPlayPassIntent(SoccerCharacter, TargetCharacter, TargetLocation);
+		}
+		SoccerCharacter->SetAIChasingBall(false);
+		StopMovement();
+		break;
+
+	case ESoccerAIPendingMainAction::Clearance:
+		ContactType = TEXT("CLEARANCE");
+		SoccerCharacter->ExecuteImmediateAIContactKick(
+			SoccerBall, TargetLocation, AIRecoveryClearanceHorizontalSpeed,
+			AIRecoveryClearanceMinTravelTime, AIRecoveryClearanceMaxTravelTime,
+			false, false, false
+		);
+		SoccerCharacter->SetAIChasingBall(false);
+		StopMovement();
+		break;
+
+	case ESoccerAIPendingMainAction::AutoPass:
+		SoccerCharacter->ExecuteImmediateAIContactKick(
+			SoccerBall, TargetLocation, AIAutoPassHorizontalSpeed,
+			AIAutoPassMinTravelTime, AIAutoPassMaxTravelTime, false, false, true
+		);
+		SoccerCharacter->SetAIChasingBall(true);
+		break;
+
+	case ESoccerAIPendingMainAction::None:
+	default:
+		return false;
+	}
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[DefensiveTouch] type=%s defender=%s previous=%s target=%s"),
+		ContactType,
+		*GetNameSafe(SoccerCharacter),
+		*GetNameSafe(PreviousPossessor),
+		*TargetLocation.ToCompactString()
+	);
+	return true;
 }
 
 void ASoccerAIController::ClearCurrentRecoveryIntent()

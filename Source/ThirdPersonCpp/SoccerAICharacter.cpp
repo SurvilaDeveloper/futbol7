@@ -614,7 +614,7 @@ void ASoccerAICharacter::PossessAIBall(ASoccerBall* NewControlledBall)
 	RequestAIMovementReevaluation();
 }
 
-void ASoccerAICharacter::ReleaseAIBall()
+void ASoccerAICharacter::ReleaseAIBall(bool bStartRecoveryCooldown)
 {
 	// External possession cleanup (restart, reset, etc.) must also erase a
 	// delayed kick. The normal montage-start path calls ReleaseAIBall before
@@ -658,7 +658,7 @@ void ASoccerAICharacter::ReleaseAIBall()
 	bGoalkeeperHoldingBall = false;
 	bAIPossessionCarryActive = false;
 
-	if (bHadPossession)
+	if (bHadPossession && bStartRecoveryCooldown)
 	{
 		LastAIBallReleasedTime =
 			GetWorld() != nullptr
@@ -667,6 +667,48 @@ void ASoccerAICharacter::ReleaseAIBall()
 	}
 
 	RequestAIMovementReevaluation();
+}
+
+void ASoccerAICharacter::ExecuteImmediateAIContactKick(
+	ASoccerBall* SoccerBall,
+	const FVector& TargetLocation,
+	float HorizontalSpeed,
+	float MinTravelTime,
+	float MaxTravelTime,
+	bool bUseAirTarget,
+	bool bTreatAsShot,
+	bool bTreatAsControlledTouch
+)
+{
+	if (!IsValid(SoccerBall) || TargetLocation.IsNearlyZero())
+	{
+		return;
+	}
+
+	const FVector BallLocation = SoccerBall->GetActorLocation();
+	FVector ExecutedTarget = TargetLocation;
+	float ExecutedSpeed = HorizontalSpeed;
+
+	if (bTreatAsControlledTouch)
+	{
+		ExecutedTarget = GetProfileAdjustedAutoPassTarget(BallLocation, ExecutedTarget);
+		ExecutedSpeed = GetProfileAdjustedDribbleTouchSpeed(ExecutedSpeed, true);
+	}
+	else
+	{
+		ExecutedTarget = GetProfileAdjustedTechnicalKickTarget(BallLocation, ExecutedTarget, bTreatAsShot);
+		ExecutedSpeed = GetProfileAdjustedTechnicalKickSpeed(ExecutedSpeed, bTreatAsShot);
+	}
+
+	SoccerBall->SetPossessed(false);
+	if (bUseAirTarget)
+	{
+		SoccerBall->KickToAirTarget(ExecutedTarget, ExecutedSpeed, MinTravelTime, MaxTravelTime);
+	}
+	else
+	{
+		SoccerBall->KickToTarget(ExecutedTarget, ExecutedSpeed, MinTravelTime, MaxTravelTime);
+	}
 }
 
 bool ASoccerAICharacter::IsAIPossessingBall() const

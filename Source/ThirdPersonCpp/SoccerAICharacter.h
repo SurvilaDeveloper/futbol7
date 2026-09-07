@@ -90,7 +90,20 @@ public:
 
 	void PossessAIBall(ASoccerBall* NewControlledBall);
 
-	void ReleaseAIBall();
+	void ReleaseAIBall(bool bStartRecoveryCooldown = true);
+
+	// Executes the already chosen recovery intention at the actual defensive
+	// contact. It deliberately does not require or create dribble possession.
+	void ExecuteImmediateAIContactKick(
+		ASoccerBall* SoccerBall,
+		const FVector& TargetLocation,
+		float HorizontalSpeed,
+		float MinTravelTime,
+		float MaxTravelTime,
+		bool bUseAirTarget,
+		bool bTreatAsShot,
+		bool bTreatAsControlledTouch
+	);
 
 	bool IsAIPossessingBall() const;
 
