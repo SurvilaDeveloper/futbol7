@@ -248,13 +248,8 @@ void ASoccerAICharacter::Tick(float DeltaTime)
 		bAIIsPossessingBall &&
 		IsValid(ControlledBall) &&
 		!bGoalkeeperHoldingBall &&
-		(
-			bAIPossessionCarryActive ||
-			(
-				bAIDribbleTurnAutoPassActive &&
-				!bAIDribbleTurnAutoPassHasImpactedBall
-			)
-		);
+		bAIDribbleTurnAutoPassActive &&
+		!bAIDribbleTurnAutoPassHasImpactedBall;
 
 	if (bShouldUpdatePossessedBallLocation)
 	{
@@ -484,40 +479,12 @@ void ASoccerAICharacter::SetAIPossessionCarryActive(bool bNewActive)
 		return;
 	}
 
+	// Open-play carry is logical only. The ball keeps simulating physics and
+	// retains both its linear and angular velocity. This flag still describes
+	// the tactical/animation state, but it no longer attaches, blends or snaps
+	// the ball to a point in front of the character.
 	bAIPossessionCarryActive = bCanCarryBall;
-	if (!bAIPossessionCarryActive)
-	{
-		bAICarryEntryBlendActive = false;
-	}
-
-	if (!IsValid(ControlledBall))
-	{
-		return;
-	}
-
-	if (bAIPossessionCarryActive)
-	{
-		// La pelota acompana al jugador, pero sigue siendo alcanzable
-		// por la logica normal de robo basada en distancia y angulo.
-		ControlledBall->SetPossessed(true);
-		bAICarryEntryBlendActive = AICarryEntryBlendDuration > KINDA_SMALL_NUMBER;
-		AICarryEntryBlendStartLocation = ControlledBall->GetActorLocation();
-		AICarryEntryBlendStartTime = GetWorld() != nullptr
-			? GetWorld()->GetTimeSeconds()
-			: 0.0f;
-		UpdateAIPossessedBallLocation();
-		return;
-	}
-
-	if (
-		bAIIsPossessingBall &&
-		!bGoalkeeperHoldingBall &&
-		!bAIDribbleTurnAutoPassActive
-		)
-	{
-		ControlledBall->SetPossessed(false);
-		ControlledBall->StopBallKeepingPhysics();
-	}
+	bAICarryEntryBlendActive = false;
 }
 
 void ASoccerAICharacter::SetAIChasingBall(bool bNewAIChasingBall)
@@ -617,10 +584,9 @@ void ASoccerAICharacter::PossessAIBall(ASoccerBall* NewControlledBall)
 	AIDribbleTurnCurrentDirection =
 		AIDribbleTurnCurrentDirection.GetSafeNormal();
 
-	// El bot tiene posesiï¿½n lï¿½gica, pero no conduce la pelota.
-	// La pelota queda quieta/fï¿½sica hasta que el bot haga pase, autopase o remate.
+	// Field possession is logical only. SetPossessed(false) guarantees that the
+	// rigid body is awake without erasing the velocity with which it arrived.
 	ControlledBall->SetPossessed(false);
-	ControlledBall->StopBallKeepingPhysics();
 
 	RequestAIMovementReevaluation();
 }

@@ -237,6 +237,10 @@ private:
 		ASoccerBall* SoccerBall
 	);
 
+	bool ReleasePhysicalPossessionIfBallEscaped(
+		ASoccerAICharacter* SoccerCharacter
+	);
+
 	bool TryStealBallIfClose(
 		ASoccerAICharacter* SoccerCharacter,
 		ASoccerBall* SoccerBall
@@ -347,6 +351,13 @@ private:
 
 	void EnsureOffensiveDecisionEpisode(
 		const ASoccerAICharacter* SoccerCharacter
+	);
+
+	// Moves the player to a usable contact position around the real ball. It
+	// never changes the ball transform, velocity or physics state.
+	bool UpdatePhysicalPossessionApproach(
+		ASoccerAICharacter* SoccerCharacter,
+		bool bTrackMovingBallWhileHesitating
 	);
 
 	bool ShouldOffensiveProfileAcceptPreferredShot(
@@ -673,6 +684,40 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession")
 		float AIBallPossessionMaxHeight = 180.0f;
+
+	// Open-play possession without an aerial/body action is a foot control only.
+	// Balls above this height remain physically free so StandingControl can
+	// resolve a swept chest/body contact, or let the ball pass when the AI is late.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession|Physical Carry", meta = (ClampMin = "10.0", ClampMax = "120.0"))
+		float AIFootControlMaxBallHeight = 72.0f;
+
+	// Logical field possession survives only while the real physical ball stays
+	// inside this controllable radius. Goalkeeper hand possession is excluded.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession|Physical Carry", meta = (ClampMin = "1.0"))
+		float AIPhysicalPossessionMaxDistance = 145.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession|Physical Carry")
+		bool bUseAIPhysicalPossessionApproach = true;
+
+	// A normal open-play action may start only when the real ball is within this
+	// contact radius. This prevents remote kicks after a loose first touch.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession|Physical Carry", meta = (ClampMin = "1.0"))
+		float AIPhysicalKickReadyDistance = 72.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession|Physical Carry", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+		float AIPhysicalBallPredictionTime = 0.10f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession|Physical Carry", meta = (ClampMin = "0.0"))
+		float AIPhysicalApproachBehindDistance = 45.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession|Physical Carry", meta = (ClampMin = "1.0"))
+		float AIPhysicalApproachAcceptanceRadius = 18.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession|Physical Carry", meta = (ClampMin = "0.0"))
+		float AIPhysicalHesitationTrackMinBallSpeed = 80.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession|Physical Carry", meta = (ClampMin = "0.0"))
+		float AIPhysicalApproachFastRunBallSpeed = 520.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Goal Area|Attacker Respect", meta = (ClampMin = "1.0"))
 		float GoalAreaAttackerHoldingMoveAcceptanceRadius = 55.0f;

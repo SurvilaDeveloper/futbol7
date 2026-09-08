@@ -18693,6 +18693,34 @@ bool ASoccerMatchManager::BeginIntentionalLooseBallTouch(
 	return true;
 }
 
+void ASoccerMatchManager::ReleaseControlledBallPossession(
+	ASoccerCharacterBase* ReleasingCharacter
+)
+{
+	if (
+		!IsValid(ReleasingCharacter) ||
+		PossessingCharacter != ReleasingCharacter
+		)
+	{
+		return;
+	}
+
+	PossessingCharacter = nullptr;
+	PossessionTeam = ESoccerPossessionTeam::None;
+
+	ClearFreeBallChaserMemory();
+	ClearAssignedAI();
+	MatchStateUpdateAccumulator = 0.0f;
+
+	if (
+		MatchPlayState == ESoccerMatchPlayState::Playing &&
+		!IsRestartContextActive()
+		)
+	{
+		AssignFreeBallRoles();
+	}
+}
+
 bool ASoccerMatchManager::CanCharacterClaimLooseBallNow(
 	const ASoccerCharacterBase* Character
 ) const

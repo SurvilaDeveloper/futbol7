@@ -2783,6 +2783,13 @@ float ASoccerCharacterBase::GetPlayerProfileAerialAbilityAlpha() const
 		: 0.5f;
 }
 
+float ASoccerCharacterBase::GetPlayerProfileBallControlAlpha() const
+{
+	return HasPlayerProfile()
+		? FMath::Clamp(PlayerProfile->Attributes.Technical.BallControl, 0, 100) / 100.0f
+		: 0.5f;
+}
+
 float ASoccerCharacterBase::GetPlayerProfileOffBallPositioningAlpha() const
 {
 	return HasPlayerProfile()
@@ -3400,21 +3407,28 @@ float ASoccerCharacterBase::GetPlayerProfileAerialContactQualityMultiplier(
 		return 1.0f;
 	}
 
-	const float AbilityAlpha = GetPlayerProfileAerialAbilityAlpha();
-
 	if (ContactSurface == ESoccerAerialContactSurface::Chest)
 	{
+		// Cushioning a ball with torso/abdomen is primarily first-touch control.
+		// Aerial ability still contributes to reading and coordinating the contact.
+		const float BodyControlAlpha = FMath::Clamp(
+			GetPlayerProfileBallControlAlpha() * 0.70f +
+			GetPlayerProfileAerialAbilityAlpha() * 0.30f,
+			0.0f,
+			1.0f
+		);
+
 		return FMath::Lerp(
 			AerialChestContactQualityMultiplierAtZero,
 			AerialChestContactQualityMultiplierAtHundred,
-			AbilityAlpha
+			BodyControlAlpha
 		);
 	}
 
 	return FMath::Lerp(
 		AerialHeadContactQualityMultiplierAtZero,
 		AerialHeadContactQualityMultiplierAtHundred,
-		AbilityAlpha
+		GetPlayerProfileAerialAbilityAlpha()
 	);
 }
 
@@ -5382,13 +5396,42 @@ bool ASoccerCharacterBase::BuildStandingAerialControlPlanForSurface(
             1.0f
         );
 
+		if (PlannedSurface == ESoccerAerialContactSurface::Chest)
+		{
+			PredictedChestLower.Z -= FMath::Max(
+				0.0f,
+				AerialStandingBodyControlLowerExtension
+			);
+		}
+
+		float BodyTrackAlpha = SafeChestAlpha;
+		const float BodyTrackHeightSpan =
+			PredictedChestUpper.Z - PredictedChestLower.Z;
+		if (
+			PlannedSurface == ESoccerAerialContactSurface::Chest &&
+			FMath::Abs(BodyTrackHeightSpan) > KINDA_SMALL_NUMBER
+			)
+		{
+			const float SegmentMiddleHeight = FMath::Lerp(
+				PreviousSample.Location.Z,
+				CurrentSample.Location.Z,
+				0.5f
+			);
+			BodyTrackAlpha = FMath::Clamp(
+				(SegmentMiddleHeight - PredictedChestLower.Z) /
+					BodyTrackHeightSpan,
+				0.0f,
+				1.0f
+			);
+		}
+
         FVector PredictedStandingContact =
             PlannedSurface == ESoccerAerialContactSurface::Head
             ? PredictedHead
             : FMath::Lerp(
                 PredictedChestLower,
                 PredictedChestUpper,
-                SafeChestAlpha
+                BodyTrackAlpha
             );
 
         const float PreviousHeightError =
@@ -5443,7 +5486,15 @@ bool ASoccerCharacterBase::BuildStandingAerialControlPlanForSurface(
             CandidateLocation.Z - CharacterGroundZ;
 
         if (
-            BallHeightAboveGround < Profile.MinimumBallHeight ||
+            BallHeightAboveGround <
+				(
+					PlannedSurface == ESoccerAerialContactSurface::Chest
+					? FMath::Min(
+						Profile.MinimumBallHeight,
+						AerialStandingBodyControlMinimumHeight
+					)
+					: Profile.MinimumBallHeight
+				) ||
             BallHeightAboveGround > Profile.MaximumBallHeight
         )
         {
@@ -5479,13 +5530,31 @@ bool ASoccerCharacterBase::BuildStandingAerialControlPlanForSurface(
             continue;
         }
 
+		if (PlannedSurface == ESoccerAerialContactSurface::Chest)
+		{
+			PredictedChestLower.Z -= FMath::Max(
+				0.0f,
+				AerialStandingBodyControlLowerExtension
+			);
+			const float FinalBodyHeightSpan =
+				PredictedChestUpper.Z - PredictedChestLower.Z;
+			BodyTrackAlpha = FMath::Abs(FinalBodyHeightSpan) > KINDA_SMALL_NUMBER
+				? FMath::Clamp(
+					(CandidateLocation.Z - PredictedChestLower.Z) /
+						FinalBodyHeightSpan,
+					0.0f,
+					1.0f
+				)
+				: SafeChestAlpha;
+		}
+
         PredictedStandingContact =
             PlannedSurface == ESoccerAerialContactSurface::Head
             ? PredictedHead
             : FMath::Lerp(
                 PredictedChestLower,
                 PredictedChestUpper,
-                SafeChestAlpha
+                BodyTrackAlpha
             );
 
         const FVector ContactOffsetFromActor =
@@ -8474,6 +8543,14 @@ void ASoccerCharacterBase::InitializeAerialContactTracking()
         ResolvedChestLowerBoneName,
         EBoneSpaces::WorldSpace
     );
+
+	if (ActiveAerialActionType == ESoccerAerialActionType::StandingControl)
+	{
+		PreviousAerialChestLowerLocation.Z -= FMath::Max(
+			0.0f,
+			AerialStandingBodyControlLowerExtension
+		);
+	}
     PreviousAerialChestUpperLocation = CharacterMesh->GetBoneLocation(
         ResolvedChestUpperBoneName,
         EBoneSpaces::WorldSpace
@@ -8595,6 +8672,14 @@ return;
         ResolvedChestLowerBoneName,
         EBoneSpaces::WorldSpace
     );
+
+	if (ActiveAerialActionType == ESoccerAerialActionType::StandingControl)
+	{
+		PreviousAerialChestLowerLocation.Z -= FMath::Max(
+			0.0f,
+			AerialStandingBodyControlLowerExtension
+		);
+	}
     PreviousAerialChestUpperLocation = CharacterMesh->GetBoneLocation(
         ResolvedChestUpperBoneName,
         EBoneSpaces::WorldSpace
@@ -8830,7 +8915,7 @@ bool ASoccerCharacterBase::BuildAerialContactCandidate(
     }
 
     const FVector CurrentBallLocation = Ball->GetActorLocation();
-    const FVector CurrentChestLowerLocation = CharacterMesh->GetBoneLocation(
+    FVector CurrentChestLowerLocation = CharacterMesh->GetBoneLocation(
         ResolvedChestLowerBoneName,
         EBoneSpaces::WorldSpace
     );
@@ -8847,6 +8932,14 @@ bool ASoccerCharacterBase::BuildAerialContactCandidate(
     const bool bStandingControlAction =
         ActiveAerialActionType ==
             ESoccerAerialActionType::StandingControl;
+
+	if (bStandingControlAction)
+	{
+		CurrentChestLowerLocation.Z -= FMath::Max(
+			0.0f,
+			AerialStandingBodyControlLowerExtension
+		);
+	}
 
     if (
         GetAerialContactTrackCurveTable(ActiveAerialActionType) != nullptr

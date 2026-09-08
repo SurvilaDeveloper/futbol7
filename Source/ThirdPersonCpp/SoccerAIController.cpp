@@ -1040,6 +1040,13 @@ void ASoccerAIController::Tick(float DeltaTime)
 
 	if (SoccerCharacter->IsAIPossessingBall())
 	{
+		if (ReleasePhysicalPossessionIfBallEscaped(SoccerCharacter))
+		{
+			ClearInitialPossessionEscape();
+			ClearAIPossessionStuckTracking();
+			return;
+		}
+
 		ClearPredictiveBallChaseMovement(SoccerCharacter);
 		ClearAerialBallInterceptionMovement();
 		SoccerCharacter->SetAIChasingBall(false);
@@ -15001,6 +15008,48 @@ bool ASoccerAIController::TryPossessBallIfClose(
 	return true;
 }
 
+bool ASoccerAIController::ReleasePhysicalPossessionIfBallEscaped(
+	ASoccerAICharacter* SoccerCharacter
+)
+{
+	if (
+		!IsValid(SoccerCharacter) ||
+		!SoccerCharacter->IsAIPossessingBall() ||
+		SoccerCharacter->IsGoalkeeperHoldingBall() ||
+		!IsValid(MatchManager)
+		)
+	{
+		return false;
+	}
+
+	ASoccerBall* SoccerBall = MatchManager->GetSoccerBall();
+	if (!IsValid(SoccerBall))
+	{
+		return false;
+	}
+
+	const float DistanceToBall = FVector::Dist2D(
+		SoccerCharacter->GetActorLocation(),
+		SoccerBall->GetActorLocation()
+	);
+
+	if (
+		DistanceToBall <= FMath::Max(1.0f, AIPhysicalPossessionMaxDistance) &&
+		IsBallAtAIPossessionHeight(SoccerCharacter, SoccerBall)
+		)
+	{
+		return false;
+	}
+
+	// The ball did not teleport or stop: it genuinely left the player's control.
+	// Clear only the logical ownership and let the normal free-ball race resume.
+	SoccerCharacter->ReleaseAIBall(false);
+	MatchManager->ReleaseControlledBallPossession(SoccerCharacter);
+	SoccerCharacter->SetAIChasingBall(true);
+
+	return true;
+}
+
 bool ASoccerAIController::TryHandleGoalAreaAttackerHoldingRespect(
 	ASoccerAICharacter* SoccerCharacter,
 	ESoccerAIOrder CurrentOrder
@@ -15421,20 +15470,28 @@ bool ASoccerAIController::UpdateInitialPossessionEscape(
 		return false;
 	}
 
-	SoccerCharacter->SetAIPossessionCarryActive(true);
+	// Escape used to drag a kinematic ball in front of the runner. It is now a
+	// real short touch followed by the existing physical auto-pass pursuit.
+	if (!TryRegisterAIKickTouchForRules(SoccerCharacter))
+	{
+		return true;
+	}
+
+	SoccerCharacter->StartAIAutoPassToLocation(
+		InitialPossessionEscapeLocation,
+		AIAutoPassHorizontalSpeed,
+		AIAutoPassMinTravelTime,
+		AIAutoPassMaxTravelTime
+	);
 
 	MoveToLocationWithAIMovement(
 		ESoccerAIOrder::AttackRunIntoSpace,
 		InitialPossessionEscapeLocation,
-		InitialPossessionEscapeAcceptanceRadius,
-		true
+		AIAutoPassFollowAcceptanceRadius,
+		false
 	);
 
-	SetFocalPoint(
-		InitialPossessionEscapeLocation,
-		EAIFocusPriority::Gameplay
-	);
-
+	bInitialPossessionEscapeActive = false;
 	return true;
 }
 
@@ -17765,7 +17822,10 @@ bool ASoccerAIController::IsBallAtAIPossessionHeight(
 
 	return
 		BallHeightFromGround >= -20.0f &&
-		BallHeightFromGround <= AIBallPossessionMaxHeight;
+		BallHeightFromGround <= FMath::Min(
+			FMath::Max(10.0f, AIFootControlMaxBallHeight),
+			FMath::Max(10.0f, AIBallPossessionMaxHeight)
+		);
 }
 
 void ASoccerAIController::DebugPrintAISituation(
@@ -18048,8 +18108,9 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 		else
 		{
 			// A mild hesitation is cognitive, not a full-body stop. Preserve the
-			// current run and keep the ball at the carrying point briefly.
+			// current run and adjust to the real moving ball without dragging it.
 			SoccerCharacter->SetAIPossessionCarryActive(true);
+			UpdatePhysicalPossessionApproach(SoccerCharacter, true);
 		}
 
 		ASoccerBall* DecisionWaitBall = MatchManager->GetSoccerBall();
@@ -18064,6 +18125,13 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 	// A mild episode may have used carry tracking while preserving locomotion.
 	// Once the decision is ready, return ball authority to the chosen action.
 	SoccerCharacter->SetAIPossessionCarryActive(false);
+
+	// Physics may have carried the ball away during the decision episode. Move
+	// into a genuine contact position before allowing pass, shot or auto-pass.
+	if (UpdatePhysicalPossessionApproach(SoccerCharacter, false))
+	{
+		return true;
+	}
 
 	auto CompleteIfActionStarted =
 		[this](bool bActionStarted) -> bool
@@ -23011,6 +23079,95 @@ void ASoccerAIController::EnsureOffensiveDecisionEpisode(
 	{
 		BeginOffensiveDecisionEpisode(SoccerCharacter, false);
 	}
+}
+
+bool ASoccerAIController::UpdatePhysicalPossessionApproach(
+	ASoccerAICharacter* SoccerCharacter,
+	bool bTrackMovingBallWhileHesitating
+)
+{
+	if (
+		!bUseAIPhysicalPossessionApproach ||
+		!IsValid(SoccerCharacter) ||
+		!SoccerCharacter->IsAIPossessingBall() ||
+		SoccerCharacter->IsGoalkeeperHoldingBall() ||
+		!IsValid(MatchManager)
+		)
+	{
+		return false;
+	}
+
+	ASoccerBall* SoccerBall = MatchManager->GetSoccerBall();
+	if (!IsValid(SoccerBall))
+	{
+		return false;
+	}
+
+	FVector BallVelocity = SoccerBall->GetBallPhysicsVelocity();
+	BallVelocity.Z = 0.0f;
+	const float BallSpeed = BallVelocity.Size();
+	const float DistanceToBall = FVector::Dist2D(
+		SoccerCharacter->GetActorLocation(),
+		SoccerBall->GetActorLocation()
+	);
+
+	const bool bNeedsContactApproach =
+		DistanceToBall > FMath::Max(1.0f, AIPhysicalKickReadyDistance);
+	const bool bNeedsHesitationTracking =
+		bTrackMovingBallWhileHesitating &&
+		BallSpeed >= FMath::Max(0.0f, AIPhysicalHesitationTrackMinBallSpeed);
+
+	if (!bNeedsContactApproach && !bNeedsHesitationTracking)
+	{
+		return false;
+	}
+
+	FVector ApproachDirection = BallVelocity.GetSafeNormal();
+	if (ApproachDirection.IsNearlyZero())
+	{
+		ApproachDirection =
+			SoccerBall->GetActorLocation() - SoccerCharacter->GetActorLocation();
+		ApproachDirection.Z = 0.0f;
+		ApproachDirection = ApproachDirection.GetSafeNormal();
+	}
+	if (ApproachDirection.IsNearlyZero())
+	{
+		ApproachDirection = SoccerCharacter->GetActorForwardVector();
+		ApproachDirection.Z = 0.0f;
+		ApproachDirection = ApproachDirection.GetSafeNormal();
+	}
+
+	FVector PredictedBallLocation = SoccerBall->GetActorLocation() +
+		BallVelocity * FMath::Clamp(AIPhysicalBallPredictionTime, 0.0f, 0.5f);
+	FVector ApproachLocation = PredictedBallLocation -
+		ApproachDirection * FMath::Max(0.0f, AIPhysicalApproachBehindDistance);
+	ApproachLocation.Z = SoccerCharacter->GetActorLocation().Z;
+
+	if (
+		FVector::Dist2D(SoccerCharacter->GetActorLocation(), ApproachLocation) <=
+		FMath::Max(1.0f, AIPhysicalApproachAcceptanceRadius)
+		)
+	{
+		return false;
+	}
+
+	SoccerCharacter->RequestAIMovementMode(
+		BallSpeed >= FMath::Max(0.0f, AIPhysicalApproachFastRunBallSpeed)
+			? ESoccerAIMovementMode::FastRun
+			: ESoccerAIMovementMode::Run,
+		ESoccerAIMovementReason::ChaseOwnAutoPass,
+		true
+	);
+
+	MoveToLocationWithAIMovement(
+		ESoccerAIOrder::AttackRunIntoSpace,
+		ApproachLocation,
+		AIPhysicalApproachAcceptanceRadius,
+		false
+	);
+	SetFocalPoint(PredictedBallLocation, EAIFocusPriority::Gameplay);
+
+	return true;
 }
 
 bool ASoccerAIController::IsOffensiveProfileDecisionReady(

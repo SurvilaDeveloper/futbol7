@@ -81,6 +81,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Aerial")
 		float GetPlayerProfileAerialAbilityAlpha() const;
 
+	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Technical")
+		float GetPlayerProfileBallControlAlpha() const;
+
 	// Stage 8D: normalized attacking/tactical ratings used by the AI controller.
 	UFUNCTION(BlueprintPure, Category = "Soccer|Player Profile|Attack")
 		float GetPlayerProfileOffBallPositioningAlpha() const;
@@ -900,6 +903,14 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Aerial|Contact|Tracks", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float StandingAerialChestTrackAlpha = 0.50f;
+
+	// Extends the lower end of the Spine2->Neck control track toward the
+	// abdomen, allowing waist-height balls to be cushioned by the body.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Aerial|Planning|Standing Control", meta = (ClampMin = "0.0", ClampMax = "60.0"))
+	float AerialStandingBodyControlLowerExtension = 32.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Aerial|Planning|Standing Control", meta = (ClampMin = "40.0", ClampMax = "120.0"))
+	float AerialStandingBodyControlMinimumHeight = 82.0f;
 
 	/*
 	 * A control-oriented player prefers the chest because it usually leaves

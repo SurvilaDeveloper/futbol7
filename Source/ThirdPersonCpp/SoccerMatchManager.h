@@ -231,6 +231,12 @@ public:
 		ASoccerCharacterBase* TouchingCharacter
 	);
 
+	// Ends logical control without manufacturing another touch. Used when a
+	// physically simulated ball naturally escapes an AI carrier's reach.
+	void ReleaseControlledBallPossession(
+		ASoccerCharacterBase* ReleasingCharacter
+	);
+
 	bool CanCharacterClaimLooseBallNow(
 		const ASoccerCharacterBase* Character
 	) const;

@@ -446,6 +446,8 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession")
 		float AIPossessedBallHeight = 11.0f;
 
+	// Legacy compatibility only. Ordinary open-play carry no longer blends or
+	// repositions the ball; animated pre-contact actions may still author it.
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession", meta = (ClampMin = "0.0", ClampMax = "0.5"))
 		float AICarryEntryBlendDuration = 0.12f;
 
