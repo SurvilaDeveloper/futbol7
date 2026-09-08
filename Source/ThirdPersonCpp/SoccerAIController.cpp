@@ -12595,13 +12595,15 @@ void ASoccerAIController::ApplyGoalkeeperDeflectEffect(
 	DeflectDirection =
 		DeflectDirection.GetSafeNormal();
 
-	SoccerBall->SetPossessed(false);
-	SoccerBall->StopBallKeepingPhysics();
-
-	SoccerBall->Kick(
+	ApplyGoalkeeperPhysicalRebound(
+		SoccerBall,
 		DeflectDirection,
 		GoalkeeperDeflectForwardStrength,
-		GoalkeeperDeflectUpwardStrength
+		GoalkeeperDeflectUpwardStrength,
+		GoalkeeperDeflectIncomingNormalVelocityRetention,
+		GoalkeeperDeflectTangentialVelocityRetention,
+		GoalkeeperDeflectVerticalVelocityRetention,
+		GoalkeeperDeflectAngularVelocityRetention
 	);
 
 	if (IsValid(MatchManager))
@@ -12696,13 +12698,15 @@ void ASoccerAIController::ApplyGoalkeeperBodyReboundEffect(
 	ReboundDirection =
 		ReboundDirection.GetSafeNormal();
 
-	SoccerBall->SetPossessed(false);
-	SoccerBall->StopBallKeepingPhysics();
-
-	SoccerBall->Kick(
+	ApplyGoalkeeperPhysicalRebound(
+		SoccerBall,
 		ReboundDirection,
 		GoalkeeperBodyReboundForwardStrength,
-		GoalkeeperBodyReboundUpwardStrength
+		GoalkeeperBodyReboundUpwardStrength,
+		GoalkeeperBodyIncomingNormalVelocityRetention,
+		GoalkeeperBodyTangentialVelocityRetention,
+		GoalkeeperBodyVerticalVelocityRetention,
+		GoalkeeperBodyAngularVelocityRetention
 	);
 
 	if (IsValid(MatchManager))
@@ -12738,6 +12742,81 @@ void ASoccerAIController::ApplyGoalkeeperBodyReboundEffect(
 		TEXT("Resultado: REBOTE CORPORAL"),
 		FColor::Yellow,
 		1.1f
+	);
+}
+
+void ASoccerAIController::ApplyGoalkeeperPhysicalRebound(
+	ASoccerBall* SoccerBall,
+	const FVector& OutwardDirection,
+	float ForwardStrength,
+	float UpwardStrength,
+	float NormalVelocityRetention,
+	float TangentialVelocityRetention,
+	float VerticalVelocityRetention,
+	float AngularVelocityRetention
+) const
+{
+	if (!IsValid(SoccerBall))
+	{
+		return;
+	}
+
+	FVector SafeOutwardDirection = OutwardDirection;
+	SafeOutwardDirection.Z = 0.0f;
+	SafeOutwardDirection = SafeOutwardDirection.GetSafeNormal();
+
+	if (SafeOutwardDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	const FVector IncomingVelocity = SoccerBall->GetBallPhysicsVelocity();
+	FVector IncomingHorizontalVelocity = IncomingVelocity;
+	IncomingHorizontalVelocity.Z = 0.0f;
+
+	const float IncomingNormalSpeed = FVector::DotProduct(
+		IncomingHorizontalVelocity,
+		SafeOutwardDirection
+	);
+	const FVector IncomingTangentialVelocity =
+		IncomingHorizontalVelocity -
+		SafeOutwardDirection * IncomingNormalSpeed;
+
+	const float SafeNormalRetention = FMath::Clamp(
+		NormalVelocityRetention,
+		0.0f,
+		1.0f
+	);
+	const float SafeTangentialRetention = FMath::Clamp(
+		TangentialVelocityRetention,
+		0.0f,
+		1.0f
+	);
+	const float SafeVerticalRetention = FMath::Clamp(
+		VerticalVelocityRetention,
+		0.0f,
+		1.0f
+	);
+
+	FVector ReboundVelocity =
+		SafeOutwardDirection *
+		FMath::Abs(IncomingNormalSpeed) *
+		SafeNormalRetention +
+		IncomingTangentialVelocity *
+		SafeTangentialRetention;
+
+	ReboundVelocity.Z =
+		FMath::Abs(IncomingVelocity.Z) * SafeVerticalRetention;
+
+	SoccerBall->SetPossessed(false);
+	SoccerBall->ApplyAerialContactVelocity(
+		ReboundVelocity,
+		FMath::Clamp(AngularVelocityRetention, 0.0f, 1.0f)
+	);
+	SoccerBall->Kick(
+		SafeOutwardDirection,
+		FMath::Max(0.0f, ForwardStrength),
+		FMath::Max(0.0f, UpwardStrength)
 	);
 }
 bool ASoccerAIController::TryBuildGoalkeeperDistributionTarget(

@@ -2250,6 +2250,17 @@ private:
 		ASoccerBall* SoccerBall
 	);
 
+	void ApplyGoalkeeperPhysicalRebound(
+		ASoccerBall* SoccerBall,
+		const FVector& OutwardDirection,
+		float ForwardStrength,
+		float UpwardStrength,
+		float NormalVelocityRetention,
+		float TangentialVelocityRetention,
+		float VerticalVelocityRetention,
+		float AngularVelocityRetention
+	) const;
+
 	bool IsGoalkeeperCatchAction(
 		ESoccerGoalkeeperAction GoalkeeperAction
 	) const;
@@ -2777,6 +2788,18 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper")
 		float GoalkeeperDeflectUpwardStrength = 180.0f;
 
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Impact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float GoalkeeperDeflectIncomingNormalVelocityRetention = 0.35f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Impact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float GoalkeeperDeflectTangentialVelocityRetention = 0.55f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Impact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float GoalkeeperDeflectVerticalVelocityRetention = 0.30f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Impact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float GoalkeeperDeflectAngularVelocityRetention = 0.45f;
+
 	// Once a deflection/body rebound has already happened, keeping the keeper
 	// locked until the full save montage ends makes second-ball reactions late.
 	// Blend out the remaining save immediately and let normal loose-ball logic
@@ -3185,6 +3208,18 @@ private:
 		Category = "Soccer|Goalkeeper|Impact"
 	)
 		float GoalkeeperBodyReboundUpwardStrength = 85.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Impact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float GoalkeeperBodyIncomingNormalVelocityRetention = 0.18f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Impact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float GoalkeeperBodyTangentialVelocityRetention = 0.65f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Impact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float GoalkeeperBodyVerticalVelocityRetention = 0.15f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Goalkeeper|Impact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float GoalkeeperBodyAngularVelocityRetention = 0.60f;
 
 	// ============================================================
 	// GOALKEEPER PER-ACTION CONTACT PLANE SELECTOR
