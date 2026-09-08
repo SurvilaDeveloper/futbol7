@@ -545,6 +545,17 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
 		float AIPendingKickMaxBallDriftDistance = 80.0f;
 
+	// Open-play montages no longer freeze their ball. At the authored impact
+	// instant the real simulated ball must still be physically kickable.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing|Physical Contact", meta = (ClampMin = "1.0"))
+		float AIPendingKickMaxPhysicalContactDistance = 92.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing|Physical Contact")
+		float AIPendingKickMinimumPhysicalContactHeight = -15.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing|Physical Contact", meta = (ClampMin = "10.0"))
+		float AIPendingKickMaximumPhysicalContactHeight = 82.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations|Defensive Contact")
 		bool bPlayImmediateDefensiveContactAnimation = true;
 
@@ -615,6 +626,8 @@ private:
 	void FinishPendingAIKickAnimation();
 	void CancelPendingAIKickAnimation(bool bReleaseFrozenBall);
 	bool ShouldCancelPendingAIKickAnimation() const;
+	bool IsPendingAIKickBallWithinPhysicalContact() const;
+	bool IsBallWithinAIKickPhysicalContact(const ASoccerBall* SoccerBall) const;
 
 	bool TryStartAIDribbleTurnAutoPassToLocation(
 		const FVector& TargetLocation,

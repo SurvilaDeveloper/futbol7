@@ -244,18 +244,6 @@ void ASoccerAICharacter::Tick(float DeltaTime)
 		RequestAIMovementReevaluation();
 	}
 
-	const bool bShouldUpdatePossessedBallLocation =
-		bAIIsPossessingBall &&
-		IsValid(ControlledBall) &&
-		!bGoalkeeperHoldingBall &&
-		bAIDribbleTurnAutoPassActive &&
-		!bAIDribbleTurnAutoPassHasImpactedBall;
-
-	if (bShouldUpdatePossessedBallLocation)
-	{
-		UpdateAIPossessedBallLocation();
-	}
-
 	UpdateAIDribbleTurnActorRotation(DeltaTime);
 
 	UpdateAIPlayerEnergy(DeltaTime);
@@ -2088,11 +2076,19 @@ bool ASoccerAICharacter::StartAIKickMontageWithBall(
 		return false;
 	}
 
-	// The restart/autopass ball remains exactly where the tactical decision
-	// placed it until the authored foot-contact time. KickToTarget/KickToAirTarget
-	// releases this temporary physics lock at impact.
-	BallToKick->SetPossessed(true);
-	BallToKick->StopBallKeepingPhysics();
+	if (bTreatAsRestart)
+	{
+		// A legally placed restart must remain on its mark while the authored
+		// animation approaches contact. Open play deliberately skips this lock.
+		BallToKick->SetPossessed(true);
+		BallToKick->StopBallKeepingPhysics();
+	}
+	else
+	{
+		// Keep all incoming linear/angular motion. A later physical contact test
+		// decides whether the animated foot actually reaches the live ball.
+		BallToKick->SetPossessed(false);
+	}
 
 	PendingAIKickBall = BallToKick;
 	ActiveAIKickMontage = KickMontage;
@@ -2197,6 +2193,17 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 
 	if (!IsValid(BallToKick))
 	{
+		CancelPendingAIKickAnimation(false);
+		return;
+	}
+
+	if (
+		!bPendingAIKickIsRestart &&
+		!IsPendingAIKickBallWithinPhysicalContact()
+		)
+	{
+		// A moving ball escaped before the authored contact frame. Missing the
+		// kick is preferable to pulling it back or striking it remotely.
 		CancelPendingAIKickAnimation(false);
 		return;
 	}
@@ -2322,6 +2329,7 @@ void ASoccerAICharacter::CancelPendingAIKickAnimation(
 	ASoccerBall* BallToRelease = PendingAIKickBall;
 	UAnimMontage* MontageToStop = ActiveAIKickMontage;
 	const bool bBallAlreadyKicked = bPendingAIKickHasImpactedBall;
+	const bool bWasRestartKick = bPendingAIKickIsRestart;
 
 	bool bBallClaimedByAnotherCharacter = false;
 
@@ -2386,7 +2394,10 @@ void ASoccerAICharacter::CancelPendingAIKickAnimation(
 		)
 	{
 		BallToRelease->SetPossessed(false);
-		BallToRelease->StopBallKeepingPhysics();
+		if (bWasRestartKick)
+		{
+			BallToRelease->StopBallKeepingPhysics();
+		}
 	}
 
 	RequestAIMovementReevaluation();
@@ -2424,6 +2435,7 @@ bool ASoccerAICharacter::ShouldCancelPendingAIKickAnimation() const
 	}
 
 	if (
+		bPendingAIKickIsRestart &&
 		FVector::Dist2D(
 			PendingAIKickBall->GetActorLocation(),
 			PendingAIKickStartBallLocation
@@ -2460,6 +2472,43 @@ bool ASoccerAICharacter::ShouldCancelPendingAIKickAnimation() const
 	}
 
 	return false;
+}
+
+bool ASoccerAICharacter::IsPendingAIKickBallWithinPhysicalContact() const
+{
+	return IsBallWithinAIKickPhysicalContact(PendingAIKickBall);
+}
+
+bool ASoccerAICharacter::IsBallWithinAIKickPhysicalContact(
+	const ASoccerBall* SoccerBall
+) const
+{
+	if (!IsValid(SoccerBall))
+	{
+		return false;
+	}
+
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	const float GroundZ = Capsule != nullptr
+		? GetActorLocation().Z - Capsule->GetScaledCapsuleHalfHeight()
+		: GetActorLocation().Z;
+	const float BallHeight =
+		SoccerBall->GetActorLocation().Z - GroundZ;
+	const float HorizontalDistance = FVector::Dist2D(
+		GetActorLocation(),
+		SoccerBall->GetActorLocation()
+	);
+
+	return
+		HorizontalDistance <= FMath::Max(
+			1.0f,
+			AIPendingKickMaxPhysicalContactDistance
+		) &&
+		BallHeight >= AIPendingKickMinimumPhysicalContactHeight &&
+		BallHeight <= FMath::Max(
+			AIPendingKickMinimumPhysicalContactHeight,
+			AIPendingKickMaximumPhysicalContactHeight
+		);
 }
 
 void ASoccerAICharacter::StartAIKickAnimation()
@@ -2799,8 +2848,9 @@ void ASoccerAICharacter::StartAIDribbleTurnAutoPass(
 		GetCharacterMovement()->StopMovementImmediately();
 	}
 
-	ControlledBall->SetPossessed(true);
-	UpdateAIPossessedBallLocation();
+	// Unlike the legacy turn, the live ball is not attached or repositioned.
+	// The animation now has to meet the physical ball at its impact time.
+	ControlledBall->SetPossessed(false);
 
 	const float MontageDuration =
 		PlayAnimMontage(TurnMontage);
@@ -2888,6 +2938,13 @@ void ASoccerAICharacter::PerformAIDribbleTurnAutoPassImpact()
 
 	if (!bAIIsPossessingBall || !IsValid(ControlledBall))
 	{
+		return;
+	}
+
+	if (!IsBallWithinAIKickPhysicalContact(ControlledBall))
+	{
+		bAIDribbleTurnAutoPassHasImpactedBall = true;
+		ReleaseAIBall(false);
 		return;
 	}
 
