@@ -797,9 +797,13 @@ void ASoccerAIController::Tick(float DeltaTime)
 
 			const bool bOffsideTaker =
 				MatchManager->IsOffsideRestartTaker(SoccerCharacter);
+			const bool bDefensiveWallMember =
+				MatchManager->IsFreeKickDefensiveWallMember(SoccerCharacter);
 
 			const float OffsideAcceptanceRadius =
-				bOffsideTaker && !bOffsideFinalRun
+				bDefensiveWallMember
+				? MatchManager->GetFreeKickWallMoveAcceptanceRadius()
+				: bOffsideTaker && !bOffsideFinalRun
 				? MatchManager->GetOffsideRestartRunUpMoveAcceptanceRadius()
 				: MoveAcceptanceRadius;
 
@@ -813,7 +817,12 @@ void ASoccerAIController::Tick(float DeltaTime)
 			);
 		}
 
-		if (MatchManager->IsOffsideRestartTaker(SoccerCharacter))
+		if (
+			MatchManager->IsOffsideRestartTaker(SoccerCharacter) ||
+			MatchManager->ShouldDefendingFreeKickCharacterFaceBall(
+				SoccerCharacter
+			)
+		)
 		{
 			if (IsValid(SoccerBall))
 			{
@@ -822,6 +831,26 @@ void ASoccerAIController::Tick(float DeltaTime)
 			else
 			{
 				ClearFocus(EAIFocusPriority::Gameplay);
+			}
+
+			if (
+				MatchManager->IsFreeKickDefensiveWallMember(SoccerCharacter) &&
+				SoccerCharacter->GetVelocity().SizeSquared2D() <=
+					FMath::Square(35.0f) &&
+				IsValid(SoccerBall)
+			)
+			{
+				FVector FacingDirection =
+					SoccerBall->GetActorLocation() -
+					SoccerCharacter->GetActorLocation();
+				FacingDirection.Z = 0.0f;
+
+				if (FacingDirection.Normalize())
+				{
+					SoccerCharacter->SetActorRotation(
+						FacingDirection.Rotation()
+					);
+				}
 			}
 		}
 		else
@@ -15322,7 +15351,10 @@ bool ASoccerAIController::TryShootBallIfClose(
 		AIShotMaxTravelTime
 	);
 
-	StopMovement();
+	if (SoccerCharacter->IsAIKickMontageActive())
+	{
+		StopMovement();
+	}
 
 	return true;
 }
@@ -15673,6 +15705,8 @@ bool ASoccerAIController::UpdateAIAutoPassFollow(
 
 	if (SoccerCharacter->TryCollectAIAutoPassIfClose(AIAutoPassCollectDistance))
 	{
+		BeginOffensiveDecisionEpisode(SoccerCharacter, true);
+
 		if (IsValid(SoccerBall))
 		{
 			SetFocus(SoccerBall);
@@ -16545,7 +16579,14 @@ bool ASoccerAIController::TryForceAIPossessionActionIfStuck(
 
 	ClearAIPossessionStuckTracking();
 
-	StopMovement();
+	// This is another short carry touch. Keep following it instead of inserting
+	// a stop between the kick and the next run.
+	MoveToLocationWithAIMovement(
+		ESoccerAIOrder::AttackRunIntoSpace,
+		ForcedAutoPassTarget,
+		AIAutoPassFollowAcceptanceRadius,
+		false
+	);
 
 	if (GEngine)
 	{
@@ -16764,7 +16805,10 @@ bool ASoccerAIController::TryPassToTeammateIfReady(
 		PassTargetLocation
 	);
 
-	StopMovement();
+	if (SoccerCharacter->IsAIKickMontageActive())
+	{
+		StopMovement();
+	}
 
 	if (GEngine)
 	{
@@ -17993,7 +18037,20 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 	// decision. Composure only enlarges the hesitation while actually pressed.
 	if (!IsOffensiveProfileDecisionReady(SoccerCharacter))
 	{
-		StopMovement();
+		if (
+			ActiveOffensiveDecisionEpisode ==
+			ESoccerAIDecisionEpisode::StrongHesitation
+			)
+		{
+			StopMovement();
+			SoccerCharacter->SetAIPossessionCarryActive(false);
+		}
+		else
+		{
+			// A mild hesitation is cognitive, not a full-body stop. Preserve the
+			// current run and keep the ball at the carrying point briefly.
+			SoccerCharacter->SetAIPossessionCarryActive(true);
+		}
 
 		ASoccerBall* DecisionWaitBall = MatchManager->GetSoccerBall();
 		if (IsValid(DecisionWaitBall))
@@ -18003,6 +18060,10 @@ bool ASoccerAIController::TryExecuteZoneBasedPossessionDecision(
 
 		return true;
 	}
+
+	// A mild episode may have used carry tracking while preserving locomotion.
+	// Once the decision is ready, return ball authority to the chosen action.
+	SoccerCharacter->SetAIPossessionCarryActive(false);
 
 	auto CompleteIfActionStarted =
 		[this](bool bActionStarted) -> bool
@@ -18553,7 +18614,10 @@ bool ASoccerAIController::TryExecutePendingMainActionAfterPreparation(
 			AIRecoveryClearanceMinTravelTime,
 			AIRecoveryClearanceMaxTravelTime
 		);
-		StopMovement();
+		if (SoccerCharacter->IsAIKickMontageActive())
+		{
+			StopMovement();
+		}
 		return true;
 
 	case ESoccerAIPendingMainAction::AutoPass:
@@ -18600,7 +18664,10 @@ bool ASoccerAIController::TryExecutePendingMainActionAfterPreparation(
 			);
 		}
 
-		StopMovement();
+		if (SoccerCharacter->IsAIKickMontageActive())
+		{
+			StopMovement();
+		}
 
 		if (GEngine)
 		{
@@ -18627,7 +18694,10 @@ bool ASoccerAIController::TryExecutePendingMainActionAfterPreparation(
 			AIShotMaxTravelTime
 		);
 
-		StopMovement();
+		if (SoccerCharacter->IsAIKickMontageActive())
+		{
+			StopMovement();
+		}
 
 		if (GEngine)
 		{
@@ -22820,9 +22890,132 @@ float ASoccerAIController::GetOffensiveProfileDecisionDelay(
 	return FMath::Max(0.0f, DecisionDelay);
 }
 
+void ASoccerAIController::BeginOffensiveDecisionEpisode(
+	const ASoccerAICharacter* SoccerCharacter,
+	bool bOwnAutoPassContinuation
+)
+{
+	if (!IsValid(SoccerCharacter))
+	{
+		return;
+	}
+
+	EvaluatedOffensivePossessionSequence =
+		SoccerCharacter->GetAIPossessionSequence();
+
+	if (!SoccerCharacter->HasPlayerProfile())
+	{
+		ActiveOffensiveDecisionEpisode = ESoccerAIDecisionEpisode::Fluid;
+		ActiveOffensiveDecisionReadyTime = -1000.0f;
+		return;
+	}
+
+	if (!bOffensiveDecisionRandomInitialized)
+	{
+		const uint32 CharacterHash = GetTypeHash(SoccerCharacter->GetFName());
+		OffensiveDecisionRandomStream.Initialize(
+			OffensiveDecisionRandomSeed ^ static_cast<int32>(CharacterHash)
+		);
+		bOffensiveDecisionRandomInitialized = true;
+	}
+
+	if (bOwnAutoPassContinuation && FluentOwnTouchEpisodesRemaining > 0)
+	{
+		--FluentOwnTouchEpisodesRemaining;
+		ActiveOffensiveDecisionEpisode = ESoccerAIDecisionEpisode::Fluid;
+		ActiveOffensiveDecisionReadyTime = -1000.0f;
+		return;
+	}
+
+	const float DecisionAlpha =
+		SoccerCharacter->GetPlayerProfileDecisionMakingAlpha();
+	const float AnticipationAlpha =
+		SoccerCharacter->GetPlayerProfileAnticipationAlpha();
+	const float ComposureAlpha =
+		SoccerCharacter->GetPlayerProfileComposureAlpha();
+	const float PressureAlpha =
+		GetOffensiveProfilePressureAlpha(SoccerCharacter);
+
+	float HesitationChance = FMath::Lerp(
+		OffensiveHesitationChanceAtZero,
+		OffensiveHesitationChanceAtHundred,
+		DecisionAlpha
+	);
+
+	// Anticipation reduces how often a player is caught without a prepared idea.
+	HesitationChance *= FMath::Lerp(1.18f, 0.82f, AnticipationAlpha);
+	HesitationChance += PressureAlpha * FMath::Lerp(
+		OffensivePressureHesitationChanceAtZeroComposure,
+		OffensivePressureHesitationChanceAtHundredComposure,
+		ComposureAlpha
+	);
+	HesitationChance = FMath::Clamp(HesitationChance, 0.02f, 0.75f);
+
+	if (OffensiveDecisionRandomStream.FRand() >= HesitationChance)
+	{
+		ActiveOffensiveDecisionEpisode = ESoccerAIDecisionEpisode::Fluid;
+		ActiveOffensiveDecisionReadyTime = -1000.0f;
+
+		if (bOwnAutoPassContinuation)
+		{
+			const int32 MinStreak = FMath::RoundToInt(FMath::Lerp(1.0f, 3.0f, DecisionAlpha));
+			const int32 MaxStreak = FMath::RoundToInt(FMath::Lerp(3.0f, 7.0f, DecisionAlpha));
+			FluentOwnTouchEpisodesRemaining =
+				OffensiveDecisionRandomStream.RandRange(MinStreak, MaxStreak);
+		}
+		return;
+	}
+
+	const float StrongChance = FMath::Clamp(
+		FMath::Lerp(0.48f, 0.16f, DecisionAlpha) + PressureAlpha * 0.12f,
+		0.10f,
+		0.65f
+	);
+
+	const bool bStrong =
+		OffensiveDecisionRandomStream.FRand() < StrongChance;
+
+	ActiveOffensiveDecisionEpisode = bStrong
+		? ESoccerAIDecisionEpisode::StrongHesitation
+		: ESoccerAIDecisionEpisode::MildHesitation;
+
+	const float Duration = bStrong
+		? OffensiveDecisionRandomStream.FRandRange(
+			OffensiveStrongHesitationMinDuration,
+			OffensiveStrongHesitationMaxDuration
+		)
+		: OffensiveDecisionRandomStream.FRandRange(
+			OffensiveMildHesitationMinDuration,
+			OffensiveMildHesitationMaxDuration
+		);
+
+	const float SkillDurationMultiplier = FMath::Lerp(1.25f, 0.75f, DecisionAlpha);
+	const float AnticipationDurationMultiplier = FMath::Lerp(1.12f, 0.88f, AnticipationAlpha);
+	const float CurrentTime = GetWorld() != nullptr
+		? GetWorld()->GetTimeSeconds()
+		: 0.0f;
+
+	ActiveOffensiveDecisionReadyTime = CurrentTime +
+		Duration * SkillDurationMultiplier * AnticipationDurationMultiplier;
+}
+
+void ASoccerAIController::EnsureOffensiveDecisionEpisode(
+	const ASoccerAICharacter* SoccerCharacter
+)
+{
+	if (
+		IsValid(SoccerCharacter) &&
+		EvaluatedOffensivePossessionSequence !=
+			SoccerCharacter->GetAIPossessionSequence()
+		)
+	{
+		BeginOffensiveDecisionEpisode(SoccerCharacter, false);
+	}
+}
+
 bool ASoccerAIController::IsOffensiveProfileDecisionReady(
 	const ASoccerAICharacter* SoccerCharacter
-) const
+)
 {
 	if (!IsValid(SoccerCharacter) || !SoccerCharacter->HasPlayerProfile())
 	{
@@ -22834,8 +23027,18 @@ bool ASoccerAIController::IsOffensiveProfileDecisionReady(
 		return true;
 	}
 
-	return SoccerCharacter->GetTimeSinceAIPossessionStarted() >=
-		GetOffensiveProfileDecisionDelay(SoccerCharacter);
+	EnsureOffensiveDecisionEpisode(SoccerCharacter);
+
+	if (ActiveOffensiveDecisionEpisode == ESoccerAIDecisionEpisode::Fluid)
+	{
+		return true;
+	}
+
+	const float CurrentTime = GetWorld() != nullptr
+		? GetWorld()->GetTimeSeconds()
+		: 0.0f;
+
+	return CurrentTime >= ActiveOffensiveDecisionReadyTime;
 }
 
 bool ASoccerAIController::ShouldOffensiveProfileAcceptPreferredShot(
@@ -23522,55 +23725,32 @@ void ASoccerAIController::CreateOrUpdateRecoveryIntent(
 		}
 	}
 
-	ASoccerCharacterBase* Teammate =
-		FindSimplePassTeammate(SoccerCharacter);
+	ASoccerCharacterBase* SmartPassReceiver = nullptr;
+	FVector SmartPassTarget = FVector::ZeroVector;
+	ESoccerAttackPassType SmartPassType = ESoccerAttackPassType::ToFeet;
+	float SmartPassScore = 0.0f;
+	float SmartPassHorizontalSpeed = 0.0f;
 
-	if (IsValid(Teammate))
+	if (TryBuildSmartAttackPassPlan(
+		SoccerCharacter,
+		false,
+		false,
+		SmartPassReceiver,
+		SmartPassTarget,
+		SmartPassType,
+		SmartPassScore,
+		SmartPassHorizontalSpeed
+	))
 	{
-		const ESoccerFieldZone SelfZone =
-			MatchManager->GetCharacterFieldZone(SoccerCharacter);
-
-		const ESoccerFieldZone TeammateZone =
-			MatchManager->GetCharacterFieldZone(Teammate);
-
-		const int32 SelfZoneIndex =
-			GetFieldZoneIndex(SelfZone);
-
-		const int32 TeammateZoneIndex =
-			GetFieldZoneIndex(TeammateZone);
-
-		const bool bTeammateIsBetterPositioned =
-			TeammateZoneIndex - SelfZoneIndex >=
-			AIBetterPassMinZoneAdvantage;
-
-		if (bTeammateIsBetterPositioned)
-		{
-			const FVector PassTargetLocation =
-				BuildSimplePassTargetLocation(
-					SoccerCharacter,
-					Teammate
-				);
-
-			if (!PassTargetLocation.IsNearlyZero())
-			{
-				CurrentRecoveryIntent =
-					ESoccerAIIntent::RecoverAndPass;
-
-				RecoveryIntentPlannedAction =
-					ESoccerAIPendingMainAction::PassToTeammate;
-
-				RecoveryIntentTargetCharacter =
-					Teammate;
-
-				RecoveryIntentTargetLocation =
-					PassTargetLocation;
-
-				RecoveryIntentCreatedTime =
-					CurrentTime;
-
-				return;
-			}
-		}
+		CurrentRecoveryIntent = ESoccerAIIntent::RecoverAndPass;
+		RecoveryIntentPlannedAction = ESoccerAIPendingMainAction::PassToTeammate;
+		RecoveryIntentTargetCharacter = SmartPassReceiver;
+		RecoveryIntentTargetLocation = SmartPassTarget;
+		RecoveryIntentPassType = SmartPassType;
+		RecoveryIntentPassScore = SmartPassScore;
+		RecoveryIntentPassHorizontalSpeed = SmartPassHorizontalSpeed;
+		RecoveryIntentCreatedTime = CurrentTime;
+		return;
 	}
 
 	const FVector AutoPassTargetLocation =
@@ -23643,17 +23823,14 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntent(
 		ESoccerAIPendingMainAction::PassToTeammate
 		)
 	{
-		if (!IsValid(TargetCharacter))
+		if (
+			!IsValid(TargetCharacter) ||
+			TargetCharacter->GetTeam() != SoccerCharacter->GetTeam()
+			)
 		{
 			ClearCurrentRecoveryIntent();
 			return false;
 		}
-
-		TargetLocation =
-			BuildSimplePassTargetLocation(
-				SoccerCharacter,
-				TargetCharacter
-			);
 	}
 
 	if (TargetLocation.IsNearlyZero())
@@ -23667,6 +23844,10 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntent(
 
 	ASoccerCharacterBase* CharacterToUse =
 		TargetCharacter;
+	const float RecoveryPassSpeedToUse =
+		RecoveryIntentPassHorizontalSpeed > 0.0f
+		? RecoveryIntentPassHorizontalSpeed
+		: SmartAttackPassToFeetHorizontalSpeed;
 
 	ClearCurrentRecoveryIntent();
 
@@ -23685,7 +23866,10 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntent(
 			AIRecoveryClearanceMinTravelTime,
 			AIRecoveryClearanceMaxTravelTime
 		);
-		StopMovement();
+		if (SoccerCharacter->IsAIKickMontageActive())
+		{
+			StopMovement();
+		}
 		return true;
 
 	case ESoccerAIPendingMainAction::Shoot:
@@ -23719,7 +23903,10 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntent(
 			AIShotMaxTravelTime
 		);
 
-		StopMovement();
+		if (SoccerCharacter->IsAIKickMontageActive())
+		{
+			StopMovement();
+		}
 
 		if (GEngine)
 		{
@@ -23754,9 +23941,9 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntent(
 
 		SoccerCharacter->KickAIBallToTarget(
 			TargetLocation,
-			AISimplePassHorizontalSpeed,
-			AISimplePassMinTravelTime,
-			AISimplePassMaxTravelTime
+			RecoveryPassSpeedToUse,
+			SmartAttackPassMinTravelTime,
+			SmartAttackPassMaxTravelTime
 		);
 
 		if (IsValid(CharacterToUse))
@@ -23768,7 +23955,10 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntent(
 			);
 		}
 
-		StopMovement();
+		if (SoccerCharacter->IsAIKickMontageActive())
+		{
+			StopMovement();
+		}
 
 		if (GEngine)
 		{
@@ -23923,6 +24113,12 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntentAtDefensiveContact(
 	ESoccerAIPendingMainAction ActionToExecute = RecoveryIntentPlannedAction;
 	FVector TargetLocation = RecoveryIntentTargetLocation;
 	ASoccerCharacterBase* TargetCharacter = RecoveryIntentTargetCharacter.Get();
+	const ESoccerAttackPassType RecoveryPassTypeToUse = RecoveryIntentPassType;
+	const float RecoveryPassScoreToUse = RecoveryIntentPassScore;
+	const float RecoveryPassSpeedToUse =
+		RecoveryIntentPassHorizontalSpeed > 0.0f
+		? RecoveryIntentPassHorizontalSpeed
+		: SmartAttackPassToFeetHorizontalSpeed;
 	if (ActionToExecute == ESoccerAIPendingMainAction::None)
 	{
 		// RecoveryIntent can be disabled for experiments. A successful defensive
@@ -23939,11 +24135,8 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntentAtDefensiveContact(
 		}
 		else
 		{
-			TargetLocation = BuildSimplePassTargetLocation(SoccerCharacter, TargetCharacter);
-			if (TargetLocation.IsNearlyZero())
-			{
-				ActionToExecute = ESoccerAIPendingMainAction::AutoPass;
-			}
+			// Keep the intelligent destination selected before contact. Rebuilding
+			// it as a simple pass here would erase ForwardSpace/RetentionSpace.
 		}
 	}
 
@@ -24008,8 +24201,9 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntentAtDefensiveContact(
 	case ESoccerAIPendingMainAction::PassToTeammate:
 		ContactType = TEXT("PASS");
 		SoccerCharacter->ExecuteImmediateAIContactKick(
-			SoccerBall, TargetLocation, AISimplePassHorizontalSpeed,
-			AISimplePassMinTravelTime, AISimplePassMaxTravelTime, false, false, false
+			SoccerBall, TargetLocation, RecoveryPassSpeedToUse,
+			SmartAttackPassMinTravelTime, SmartAttackPassMaxTravelTime,
+			false, false, false
 		);
 		if (IsValid(TargetCharacter))
 		{
@@ -24052,6 +24246,25 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntentAtDefensiveContact(
 		*GetNameSafe(PreviousPossessor),
 		*TargetLocation.ToCompactString()
 	);
+
+	if (ActionToExecute == ESoccerAIPendingMainAction::PassToTeammate)
+	{
+		const TCHAR* PassTypeText =
+			RecoveryPassTypeToUse == ESoccerAttackPassType::ForwardSpace
+			? TEXT("FORWARD_SPACE")
+			: RecoveryPassTypeToUse == ESoccerAttackPassType::RetentionSpace
+			? TEXT("RETENTION_SPACE")
+			: TEXT("TO_FEET");
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("[DefensiveTouchPass] type=%s receiver=%s score=%.1f speed=%.0f"),
+			PassTypeText,
+			*GetNameSafe(TargetCharacter),
+			RecoveryPassScoreToUse,
+			RecoveryPassSpeedToUse
+		);
+	}
 	return true;
 }
 
@@ -24068,6 +24281,12 @@ void ASoccerAIController::ClearCurrentRecoveryIntent()
 
 	RecoveryIntentTargetLocation =
 		FVector::ZeroVector;
+
+	RecoveryIntentPassType =
+		ESoccerAttackPassType::ToFeet;
+
+	RecoveryIntentPassScore = 0.0f;
+	RecoveryIntentPassHorizontalSpeed = 0.0f;
 
 	RecoveryIntentCreatedTime =
 		-1000.0f;
@@ -24573,17 +24792,24 @@ bool ASoccerAIController::MoveToLocationFilteredForDefense(
 	return true;
 }
 
-bool ASoccerAIController::TrySmartAttackPass(
+bool ASoccerAIController::TryBuildSmartAttackPassPlan(
 	ASoccerAICharacter* SoccerCharacter,
-	bool bUsePossessionRetentionThreshold
-)
+	bool bUsePossessionRetentionThreshold,
+	bool bRequireCurrentPossession,
+	ASoccerCharacterBase*& OutReceiver,
+	FVector& OutTargetLocation,
+	ESoccerAttackPassType& OutPassType,
+	float& OutPassScore,
+	float& OutHorizontalSpeed
+) const
 {
-	if (!IsValid(SoccerCharacter))
-	{
-		return false;
-	}
+	OutReceiver = nullptr;
+	OutTargetLocation = FVector::ZeroVector;
+	OutPassType = ESoccerAttackPassType::ToFeet;
+	OutPassScore = 0.0f;
+	OutHorizontalSpeed = 0.0f;
 
-	if (!SoccerCharacter->IsAIPossessingBall())
+	if (!IsValid(SoccerCharacter))
 	{
 		return false;
 	}
@@ -24593,22 +24819,18 @@ bool ASoccerAIController::TrySmartAttackPass(
 		return false;
 	}
 
-	ASoccerCharacterBase* Receiver = nullptr;
-	FVector PassTargetLocation = FVector::ZeroVector;
-	ESoccerAttackPassType PassType = ESoccerAttackPassType::ToFeet;
-	float PassScore = 0.0f;
-
 	const bool bFoundPass =
 		MatchManager->FindBestAttackPassOption(
 			SoccerCharacter,
-			Receiver,
-			PassTargetLocation,
-			PassType,
-			PassScore,
-			bUsePossessionRetentionThreshold
+			OutReceiver,
+			OutTargetLocation,
+			OutPassType,
+			OutPassScore,
+			bUsePossessionRetentionThreshold,
+			bRequireCurrentPossession
 		);
 
-	if (!bFoundPass || !IsValid(Receiver))
+	if (!bFoundPass || !IsValid(OutReceiver) || OutTargetLocation.IsNearlyZero())
 	{
 		return false;
 	}
@@ -24621,20 +24843,53 @@ bool ASoccerAIController::TrySmartAttackPass(
 
 	if (
 		SoccerCharacter->HasPlayerProfile() &&
-		PassScore < ProfileRequiredPassScore
+		OutPassScore < ProfileRequiredPassScore
 	)
 	{
 		return false;
 	}
 
-	float PassHorizontalSpeed = SmartAttackPassToFeetHorizontalSpeed;
-	if (PassType == ESoccerAttackPassType::ForwardSpace)
+	OutHorizontalSpeed = SmartAttackPassToFeetHorizontalSpeed;
+	if (OutPassType == ESoccerAttackPassType::ForwardSpace)
 	{
-		PassHorizontalSpeed = SmartAttackPassToSpaceHorizontalSpeed;
+		OutHorizontalSpeed = SmartAttackPassToSpaceHorizontalSpeed;
 	}
-	else if (PassType == ESoccerAttackPassType::RetentionSpace)
+	else if (OutPassType == ESoccerAttackPassType::RetentionSpace)
 	{
-		PassHorizontalSpeed = SmartAttackRetentionPassHorizontalSpeed;
+		OutHorizontalSpeed = SmartAttackRetentionPassHorizontalSpeed;
+	}
+
+	return true;
+}
+
+bool ASoccerAIController::TrySmartAttackPass(
+	ASoccerAICharacter* SoccerCharacter,
+	bool bUsePossessionRetentionThreshold
+)
+{
+	if (!IsValid(SoccerCharacter) || !SoccerCharacter->IsAIPossessingBall())
+	{
+		return false;
+	}
+
+	ASoccerCharacterBase* Receiver = nullptr;
+	FVector PassTargetLocation = FVector::ZeroVector;
+	ESoccerAttackPassType PassType = ESoccerAttackPassType::ToFeet;
+	float PassScore = 0.0f;
+	float PassHorizontalSpeed = 0.0f;
+
+	if (!TryBuildSmartAttackPassPlan(
+		SoccerCharacter,
+		bUsePossessionRetentionThreshold,
+		true,
+		Receiver,
+		PassTargetLocation,
+		PassType,
+		PassScore,
+		PassHorizontalSpeed
+	))
+	{
+		return false;
 	}
 
 	if (!TryRegisterAIKickTouchForRules(SoccerCharacter))

@@ -448,6 +448,7 @@ void ASoccerMatchManager::EndPlay(
 	const EEndPlayReason::Type EndPlayReason
 )
 {
+	GetWorldTimerManager().ClearTimer(GoalReplayStartTimerHandle);
 	ShutdownInstantReplayRecorder();
 
 	DestroyOffsideFreezeLine();
@@ -736,6 +737,7 @@ void ASoccerMatchManager::PrepareForMatchPeriodBreak()
 	if (GetWorld() != nullptr)
 	{
 		GetWorldTimerManager().ClearTimer(GoalResetTimerHandle);
+		GetWorldTimerManager().ClearTimer(GoalReplayStartTimerHandle);
 	}
 
 	ClearActiveMatchState();
@@ -5951,6 +5953,25 @@ bool ASoccerMatchManager::IsOffsideRestartTaker(
 ) const
 {
 	return FreeKickRestart.IsTaker(*this, SoccerAICharacter);
+}
+
+bool ASoccerMatchManager::ShouldDefendingFreeKickCharacterFaceBall(
+	const ASoccerAICharacter* SoccerAICharacter
+) const
+{
+	return FreeKickRestart.ShouldDefendingCharacterFaceBall(SoccerAICharacter);
+}
+
+bool ASoccerMatchManager::IsFreeKickDefensiveWallMember(
+	const ASoccerAICharacter* SoccerAICharacter
+) const
+{
+	return FreeKickRestart.IsDefensiveWallMember(SoccerAICharacter);
+}
+
+float ASoccerMatchManager::GetFreeKickWallMoveAcceptanceRadius() const
+{
+	return FMath::Clamp(FreeKickWallMoveAcceptanceRadius, 1.0f, 50.0f);
 }
 
 bool ASoccerMatchManager::IsHumanFreeKickTaker(
@@ -12731,13 +12752,58 @@ void ASoccerMatchManager::TryStartGoalInstantReplay(ESoccerTeam ScoringTeam)
         return;
     }
 
+	PendingGoalReplayScoringTeam = ScoringTeam;
+
+	const float PostEventSeconds = FMath::Max(
+		0.0f,
+		InstantReplayGoalPostEventSeconds
+	);
+
+	if (PostEventSeconds > KINDA_SMALL_NUMBER)
+	{
+		GetWorldTimerManager().ClearTimer(GoalReplayStartTimerHandle);
+		GetWorldTimerManager().SetTimer(
+			GoalReplayStartTimerHandle,
+			this,
+			&ASoccerMatchManager::StartPendingGoalInstantReplay,
+			PostEventSeconds,
+			false
+		);
+		return;
+	}
+
+	StartPendingGoalInstantReplay();
+}
+
+void ASoccerMatchManager::StartPendingGoalInstantReplay()
+{
+	GetWorldTimerManager().ClearTimer(GoalReplayStartTimerHandle);
+
+	if (
+		MatchPlayState != ESoccerMatchPlayState::GoalScored ||
+		!bEnableInstantReplayAfterGoal ||
+		!IsValid(InstantReplayManager)
+	)
+	{
+		return;
+	}
+
+	const float PreEventSeconds = FMath::Max(
+		0.0f,
+		InstantReplayGoalPreEventSeconds
+	);
+	const float PostEventSeconds = FMath::Max(
+		0.0f,
+		InstantReplayGoalPostEventSeconds
+	);
     const float RequestedSeconds = FMath::Clamp(
-        InstantReplayGoalPlaybackSeconds,
+		PreEventSeconds + PostEventSeconds,
         1.0f,
         FMath::Max(1.0f, InstantReplayHistorySeconds)
     );
 
-    const float ScoredGoalLineSign = GetOpponentGoalLineSign(ScoringTeam);
+	const float ScoredGoalLineSign =
+		GetOpponentGoalLineSign(PendingGoalReplayScoringTeam);
 
     if (!InstantReplayManager->StartEventReplay(
         ESoccerInstantReplayPlaybackReason::Goal,
@@ -15273,6 +15339,14 @@ float ASoccerMatchManager::GetActiveRestartAcceptanceRadius(
 
 	case ESoccerRestartType::OffsideFreeKick:
 	case ESoccerRestartType::DirectFreeKick:
+		if (FreeKickRestart.IsDefensiveWallMember(SoccerAICharacter))
+		{
+			return FMath::Clamp(
+				FreeKickWallReadyAcceptanceRadius,
+				1.0f,
+				80.0f
+			);
+		}
 		if (SoccerAICharacter == FreeKickRestart.GetTaker())
 		{
 			return FreeKickRestart.IsHumanTakerClaimed()
@@ -18135,6 +18209,13 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 	ReleaseAllAIBallPossessions();
 	ReleaseAllHumanBallPossessions();
 
+	const float GoalReplayPostDelay =
+		bEnableInstantReplayAfterGoal && IsValid(InstantReplayManager)
+		? FMath::Max(0.0f, InstantReplayGoalPostEventSeconds)
+		: 0.0f;
+	const float EffectiveGoalResetDelay =
+		FMath::Max(0.0f, GoalResetDelay) + GoalReplayPostDelay;
+
 	if (GEngine)
 	{
 		const FString ScoreMessage = FString::Printf(
@@ -18145,7 +18226,7 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 
 		GEngine->AddOnScreenDebugMessage(
 			-1,
-			GoalResetDelay,
+			EffectiveGoalResetDelay,
 			FColor::Green,
 			ScoreMessage
 		);
@@ -18161,7 +18242,7 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 			GoalResetTimerHandle,
 			this,
 			&ASoccerMatchManager::ResetAfterGoal,
-			GoalResetDelay,
+			EffectiveGoalResetDelay,
 			false
 		);
 	}
@@ -18171,10 +18252,8 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 	}
 
 	/*
-	 * Stage 3: the normal GoalReset timer is already armed. The replay pauses
-	 * the world, so that timer naturally waits and resumes only after playback.
-	 * If replay cannot start (for example very early in the match), nothing
-	 * special is required: the existing goal flow simply continues.
+	 * The replay may wait briefly to record action after the goal. The reset
+	 * timer includes that delay and then pauses naturally during playback.
 	 */
 	TryStartGoalInstantReplay(ScoringTeam);
 }
@@ -18185,6 +18264,9 @@ void ASoccerMatchManager::ResetAfterGoal()
 	{
 		GetWorldTimerManager().ClearTimer(
 			GoalResetTimerHandle
+		);
+		GetWorldTimerManager().ClearTimer(
+			GoalReplayStartTimerHandle
 		);
 	}
 
@@ -22875,7 +22957,8 @@ bool ASoccerMatchManager::FindBestAttackPassOption(
 	FVector& OutTargetLocation,
 	ESoccerAttackPassType& OutPassType,
 	float& OutScore,
-	bool bUsePossessionRetentionThreshold
+	bool bUsePossessionRetentionThreshold,
+	bool bRequireCurrentPossession
 ) const
 {
 	OutReceiver = nullptr;
@@ -22888,7 +22971,7 @@ bool ASoccerMatchManager::FindBestAttackPassOption(
 		return false;
 	}
 
-	if (!BallCarrier->IsAIPossessingBall())
+	if (bRequireCurrentPossession && !BallCarrier->IsAIPossessingBall())
 	{
 		return false;
 	}

@@ -52,13 +52,13 @@ public:
     bool IsAvailableForTrajectoryPrediction() const;
 
     /*
-     * Predice cu·ndo la pelota cruzar· un plano vertical.
+     * Predice cu√°ndo la pelota cruzar√° un plano vertical.
      *
      * Sin PlaneNormalOverride, el plano es perpendicular a la
-     * direcciÛn horizontal actual de la pelota, como antes.
+     * direcci√≥n horizontal actual de la pelota, como antes.
      *
      * Con PlaneNormalOverride se puede predecir el cruce de un
-     * plano fijo, por ejemplo la lÌnea del arco.
+     * plano fijo, por ejemplo la l√≠nea del arco.
      */
     bool PredictCrossingOfHorizontalPlane(
         const FVector& PlaneLocation,
@@ -145,6 +145,9 @@ private:
     UPROPERTY(VisibleAnywhere, Category = "Ball")
         UStaticMeshComponent* BallMesh;
 
+    UPROPERTY(EditAnywhere, Category = "Ball|Debug")
+        bool bDebugBallHitEvents = false;
+
     UPROPERTY(EditAnywhere, Category = "Ball|Kick")
         float GroundPassDistanceThreshold = 300.0f;
 
@@ -166,7 +169,7 @@ private:
 
 /*
  * Multiplicador central de las velocidades horizontales
- * generadas por patadas, pases, autopases y conducciÛn.
+ * generadas por patadas, pases, autopases y conducci√≥n.
  *
  * 1.00 = velocidades originales configuradas.
  * 0.50 = aproximadamente la mitad.
@@ -195,7 +198,7 @@ private:
     /*
      * Calcula la velocidad inicial necesaria para alcanzar un destino en un
      * tiempo conocido bajo gravedad y damping lineal. Usa el mismo modelo
-     * exponencial que BuildPredictedTrajectory(), de modo que un pase aÈreo
+     * exponencial que BuildPredictedTrajectory(), de modo que un pase a√©reo
      * conserve su punto/altura de llegada aunque AirLinearDamping sea mayor
      * que cero.
      */
@@ -239,6 +242,11 @@ private:
 
     UPROPERTY(EditAnywhere, Category = "Ball|Pre Launch Separation")
         float PreLaunchSeparationFastSpeed = 2500.0f;
+
+    // Legacy positional correction. Disabled because it visibly moves the
+    // ball 15-50 cm before velocity is applied.
+    UPROPERTY(EditAnywhere, Category = "Ball|Pre Launch Separation")
+        bool bEnablePreLaunchSeparation = false;
 
     float GetPreLaunchSeparationDistance(float LaunchSpeed) const;
 

@@ -12,6 +12,7 @@
 #include "SoccerTeamTypes.h"
 
 #include "SoccerDebugManager.h"
+#include "SoccerClubSelectionWidget.h"
 #include "SoccerFormationMenuWidget.h"
 #include "SoccerQuickTacticsWidget.h"
 #include "SoccerSubstitutionMenuWidget.h"
@@ -31,20 +32,110 @@ void AGameHUD::BeginPlay()
 	FindMatchManager();
 	EnsureTacticalPresetManager();
 
-	if (
-		IsValid(MatchManager) &&
-		MatchManager->ShouldShowFormationMenuAtMatchStart()
-	)
+	FTimerDelegate OpenMenuDelegate;
+	OpenMenuDelegate.BindUObject(this, &AGameHUD::OpenInitialMatchMenu);
+	GetWorldTimerManager().SetTimerForNextTick(OpenMenuDelegate);
+}
+
+void AGameHUD::OpenInitialMatchMenu()
+{
+	if (!IsValid(MatchManager))
 	{
-		FTimerDelegate OpenMenuDelegate;
-		OpenMenuDelegate.BindUObject(this, &AGameHUD::ShowFormationMenu);
-		GetWorldTimerManager().SetTimerForNextTick(OpenMenuDelegate);
+		FindMatchManager();
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ClubSelection] SoccerMatchManager was not found."));
+		return;
+	}
+
+	if (MatchManager->ShouldShowClubSelectionAtMatchStart())
+	{
+		ShowClubSelectionMenu();
+		return;
+	}
+
+	if (MatchManager->ShouldShowFormationMenuAtMatchStart())
+	{
+		ShowFormationMenu();
+	}
+}
+
+void AGameHUD::ShowClubSelectionMenu()
+{
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+
+	APlayerController* PlayerController =
+		UGameplayStatics::GetPlayerController(GetWorld(), 0);
+	if (!IsValid(MatchManager) || PlayerController == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(ClubSelectionWidget))
+	{
+		ClubSelectionWidget = CreateWidget<USoccerClubSelectionWidget>(
+			PlayerController,
+			USoccerClubSelectionWidget::StaticClass()
+		);
+	}
+
+	if (!IsValid(ClubSelectionWidget))
+	{
+		return;
+	}
+
+	ClubSelectionWidget->InitializeForMatchManager(MatchManager);
+	if (!ClubSelectionWidget->HasSelectableOpponent())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ClubSelection] No selectable opponent club is available."));
+		if (MatchManager->ShouldShowFormationMenuAtMatchStart())
+		{
+			ShowFormationMenu();
+		}
+		return;
+	}
+
+	ClubSelectionWidget->OnSelectionConfirmed.RemoveDynamic(
+		this,
+		&AGameHUD::HandleClubSelectionConfirmed
+	);
+	ClubSelectionWidget->OnSelectionConfirmed.AddDynamic(
+		this,
+		&AGameHUD::HandleClubSelectionConfirmed
+	);
+
+	if (!ClubSelectionWidget->IsInViewport())
+	{
+		ClubSelectionWidget->AddToViewport(130);
+	}
+	ClubSelectionWidget->ActivateMenu(true);
+	UE_LOG(LogTemp, Display, TEXT("[ClubSelection] Initial opponent selection opened."));
+}
+
+bool AGameHUD::IsClubSelectionMenuVisible() const
+{
+	return IsValid(ClubSelectionWidget) && ClubSelectionWidget->IsInViewport();
+}
+
+void AGameHUD::HandleClubSelectionConfirmed()
+{
+	UE_LOG(LogTemp, Display, TEXT("[ClubSelection] Opponent confirmed; match materialized."));
+	if (IsValid(MatchManager) && MatchManager->ShouldShowFormationMenuAtMatchStart())
+	{
+		FTimerDelegate OpenFormationDelegate;
+		OpenFormationDelegate.BindUObject(this, &AGameHUD::ShowFormationMenu);
+		GetWorldTimerManager().SetTimerForNextTick(OpenFormationDelegate);
 	}
 }
 
 void AGameHUD::ShowFormationMenu()
 {
-	if (IsSubstitutionMenuVisible())
+	if (IsClubSelectionMenuVisible() || IsSubstitutionMenuVisible())
 	{
 		return;
 	}
@@ -125,7 +216,7 @@ bool AGameHUD::IsFormationMenuVisible() const
 
 void AGameHUD::ShowQuickTacticsMenu()
 {
-	if (IsFormationMenuVisible() || IsSubstitutionMenuVisible())
+	if (IsClubSelectionMenuVisible() || IsFormationMenuVisible() || IsSubstitutionMenuVisible())
 	{
 		return;
 	}
@@ -198,7 +289,7 @@ bool AGameHUD::IsQuickTacticsMenuVisible() const
 
 void AGameHUD::ShowSubstitutionMenu()
 {
-	if (IsFormationMenuVisible() || IsQuickTacticsMenuVisible())
+	if (IsClubSelectionMenuVisible() || IsFormationMenuVisible() || IsQuickTacticsMenuVisible())
 	{
 		return;
 	}

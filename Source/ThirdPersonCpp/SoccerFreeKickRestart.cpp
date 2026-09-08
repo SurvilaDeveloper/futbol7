@@ -5,7 +5,10 @@
 #include "SoccerCharacterBase.h"
 #include "ThirdPersonCppCharacter.h"
 #include "SoccerBall.h"
+#include "SoccerField.h"
+#include "SoccerFieldDimensions.h"
 #include "SoccerDebugManager.h"
+#include "Components/CapsuleComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "NavigationSystem.h"
@@ -219,7 +222,27 @@ bool FSoccerFreeKickRestart::Configure(
 
 	RestartType = InRestartType;
 	RestartTeam = InRestartTeam;
+
+	// The reported infringement point may be a body-contact point or inherit
+	// the height of an airborne ball.  A restart only keeps its horizontal
+	// position: the ball centre must rest one ball radius above the pitch.
 	RestartLocation = InRestartLocation;
+	const float BallRadius = IsValid(Manager.SoccerBall)
+		? Manager.SoccerBall->GetBallRadiusCm()
+		: 11.0f;
+
+	if (IsValid(Manager.SoccerField))
+	{
+		FVector LocalRestartLocation =
+			Manager.SoccerField->WorldToPitchLocal(RestartLocation);
+		LocalRestartLocation.Z = BallRadius;
+		RestartLocation =
+			Manager.SoccerField->PitchLocalToWorld(LocalRestartLocation);
+	}
+	else
+	{
+		RestartLocation.Z = BallRadius;
+	}
 	SetupStartTime = World->GetTimeSeconds();
 
 	TakerAI = FindClosestTakerForTeam(Manager, RestartTeam, RestartLocation);
@@ -659,6 +682,35 @@ bool FSoccerFreeKickRestart::AreOpponentsClear(const ASoccerMatchManager& Manage
 	return true;
 }
 
+bool FSoccerFreeKickRestart::ShouldDefendingCharacterFaceBall(
+	const ASoccerAICharacter* SoccerAICharacter
+) const
+{
+	if (
+		!bDefensiveWallActive ||
+		RestartType != ESoccerRestartType::DirectFreeKick ||
+		!IsValid(SoccerAICharacter) ||
+		SoccerAICharacter->GetTeam() == RestartTeam
+	)
+	{
+		return false;
+	}
+
+	return
+		SoccerAICharacter->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper ||
+		DefensiveWallMembers.Contains(SoccerAICharacter);
+}
+
+bool FSoccerFreeKickRestart::IsDefensiveWallMember(
+	const ASoccerAICharacter* SoccerAICharacter
+) const
+{
+	return
+		bDefensiveWallActive &&
+		IsValid(SoccerAICharacter) &&
+		DefensiveWallMembers.Contains(SoccerAICharacter);
+}
+
 FVector FSoccerFreeKickRestart::BuildTakerWaitingLocation(
 	const ASoccerMatchManager& Manager,
 	const ASoccerAICharacter* SoccerAICharacter
@@ -740,6 +792,11 @@ FVector FSoccerFreeKickRestart::BuildOpponentMoveLocation(
 
 	if (SoccerAICharacter->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
 	{
+		if (bDefensiveWallActive && !GoalkeeperWallHoldLocation.IsNearlyZero())
+		{
+			return GoalkeeperWallHoldLocation;
+		}
+
 		return Manager.ProjectLocationToNavigation(
 			Manager.GetGoalkeeperMoveLocation(SoccerAICharacter),
 			SoccerAICharacter
@@ -767,6 +824,11 @@ FVector FSoccerFreeKickRestart::BuildOpponentDesiredMoveLocation(
 
 	if (SoccerAICharacter->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
 	{
+		if (bDefensiveWallActive && !GoalkeeperWallHoldLocation.IsNearlyZero())
+		{
+			return GoalkeeperWallHoldLocation;
+		}
+
 		return Manager.ProjectLocationToNavigation(
 			Manager.GetGoalkeeperMoveLocation(SoccerAICharacter),
 			SoccerAICharacter
@@ -890,6 +952,9 @@ void FSoccerFreeKickRestart::InitializeOpponentPositioningPlan(
 	OpponentHoldLocations.Empty();
 	OpponentsCompletingMandatoryEscape.Empty();
 	OpponentsThatUsedLegalReposition.Empty();
+	DefensiveWallMembers.Empty();
+	GoalkeeperWallHoldLocation = FVector::ZeroVector;
+	bDefensiveWallActive = false;
 
 	UWorld* World = Manager.GetWorld();
 	if (World == nullptr)
@@ -908,6 +973,8 @@ void FSoccerFreeKickRestart::InitializeOpponentPositioningPlan(
 		RequiredClearance +
 		FMath::Max(0.0f, Manager.FreeKickOpponentPathSafetyMargin);
 
+	InitializeDefensiveWall(Manager);
+
 	for (TActorIterator<ASoccerAICharacter> It(World); It; ++It)
 	{
 		ASoccerAICharacter* Candidate = *It;
@@ -917,6 +984,11 @@ void FSoccerFreeKickRestart::InitializeOpponentPositioningPlan(
 			Candidate->GetTeam() == RestartTeam ||
 			Candidate->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper
 		)
+		{
+			continue;
+		}
+
+		if (DefensiveWallMembers.Contains(Candidate))
 		{
 			continue;
 		}
@@ -980,6 +1052,290 @@ void FSoccerFreeKickRestart::InitializeOpponentPositioningPlan(
 		OpponentHoldLocations.Add(Candidate, DesiredLocation);
 		OpponentsThatUsedLegalReposition.Add(Candidate);
 	}
+}
+
+void FSoccerFreeKickRestart::InitializeDefensiveWall(
+	ASoccerMatchManager& Manager
+)
+{
+	if (
+		RestartType != ESoccerRestartType::DirectFreeKick ||
+		!Manager.bEnableFreeKickDefensiveWall
+	)
+	{
+		return;
+	}
+
+	UWorld* World = Manager.GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	const ESoccerTeam DefendingTeam = Manager.GetOppositeTeam(RestartTeam);
+	const FVector OwnGoalLocation =
+		Manager.GetOwnGoalReferenceLocation(DefendingTeam);
+	FVector GoalToBall = RestartLocation - OwnGoalLocation;
+	GoalToBall.Z = 0.0f;
+	const float GoalDistance = GoalToBall.Size();
+
+	const float MaximumGoalDistance = FMath::Max(
+		100.0f,
+		Manager.FreeKickWallMaximumGoalDistance
+	);
+	if (GoalDistance > MaximumGoalDistance || GoalDistance <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	FVector GoalNormal =
+		Manager.GetFieldAttackDirectionForTeam(DefendingTeam);
+	GoalNormal.Z = 0.0f;
+	if (!GoalNormal.Normalize())
+	{
+		return;
+	}
+
+	const float DirectnessDot = FMath::Clamp(
+		FVector::DotProduct(GoalToBall / GoalDistance, GoalNormal),
+		-1.0f,
+		1.0f
+	);
+	const float GoalAngleDegrees =
+		FMath::RadiansToDegrees(FMath::Acos(DirectnessDot));
+	if (
+		GoalAngleDegrees > FMath::Clamp(
+			Manager.FreeKickWallMaximumGoalAngleDegrees,
+			0.0f,
+			89.0f
+		)
+	)
+	{
+		return;
+	}
+
+	struct FWallCandidate
+	{
+		ASoccerAICharacter* Character = nullptr;
+		int32 RolePriority = 0;
+		float TravelDistanceSquared = 0.0f;
+	};
+
+	TArray<FWallCandidate> Candidates;
+	ASoccerAICharacter* Goalkeeper = nullptr;
+	float MaximumWallPlayerDiameter = 0.0f;
+
+	for (TActorIterator<ASoccerAICharacter> It(World); It; ++It)
+	{
+		ASoccerAICharacter* Candidate = *It;
+		if (!IsValid(Candidate) || Candidate->GetTeam() != DefendingTeam)
+		{
+			continue;
+		}
+
+		if (Candidate->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
+		{
+			Goalkeeper = Candidate;
+			continue;
+		}
+
+		FWallCandidate Entry;
+		Entry.Character = Candidate;
+		Entry.RolePriority =
+			Candidate->GetPlayerRole() == ESoccerPlayerRole::Defender
+			? 0
+			: Candidate->GetPlayerRole() == ESoccerPlayerRole::Midfielder
+				? 1
+				: 2;
+		Entry.TravelDistanceSquared = FVector::DistSquared2D(
+			Candidate->GetActorLocation(),
+			RestartLocation
+		);
+		Candidates.Add(Entry);
+
+		if (const UCapsuleComponent* Capsule = Candidate->GetCapsuleComponent())
+		{
+			MaximumWallPlayerDiameter = FMath::Max(
+				MaximumWallPlayerDiameter,
+				Capsule->GetScaledCapsuleRadius() * 2.0f
+			);
+		}
+	}
+
+	const int32 MaximumSelectablePlayers = FMath::Max(
+		0,
+		Candidates.Num() -
+			FMath::Max(0, Manager.FreeKickWallMinimumNonWallOutfieldPlayers)
+	);
+	if (MaximumSelectablePlayers <= 0)
+	{
+		return;
+	}
+
+	const int32 MinimumPlayers = FMath::Max(
+		1,
+		Manager.FreeKickWallMinimumPlayers
+	);
+	const int32 MaximumPlayers = FMath::Max(
+		MinimumPlayers,
+		Manager.FreeKickWallMaximumPlayers
+	);
+	const float MaximumPlayersDistance = FMath::Clamp(
+		Manager.FreeKickWallMinimumGoalDistanceForMaximumPlayers,
+		100.0f,
+		MaximumGoalDistance
+	);
+	const float DistanceAlpha = FMath::Clamp(
+		(GoalDistance - MaximumPlayersDistance) /
+			FMath::Max(1.0f, MaximumGoalDistance - MaximumPlayersDistance),
+		0.0f,
+		1.0f
+	);
+	const int32 DesiredPlayers = FMath::RoundToInt(
+		FMath::Lerp(
+			static_cast<float>(MaximumPlayers),
+			static_cast<float>(MinimumPlayers),
+			DistanceAlpha
+		)
+	);
+	const int32 WallPlayerCount = FMath::Clamp(
+		DesiredPlayers,
+		1,
+		MaximumSelectablePlayers
+	);
+
+	FVector GoalRightDirection =
+		Manager.GetFieldRightDirectionForTeam(DefendingTeam);
+	GoalRightDirection.Z = 0.0f;
+	if (!GoalRightDirection.Normalize())
+	{
+		GoalRightDirection = FVector::RightVector;
+	}
+
+	const float BallLateral = FVector::DotProduct(
+		RestartLocation - OwnGoalLocation,
+		GoalRightDirection
+	);
+	const float ProtectedSideSign = BallLateral >= 0.0f ? 1.0f : -1.0f;
+	const FVector ProtectedGoalLocation =
+		OwnGoalLocation +
+		GoalRightDirection * ProtectedSideSign *
+		SoccerFieldDimensions::GoalHalfWidthCm *
+		FMath::Clamp(
+			Manager.FreeKickWallProtectedGoalLateralAlpha,
+			0.0f,
+			1.0f
+		);
+
+	FVector BallToProtectedGoal = ProtectedGoalLocation - RestartLocation;
+	BallToProtectedGoal.Z = 0.0f;
+	if (!BallToProtectedGoal.Normalize())
+	{
+		return;
+	}
+
+	FVector WallLateralDirection = FVector::CrossProduct(
+		FVector::UpVector,
+		BallToProtectedGoal
+	);
+	WallLateralDirection.Z = 0.0f;
+	if (!WallLateralDirection.Normalize())
+	{
+		return;
+	}
+
+	const float WallDistanceFromBall =
+		FMath::Max(0.0f, Manager.OffsideRestartOpponentRequiredDistance) +
+		FMath::Max(0.0f, Manager.OffsideRestartOpponentLegalBuffer) +
+		FMath::Max(1.0f, Manager.FreeKickWallMoveAcceptanceRadius) +
+		FMath::Max(0.0f, Manager.FreeKickWallExtraDistanceFromBall);
+	const FVector WallCenter =
+		RestartLocation + BallToProtectedGoal * WallDistanceFromBall;
+
+	Candidates.Sort(
+		[](const FWallCandidate& A, const FWallCandidate& B)
+		{
+			if (A.RolePriority != B.RolePriority)
+			{
+				return A.RolePriority < B.RolePriority;
+			}
+			return A.TravelDistanceSquared < B.TravelDistanceSquared;
+		}
+	);
+
+	const float PlayerSpacing = FMath::Max3(
+		40.0f,
+		Manager.FreeKickWallPlayerSpacing,
+		MaximumWallPlayerDiameter +
+			FMath::Max(0.0f, Manager.FreeKickWallMinimumBodyGap)
+	);
+	for (int32 WallIndex = 0; WallIndex < WallPlayerCount; ++WallIndex)
+	{
+		ASoccerAICharacter* WallPlayer = Candidates[WallIndex].Character;
+		if (!IsValid(WallPlayer))
+		{
+			continue;
+		}
+
+		const float CenteredIndex =
+			static_cast<float>(WallIndex) -
+			(static_cast<float>(WallPlayerCount - 1) * 0.5f);
+		FVector WallLocation =
+			WallCenter + WallLateralDirection * CenteredIndex * PlayerSpacing;
+		WallLocation.Z = WallPlayer->GetActorLocation().Z;
+		WallLocation = Manager.ProjectLocationToNavigation(
+			WallLocation,
+			WallPlayer
+		);
+
+		OpponentHoldLocations.Add(WallPlayer, WallLocation);
+		DefensiveWallMembers.Add(WallPlayer);
+		OpponentsThatUsedLegalReposition.Add(WallPlayer);
+
+		if (
+			FVector::Dist2D(
+				WallPlayer->GetActorLocation(),
+				RestartLocation
+			) < WallDistanceFromBall
+		)
+		{
+			OpponentsCompletingMandatoryEscape.Add(WallPlayer);
+		}
+	}
+
+	if (DefensiveWallMembers.Num() <= 0)
+	{
+		return;
+	}
+
+	bDefensiveWallActive = true;
+
+	if (IsValid(Goalkeeper))
+	{
+		FVector GoalkeeperLocation =
+			Manager.GetGoalkeeperMoveLocation(Goalkeeper);
+		GoalkeeperLocation -=
+			GoalRightDirection * ProtectedSideSign *
+			FMath::Max(
+				0.0f,
+				Manager.FreeKickWallGoalkeeperOppositeSideOffset
+			);
+		GoalkeeperLocation.Z = Goalkeeper->GetActorLocation().Z;
+		GoalkeeperWallHoldLocation = Manager.ProjectLocationToNavigation(
+			GoalkeeperLocation,
+			Goalkeeper
+		);
+	}
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[FreeKickWall] team=%d players=%d goalDistance=%.0f angle=%.1f."),
+		static_cast<int32>(DefendingTeam),
+		DefensiveWallMembers.Num(),
+		GoalDistance,
+		GoalAngleDegrees
+	);
 }
 
 bool FSoccerFreeKickRestart::UpdateOpponentPositioningAfterEscape(
@@ -1113,6 +1469,11 @@ void FSoccerFreeKickRestart::AdoptOpponentRecoveryTarget(
 		return;
 	}
 
+	if (DefensiveWallMembers.Contains(SoccerAICharacter))
+	{
+		return;
+	}
+
 	OpponentHoldLocations.Add(
 		SoccerAICharacter,
 		LegalTargetLocation
@@ -1165,10 +1526,7 @@ FVector FSoccerFreeKickRestart::GetMoveLocation(
 		SoccerAICharacter->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper
 	)
 	{
-		return Manager.ProjectLocationToNavigation(
-			Manager.GetGoalkeeperMoveLocation(SoccerAICharacter),
-			SoccerAICharacter
-		);
+		return BuildOpponentMoveLocation(Manager, SoccerAICharacter);
 	}
 
 	if (SoccerAICharacter->GetTeam() == RestartTeam)
@@ -1487,6 +1845,9 @@ void FSoccerFreeKickRestart::ResetRuntime(ASoccerMatchManager& Manager)
 	OpponentHoldLocations.Empty();
 	OpponentsCompletingMandatoryEscape.Empty();
 	OpponentsThatUsedLegalReposition.Empty();
+	DefensiveWallMembers.Empty();
+	GoalkeeperWallHoldLocation = FVector::ZeroVector;
+	bDefensiveWallActive = false;
 	KickDirection = FVector::ForwardVector;
 	RunDirection = FVector::ForwardVector;
 	RunUpStartLocation = FVector::ZeroVector;

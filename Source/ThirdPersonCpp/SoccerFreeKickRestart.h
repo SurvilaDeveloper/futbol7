@@ -52,6 +52,8 @@ public:
 	FVector BuildOpponentMoveLocation(const ASoccerMatchManager& Manager, const ASoccerAICharacter* SoccerAICharacter) const;
 bool AreOpponentsClear(const ASoccerMatchManager& Manager) const;
 	bool IsCharacterTooClose(const ASoccerMatchManager& Manager, const ASoccerCharacterBase* Character) const;
+	bool ShouldDefendingCharacterFaceBall(const ASoccerAICharacter* SoccerAICharacter) const;
+	bool IsDefensiveWallMember(const ASoccerAICharacter* SoccerAICharacter) const;
 
 	void RecalculateRunUpGeometry(ASoccerMatchManager& Manager);
 
@@ -109,6 +111,7 @@ private:
 	) const;
 
 	void InitializeOpponentPositioningPlan(ASoccerMatchManager& Manager);
+	void InitializeDefensiveWall(ASoccerMatchManager& Manager);
 
 	bool DoesNavigationPathAvoidRestartCircle(
 		const ASoccerMatchManager& Manager,
@@ -135,6 +138,9 @@ private:
 	TMap<const ASoccerAICharacter*, FVector> OpponentHoldLocations;
 	TSet<const ASoccerAICharacter*> OpponentsCompletingMandatoryEscape;
 	TSet<const ASoccerAICharacter*> OpponentsThatUsedLegalReposition;
+	TSet<const ASoccerAICharacter*> DefensiveWallMembers;
+	FVector GoalkeeperWallHoldLocation = FVector::ZeroVector;
+	bool bDefensiveWallActive = false;
 
 	bool bFinalRunActive = false;
 	bool bAIKickMontageStarted = false;

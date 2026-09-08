@@ -107,6 +107,13 @@ public:
 
 	bool IsAIPossessingBall() const;
 
+	// Changes once for every newly acquired logical possession. Controllers use
+	// this id to roll one decision episode instead of randomizing every frame.
+	uint32 GetAIPossessionSequence() const
+	{
+		return AIPossessionSequence;
+	}
+
 	UFUNCTION(BlueprintPure, Category = "Soccer|Goalkeeper")
 		bool IsGoalkeeperHoldingBall() const;
 
@@ -407,6 +414,12 @@ private:
 
 	bool bAIPossessionCarryActive = false;
 
+	bool bAICarryEntryBlendActive = false;
+
+	FVector AICarryEntryBlendStartLocation = FVector::ZeroVector;
+
+	float AICarryEntryBlendStartTime = -1000.0f;
+
 	ESoccerAIAerialHeaderTactic AIAerialHeaderTactic =
 		ESoccerAIAerialHeaderTactic::None;
 
@@ -433,7 +446,12 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession")
 		float AIPossessedBallHeight = 11.0f;
 
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Possession", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+		float AICarryEntryBlendDuration = 0.12f;
+
 	float LastAIPossessionStartTime = -1000.0f;
+
+	uint32 AIPossessionSequence = 0;
 
 	float LastAIBallReleasedTime = -1000.0f;
 
@@ -524,6 +542,9 @@ private:
 	// impact, the pending kick is cancelled instead of kicking a stolen ball.
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
 		float AIPendingKickMaxBallDriftDistance = 80.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations|Defensive Contact")
+		bool bPlayImmediateDefensiveContactAnimation = true;
 
 	UPROPERTY()
 		ASoccerBall* PendingAIKickBall = nullptr;

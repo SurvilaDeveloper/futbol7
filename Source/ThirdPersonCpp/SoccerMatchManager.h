@@ -524,7 +524,8 @@ public:
 		FVector& OutTargetLocation,
 		ESoccerAttackPassType& OutPassType,
 		float& OutScore,
-		bool bUsePossessionRetentionThreshold = false
+		bool bUsePossessionRetentionThreshold = false,
+		bool bRequireCurrentPossession = true
 	) const;
 
 	/*
@@ -635,6 +636,13 @@ public:
 	bool IsOffsideRestartTaker(
 		const ASoccerAICharacter* SoccerAICharacter
 	) const;
+	bool ShouldDefendingFreeKickCharacterFaceBall(
+		const ASoccerAICharacter* SoccerAICharacter
+	) const;
+	bool IsFreeKickDefensiveWallMember(
+		const ASoccerAICharacter* SoccerAICharacter
+	) const;
+	float GetFreeKickWallMoveAcceptanceRadius() const;
 
 	bool IsHumanFreeKickTaker(
 		const AThirdPersonCppCharacter* HumanCharacter
@@ -823,6 +831,7 @@ bool IsPenaltyMatchStateActive() const;
 	void InitializeInstantReplayRecorder();
 	void ShutdownInstantReplayRecorder();
 	void TryStartGoalInstantReplay(ESoccerTeam ScoringTeam);
+	void StartPendingGoalInstantReplay();
 	void FindSoccerField();
 	void InitializeTeamFieldSides();
 	void CaptureInitialHumanFieldReferences();
@@ -2351,6 +2360,48 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Opponent Positioning", meta = (ClampMin = "0.0"))
 		float FreeKickOpponentPathSafetyMargin = 35.0f;
 
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall")
+		bool bEnableFreeKickDefensiveWall = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "100.0", UIMin = "100.0"))
+		float FreeKickWallMaximumGoalDistance = 3200.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "100.0", UIMin = "100.0"))
+		float FreeKickWallMinimumGoalDistanceForMaximumPlayers = 1200.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "0.0", ClampMax = "89.0", UIMin = "0.0", UIMax = "89.0"))
+		float FreeKickWallMaximumGoalAngleDegrees = 58.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "1", ClampMax = "6", UIMin = "1", UIMax = "6"))
+		int32 FreeKickWallMinimumPlayers = 1;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "1", ClampMax = "6", UIMin = "1", UIMax = "6"))
+		int32 FreeKickWallMaximumPlayers = 4;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "0", ClampMax = "5", UIMin = "0", UIMax = "5"))
+		int32 FreeKickWallMinimumNonWallOutfieldPlayers = 2;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "40.0", UIMin = "40.0"))
+		float FreeKickWallPlayerSpacing = 85.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "0.0", UIMin = "0.0"))
+		float FreeKickWallMinimumBodyGap = 8.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "1.0", ClampMax = "50.0", UIMin = "1.0", UIMax = "50.0"))
+		float FreeKickWallMoveAcceptanceRadius = 12.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "1.0", ClampMax = "80.0", UIMin = "1.0", UIMax = "80.0"))
+		float FreeKickWallReadyAcceptanceRadius = 30.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "0.0", UIMin = "0.0"))
+		float FreeKickWallExtraDistanceFromBall = 20.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+		float FreeKickWallProtectedGoalLateralAlpha = 0.45f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Defensive Wall", meta = (ClampMin = "0.0", UIMin = "0.0"))
+		float FreeKickWallGoalkeeperOppositeSideOffset = 95.0f;
+
 	// A teammate human inside this radius claims a free kick during Preparation.
 	// The AI chosen in Configuration remains available as the fallback taker.
 	UPROPERTY(EditAnywhere, Category = "Soccer|Free Kick|Human Taker", meta = (ClampMin = "50.0"))
@@ -2621,8 +2672,11 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback")
 		bool bEnableInstantReplayAfterGoal = true;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback", meta = (ClampMin = "1.0", ClampMax = "10.0", UIMin = "1.0", UIMax = "10.0", DisplayName = "Goal Clip Seconds Per Camera"))
-		float InstantReplayGoalPlaybackSeconds = 3.0f;
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback", meta = (ClampMin = "0.0", ClampMax = "10.0", UIMin = "0.0", UIMax = "10.0", DisplayName = "Goal Seconds Before Event"))
+		float InstantReplayGoalPreEventSeconds = 4.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Instant Replay|Goal Playback", meta = (ClampMin = "0.0", ClampMax = "10.0", UIMin = "0.0", UIMax = "10.0", DisplayName = "Goal Seconds After Event"))
+		float InstantReplayGoalPostEventSeconds = 1.0f;
 
 	// Stage 4/6: four TV-style goal replay viewpoints. Every take has its
 	// own tuning because side/front/behind cameras usually need different
@@ -3380,6 +3434,8 @@ bool IsPenaltyMatchStateActive() const;
 		ESoccerMatchPlayState MatchPlayState = ESoccerMatchPlayState::KickoffSetup;
 
 	FTimerHandle GoalResetTimerHandle;
+	FTimerHandle GoalReplayStartTimerHandle;
+	ESoccerTeam PendingGoalReplayScoringTeam = ESoccerTeam::PlayerTeam;
 
 	FVector GetOwnGoalReferenceLocation(ESoccerTeam Team) const;
 

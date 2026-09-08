@@ -7,6 +7,7 @@
 class ASoccerMatchManager;
 class ASoccerDebugManager;
 class USoccerFormationMenuWidget;
+class USoccerClubSelectionWidget;
 class USoccerQuickTacticsWidget;
 class USoccerSubstitutionMenuWidget;
 class USoccerTacticalPresetManager;
@@ -35,9 +36,17 @@ public:
 	void ToggleSubstitutionMenu();
 	bool IsSubstitutionMenuVisible() const;
 
+	void ShowClubSelectionMenu();
+	bool IsClubSelectionMenuVisible() const;
+
 	void ShowQuickTacticsFeedback(const FString& Message);
 
 private:
+	void OpenInitialMatchMenu();
+
+	UFUNCTION()
+	void HandleClubSelectionConfirmed();
+
 	void FindMatchManager();
 	void EnsureTacticalPresetManager();
 	void DrawQuickTacticsFeedback();
@@ -67,6 +76,9 @@ private:
 
 	UPROPERTY()
 		USoccerFormationMenuWidget* FormationMenuWidget = nullptr;
+
+	UPROPERTY()
+		USoccerClubSelectionWidget* ClubSelectionWidget = nullptr;
 
 	UPROPERTY()
 		USoccerQuickTacticsWidget* QuickTacticsWidget = nullptr;

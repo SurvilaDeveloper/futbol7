@@ -14,6 +14,7 @@ class ASoccerBall;
 class ASoccerMatchManager;
 class ASoccerCharacterBase;
 class AActor;
+enum class ESoccerAttackPassType : uint8;
 
 
 enum class ESoccerAIIntent : uint8
@@ -33,6 +34,14 @@ enum class ESoccerAIPendingMainAction : uint8
 	PassToTeammate,
 	Shoot,
 	Clearance
+};
+
+enum class ESoccerAIDecisionEpisode : uint8
+{
+	Uninitialized,
+	Fluid,
+	MildHesitation,
+	StrongHesitation
 };
 
 struct FGoalkeeperDistributionPlan
@@ -329,7 +338,16 @@ private:
 
 	bool IsOffensiveProfileDecisionReady(
 		const ASoccerAICharacter* SoccerCharacter
-	) const;
+	);
+
+	void BeginOffensiveDecisionEpisode(
+		const ASoccerAICharacter* SoccerCharacter,
+		bool bOwnAutoPassContinuation
+	);
+
+	void EnsureOffensiveDecisionEpisode(
+		const ASoccerAICharacter* SoccerCharacter
+	);
 
 	bool ShouldOffensiveProfileAcceptPreferredShot(
 		const ASoccerAICharacter* SoccerCharacter
@@ -695,7 +713,49 @@ private:
 		float OffensiveComposurePressureDelayMultiplierAtZero = 1.45f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.50", ClampMax = "3.00"))
-		float OffensiveComposurePressureDelayMultiplierAtHundred = 1.00f;
+	float OffensiveComposurePressureDelayMultiplierAtHundred = 1.00f;
+
+	// Chance of a visible hesitation when a player obtains the ball. Ratings
+	// interpolate between these limits; pressure adds risk according to composure.
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning|Hesitation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float OffensiveHesitationChanceAtZero = 0.42f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning|Hesitation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float OffensiveHesitationChanceAtHundred = 0.06f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning|Hesitation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float OffensivePressureHesitationChanceAtZeroComposure = 0.30f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning|Hesitation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float OffensivePressureHesitationChanceAtHundredComposure = 0.08f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning|Hesitation", meta = (ClampMin = "0.0"))
+		float OffensiveMildHesitationMinDuration = 0.07f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning|Hesitation", meta = (ClampMin = "0.0"))
+		float OffensiveMildHesitationMaxDuration = 0.18f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning|Hesitation", meta = (ClampMin = "0.0"))
+		float OffensiveStrongHesitationMinDuration = 0.22f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning|Hesitation", meta = (ClampMin = "0.0"))
+		float OffensiveStrongHesitationMaxDuration = 0.52f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning|Hesitation")
+		int32 OffensiveDecisionRandomSeed = 1731;
+
+	uint32 EvaluatedOffensivePossessionSequence = MAX_uint32;
+
+	ESoccerAIDecisionEpisode ActiveOffensiveDecisionEpisode =
+		ESoccerAIDecisionEpisode::Uninitialized;
+
+	float ActiveOffensiveDecisionReadyTime = -1000.0f;
+
+	int32 FluentOwnTouchEpisodesRemaining = 0;
+
+	FRandomStream OffensiveDecisionRandomStream;
+
+	bool bOffensiveDecisionRandomInitialized = false;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Offensive Tuning", meta = (ClampMin = "0.0", ClampMax = "400.0"))
 		float OffBallPositioningTargetErrorCmAtZero = 130.0f;
@@ -1874,6 +1934,12 @@ private:
 
 	FVector RecoveryIntentTargetLocation = FVector::ZeroVector;
 
+	ESoccerAttackPassType RecoveryIntentPassType{};
+
+	float RecoveryIntentPassScore = 0.0f;
+
+	float RecoveryIntentPassHorizontalSpeed = 0.0f;
+
 	float RecoveryIntentCreatedTime = -1000.0f;
 
 
@@ -1939,6 +2005,17 @@ private:
 		ASoccerAICharacter* SoccerCharacter,
 		bool bUsePossessionRetentionThreshold = false
 	);
+
+	bool TryBuildSmartAttackPassPlan(
+		ASoccerAICharacter* SoccerCharacter,
+		bool bUsePossessionRetentionThreshold,
+		bool bRequireCurrentPossession,
+		ASoccerCharacterBase*& OutReceiver,
+		FVector& OutTargetLocation,
+		ESoccerAttackPassType& OutPassType,
+		float& OutPassScore,
+		float& OutHorizontalSpeed
+	) const;
 
 	void ClearFilteredDefenseMoveRequest();
 

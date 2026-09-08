@@ -485,6 +485,10 @@ void ASoccerAICharacter::SetAIPossessionCarryActive(bool bNewActive)
 	}
 
 	bAIPossessionCarryActive = bCanCarryBall;
+	if (!bAIPossessionCarryActive)
+	{
+		bAICarryEntryBlendActive = false;
+	}
 
 	if (!IsValid(ControlledBall))
 	{
@@ -496,6 +500,11 @@ void ASoccerAICharacter::SetAIPossessionCarryActive(bool bNewActive)
 		// La pelota acompana al jugador, pero sigue siendo alcanzable
 		// por la logica normal de robo basada en distancia y angulo.
 		ControlledBall->SetPossessed(true);
+		bAICarryEntryBlendActive = AICarryEntryBlendDuration > KINDA_SMALL_NUMBER;
+		AICarryEntryBlendStartLocation = ControlledBall->GetActorLocation();
+		AICarryEntryBlendStartTime = GetWorld() != nullptr
+			? GetWorld()->GetTimeSeconds()
+			: 0.0f;
 		UpdateAIPossessedBallLocation();
 		return;
 	}
@@ -591,8 +600,10 @@ void ASoccerAICharacter::PossessAIBall(ASoccerBall* NewControlledBall)
 
 	ControlledBall = NewControlledBall;
 	bAIIsPossessingBall = true;
+	++AIPossessionSequence;
 	bAIIsChasingBall = false;
 	bAIPossessionCarryActive = false;
+	bAICarryEntryBlendActive = false;
 
 	LastAIPossessionStartTime =
 		GetWorld() != nullptr
@@ -657,6 +668,7 @@ void ASoccerAICharacter::ReleaseAIBall(bool bStartRecoveryCooldown)
 	bAIIsPossessingBall = false;
 	bGoalkeeperHoldingBall = false;
 	bAIPossessionCarryActive = false;
+	bAICarryEntryBlendActive = false;
 
 	if (bHadPossession && bStartRecoveryCooldown)
 	{
@@ -698,6 +710,29 @@ void ASoccerAICharacter::ExecuteImmediateAIContactKick(
 	{
 		ExecutedTarget = GetProfileAdjustedTechnicalKickTarget(BallLocation, ExecutedTarget, bTreatAsShot);
 		ExecutedSpeed = GetProfileAdjustedTechnicalKickSpeed(ExecutedSpeed, bTreatAsShot);
+	}
+
+	if (bPlayImmediateDefensiveContactAnimation && !bAIKickMontageActive)
+	{
+		float MontageAdjustedSpeed = ExecutedSpeed;
+		UAnimMontage* ContactMontage = SelectAIKickMontageForBallLocation(
+			BallLocation,
+			ExecutedTarget,
+			MontageAdjustedSpeed
+		);
+
+		if (ContactMontage != nullptr)
+		{
+			const float MontageDuration = PlayAnimMontage(ContactMontage);
+			if (MontageDuration > 0.0f)
+			{
+				ExecutedSpeed = MontageAdjustedSpeed;
+			}
+		}
+
+		// The existing Animation Blueprint also receives its normal short kick
+		// signal when the distance selector intentionally returns no montage.
+		StartAIKickAnimation();
 	}
 
 	SoccerBall->SetPossessed(false);
@@ -1446,8 +1481,25 @@ void ASoccerAICharacter::UpdateAIPossessedBallLocation()
 
 	BallLocation.Z = GroundZ + AIPossessedBallHeight;
 
+	FVector LocationToApply = BallLocation;
+	if (bAICarryEntryBlendActive)
+	{
+		const float CurrentTime = GetWorld() != nullptr
+			? GetWorld()->GetTimeSeconds()
+			: AICarryEntryBlendStartTime;
+		const float RawAlpha = AICarryEntryBlendDuration > KINDA_SMALL_NUMBER
+			? (CurrentTime - AICarryEntryBlendStartTime) / AICarryEntryBlendDuration
+			: 1.0f;
+		const float BlendAlpha = FMath::SmoothStep(0.0f, 1.0f, FMath::Clamp(RawAlpha, 0.0f, 1.0f));
+		LocationToApply = FMath::Lerp(AICarryEntryBlendStartLocation, BallLocation, BlendAlpha);
+		if (RawAlpha >= 1.0f)
+		{
+			bAICarryEntryBlendActive = false;
+		}
+	}
+
 	ControlledBall->SetActorLocation(
-		BallLocation,
+		LocationToApply,
 		false,
 		nullptr,
 		ETeleportType::TeleportPhysics

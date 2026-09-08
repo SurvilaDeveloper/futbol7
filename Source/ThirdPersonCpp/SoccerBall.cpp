@@ -1363,12 +1363,15 @@ void ASoccerBall::OnBallHit(
     const FHitResult& Hit
 )
 {
-    UE_LOG(
-        LogTemp,
-        Warning,
-        TEXT("Ball hit: %s"),
-        *GetNameSafe(OtherActor)
-    );
+    if (bDebugBallHitEvents)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("Ball hit: %s"),
+            *GetNameSafe(OtherActor)
+        );
+    }
 
     const FVector CurrentVelocity =
         BallMesh != nullptr
@@ -1827,7 +1830,7 @@ void ASoccerBall::ApplyPreLaunchSeparation(
     float MaxSeparationDistance
 )
 {
-    if (BallMesh == nullptr)
+    if (!bEnablePreLaunchSeparation || BallMesh == nullptr)
     {
         return;
     }

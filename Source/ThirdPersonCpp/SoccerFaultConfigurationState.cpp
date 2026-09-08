@@ -42,10 +42,12 @@ bool FSoccerFaultConfigurationState::Enter(ASoccerMatchManager& Manager)
 	// the post-collision location.
 	if (IsValid(Manager.SoccerBall))
 	{
+		const FVector& GroundedRestartLocation =
+			Manager.FreeKickRestart.GetRestartLocation();
 		Manager.SoccerBall->SetPossessed(false);
 		Manager.SoccerBall->StopBallKeepingPhysics();
 		Manager.SoccerBall->SetActorLocation(
-			RestartLocation,
+			GroundedRestartLocation,
 			false,
 			nullptr,
 			ETeleportType::TeleportPhysics
