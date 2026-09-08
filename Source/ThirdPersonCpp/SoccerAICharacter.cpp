@@ -2052,12 +2052,31 @@ bool ASoccerAICharacter::StartAIKickMontageWithBall(
 		return false;
 	}
 
-	const float MontageDuration = PlayAnimMontage(KickMontage);
+	const float AuthoredMontageLength = FMath::Max(
+		0.05f,
+		KickMontage->GetPlayLength()
+	);
+	const float AuthoredImpactDelay = GetAIKickImpactDelayForMontage(
+		KickMontage,
+		AuthoredMontageLength
+	);
+	const float MontagePlayRate = BuildAIKickMontagePhysicalPlayRate(
+		BallToKick,
+		AuthoredImpactDelay,
+		bTreatAsRestart
+	);
+	const float MontagePlayResult = PlayAnimMontage(
+		KickMontage,
+		MontagePlayRate
+	);
 
-	if (MontageDuration <= 0.0f)
+	if (MontagePlayResult <= 0.0f)
 	{
 		return false;
 	}
+
+	const float MontageDuration =
+		AuthoredMontageLength / FMath::Max(1.0f, MontagePlayRate);
 
 	if (bReleaseCurrentAIPossession)
 	{
@@ -2122,9 +2141,10 @@ bool ASoccerAICharacter::StartAIKickMontageWithBall(
 			FMath::Max(0.0f, AIKickAnimationFinishExtraDelay);
 	}
 
-	const float ImpactDelay = GetAIKickImpactDelayForMontage(
-		KickMontage,
-		MontageDuration
+	const float ImpactDelay = FMath::Clamp(
+		AuthoredImpactDelay / FMath::Max(1.0f, MontagePlayRate),
+		FMath::Max(0.01f, AIKickMontageMinimumPhysicalImpactDelay),
+		FMath::Max(0.05f, MontageDuration - 0.05f)
 	);
 
 	GetWorldTimerManager().ClearTimer(AIKickImpactTimerHandle);
@@ -2511,6 +2531,77 @@ bool ASoccerAICharacter::IsBallWithinAIKickPhysicalContact(
 		);
 }
 
+float ASoccerAICharacter::BuildAIKickMontagePhysicalPlayRate(
+	const ASoccerBall* SoccerBall,
+	float AuthoredImpactDelay,
+	bool bTreatAsRestart
+) const
+{
+	if (
+		bTreatAsRestart ||
+		!bUseAIKickMontagePhysicalTiming ||
+		!IsValid(SoccerBall)
+		)
+	{
+		return 1.0f;
+	}
+
+	FVector RelativeLocation =
+		SoccerBall->GetActorLocation() - GetActorLocation();
+	RelativeLocation.Z = 0.0f;
+	FVector BallVelocity = SoccerBall->GetBallPhysicsVelocity();
+	BallVelocity.Z = 0.0f;
+
+	const float Radius = FMath::Max(
+		1.0f,
+		AIPendingKickMaxPhysicalContactDistance
+	);
+	const float SpeedSquared = BallVelocity.SizeSquared2D();
+	if (
+		SpeedSquared <= KINDA_SMALL_NUMBER ||
+		RelativeLocation.SizeSquared2D() > FMath::Square(Radius)
+		)
+	{
+		return 1.0f;
+	}
+
+	const float B = 2.0f * FVector::DotProduct(
+		RelativeLocation,
+		BallVelocity
+	);
+	const float C = RelativeLocation.SizeSquared2D() - FMath::Square(Radius);
+	const float Discriminant = B * B - 4.0f * SpeedSquared * C;
+	if (Discriminant <= 0.0f)
+	{
+		return 1.0f;
+	}
+
+	const float ExitTime =
+		(-B + FMath::Sqrt(Discriminant)) / (2.0f * SpeedSquared);
+	if (ExitTime <= KINDA_SMALL_NUMBER)
+	{
+		return FMath::Max(1.0f, AIKickMontageMaximumPhysicalPlayRate);
+	}
+
+	const float SafeContactTime = FMath::Max(
+		AIKickMontageMinimumPhysicalImpactDelay,
+		ExitTime * FMath::Clamp(
+			AIKickMontageContactWindowSafetyFraction,
+			0.10f,
+			1.0f
+		)
+	);
+	const float RequiredPlayRate =
+		FMath::Max(0.01f, AuthoredImpactDelay) /
+		FMath::Max(0.01f, SafeContactTime);
+
+	return FMath::Clamp(
+		RequiredPlayRate,
+		1.0f,
+		FMath::Max(1.0f, AIKickMontageMaximumPhysicalPlayRate)
+	);
+}
+
 void ASoccerAICharacter::StartAIKickAnimation()
 {
 	UWorld* World = GetWorld();
@@ -2852,23 +2943,33 @@ void ASoccerAICharacter::StartAIDribbleTurnAutoPass(
 	// The animation now has to meet the physical ball at its impact time.
 	ControlledBall->SetPossessed(false);
 
-	const float MontageDuration =
-		PlayAnimMontage(TurnMontage);
+	const bool bStrongTurn =
+		ForcedLocomotionSpeed >= AIStrongRunDribbleTurnForcedSpeed - 1.0f;
+	const float AuthoredTurnImpactDelay = bStrongTurn
+		? AIStrongRunDribbleTurnImpactDelay
+		: AINormalRunDribbleTurnImpactDelay;
+	const float TurnMontagePlayRate = BuildAIKickMontagePhysicalPlayRate(
+		ControlledBall,
+		AuthoredTurnImpactDelay,
+		false
+	);
+	const float MontagePlayResult =
+		PlayAnimMontage(TurnMontage, TurnMontagePlayRate);
 
-	if (MontageDuration <= 0.0f)
+	if (MontagePlayResult <= 0.0f)
 	{
 		PerformAIDribbleTurnAutoPassImpact();
 		FinishAIDribbleTurnAutoPassAnimation();
 		return;
 	}
 
-	const bool bStrongTurn =
-		ForcedLocomotionSpeed >= AIStrongRunDribbleTurnForcedSpeed - 1.0f;
+	const float MontageDuration =
+		TurnMontage->GetPlayLength() /
+		FMath::Max(1.0f, TurnMontagePlayRate);
 
 	const float ImpactDelay =
-		bStrongTurn
-		? AIStrongRunDribbleTurnImpactDelay
-		: AINormalRunDribbleTurnImpactDelay;
+		AuthoredTurnImpactDelay /
+		FMath::Max(1.0f, TurnMontagePlayRate);
 
 	const float FinishExtraDelay =
 		bStrongTurn

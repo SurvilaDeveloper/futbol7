@@ -556,6 +556,20 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing|Physical Contact", meta = (ClampMin = "10.0"))
 		float AIPendingKickMaximumPhysicalContactHeight = 82.0f;
 
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing|Physical Contact")
+		bool bUseAIKickMontagePhysicalTiming = true;
+
+	// Maximum animation acceleration used to reach a live ball before it exits
+	// the physical contact radius. A miss remains possible beyond this limit.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing|Physical Contact", meta = (ClampMin = "1.0", ClampMax = "3.0"))
+		float AIKickMontageMaximumPhysicalPlayRate = 2.10f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing|Physical Contact", meta = (ClampMin = "0.10", ClampMax = "1.0"))
+		float AIKickMontageContactWindowSafetyFraction = 0.72f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing|Physical Contact", meta = (ClampMin = "0.01", ClampMax = "0.20"))
+		float AIKickMontageMinimumPhysicalImpactDelay = 0.05f;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Animations|Defensive Contact")
 		bool bPlayImmediateDefensiveContactAnimation = true;
 
@@ -628,6 +642,11 @@ private:
 	bool ShouldCancelPendingAIKickAnimation() const;
 	bool IsPendingAIKickBallWithinPhysicalContact() const;
 	bool IsBallWithinAIKickPhysicalContact(const ASoccerBall* SoccerBall) const;
+	float BuildAIKickMontagePhysicalPlayRate(
+		const ASoccerBall* SoccerBall,
+		float AuthoredImpactDelay,
+		bool bTreatAsRestart
+	) const;
 
 	bool TryStartAIDribbleTurnAutoPassToLocation(
 		const FVector& TargetLocation,
