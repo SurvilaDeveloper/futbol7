@@ -1702,7 +1702,7 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 		{
 			PossessBall();
 		}
-		else
+		else if (IsBallAtPlayablePossessionHeight(ControlledBall))
 		{
 			ExecutePendingKick();
 		}
@@ -2990,6 +2990,13 @@ void AThirdPersonCppCharacter::CollectAutoPassBallWithoutCollision()
 	if (ControlledBall == nullptr)
 	{
 		EnterManualControl();
+		return;
+	}
+
+	// A horizontally close ball may still be several metres above the player.
+	// Keep following its physical trajectory instead of pulling it to the feet.
+	if (!IsBallAtPlayablePossessionHeight(ControlledBall))
+	{
 		return;
 	}
 
@@ -5649,6 +5656,19 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		IsValid(MatchManager) &&
 		MatchManager->CanHumanFootRestartTakerExecuteNow(this);
 
+	// DistanceToBall is intentionally evaluated in 2D while chasing. Therefore
+	// ExecutePendingKick must independently reject a foot action when the ball
+	// is still overhead. Preserve the pending intent so it can be reconsidered
+	// when the physical ball returns to a playable height.
+	if (
+		!bHumanRestartExecution &&
+		!IsBallAtPlayablePossessionHeight(ControlledBall)
+	)
+	{
+		EnterChasingBall();
+		return;
+	}
+
 	// A set piece never starts a dribble-turn carry. The ball must remain on the
 	// restart spot until the actual kick impact.
 	if (
@@ -6798,13 +6818,27 @@ void AThirdPersonCppCharacter::CompleteHumanStealAttempt(
 	// primero asignamos la pelota al ControlledBall del humano.
 	ControlledBall = SoccerBall;
 
-	if (ControlledBall != nullptr)
+	// PossessBall performs the authoritative height validation. Do not mark the
+	// rigid body possessed until that validation has actually succeeded.
+	PossessBall();
+
+	if (!IsPossessingBall())
 	{
-		ControlledBall->SetPossessed(true);
+		ControlledBall->SetPossessed(false);
+		ControlledBall->StopBallKeepingPhysics();
+
+		PendingKickMode = SavedPendingKickMode;
+		PendingKickTarget = SavedPendingKickTarget;
+		bHasPendingKickHorizontalSpeedOverride =
+			bSavedHasPendingKickHorizontalSpeedOverride;
+		PendingKickHorizontalSpeedOverride =
+			SavedPendingKickHorizontalSpeedOverride;
+
+		EnterChasingBall();
+		return;
 	}
 
-	// Ahora sï¿½, usamos tu PossessBall() existente.
-	PossessBall();
+	ControlledBall->SetPossessed(true);
 
 	UpdatePossessedBallLocation();
 

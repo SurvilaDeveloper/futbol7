@@ -886,6 +886,11 @@ private:
 	);
 	int32 ApplySelectedClubKitsToTeam(ESoccerTeam Team);
 	void ApplySelectedClubKitToCharacter(ASoccerCharacterBase* Character);
+	void ApplySelectedClubKitToCharacter(
+		ASoccerCharacterBase* Character,
+		ESoccerTeam UniformTeam,
+		ESoccerPlayerRole UniformPlayerRole
+	);
 
 	// Explicit match-state machine. Concrete restart families and Playing are
 	// migrated incrementally; MatchPlayState remains only as a compatibility bridge.

@@ -3383,7 +3383,11 @@ bool ASoccerMatchManager::TryStartVisualSubstitution(
 	IncomingProxy->SetActorEnableCollision(false);
 	IncomingProxy->SetPlayerProfileForMatch(IncomingProfile);
 	IncomingProxy->ResetRuntimeStateForIncomingSubstitute();
-	ApplySelectedClubKitToCharacter(IncomingProxy);
+	ApplySelectedClubKitToCharacter(
+		IncomingProxy,
+		Request.Team,
+		FormationSlot->PlayerRole
+	);
 	IncomingProxy->SetAIChasingBall(false);
 
 	ActiveVisualSubstitutionRequest = Request;
@@ -3547,7 +3551,19 @@ void ASoccerMatchManager::BeginVisualSubstitutionIncomingEntry()
 				ETeleportType::TeleportPhysics
 			);
 			OutgoingHuman->SetPlayerProfileForMatch(IncomingProfile);
-			ApplySelectedClubKitToCharacter(OutgoingHuman);
+			FSoccerFormationSlot HumanFormationSlot;
+			const ESoccerPlayerRole IncomingPlayerRole =
+				GetAssignedFormationSlotForCharacter(
+					OutgoingHuman,
+					HumanFormationSlot
+				)
+					? HumanFormationSlot.PlayerRole
+					: OutgoingHuman->GetPlayerRole();
+			ApplySelectedClubKitToCharacter(
+				OutgoingHuman,
+				ActiveVisualSubstitutionRequest.Team,
+				IncomingPlayerRole
+			);
 			bVisualSubstitutionUsesHumanActorForEntry = true;
 		}
 	}
@@ -3990,15 +4006,33 @@ void ASoccerMatchManager::ApplySelectedClubKitToCharacter(
 		return;
 	}
 
+	ApplySelectedClubKitToCharacter(
+		Character,
+		Character->GetTeam(),
+		Character->GetPlayerRole()
+	);
+}
+
+void ASoccerMatchManager::ApplySelectedClubKitToCharacter(
+	ASoccerCharacterBase* Character,
+	ESoccerTeam UniformTeam,
+	ESoccerPlayerRole UniformPlayerRole
+)
+{
+	if (!IsValid(Character))
+	{
+		return;
+	}
+
 	USoccerClubProfile* ClubProfile =
-		GetClubProfileForTeam(Character->GetTeam());
+		GetClubProfileForTeam(UniformTeam);
 	if (!IsValid(ClubProfile))
 	{
 		return;
 	}
 
 	ESoccerClubKitType KitType = ESoccerClubKitType::Home;
-	if (Character->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
+	if (UniformPlayerRole == ESoccerPlayerRole::Goalkeeper)
 	{
 		KitType = ESoccerClubKitType::Goalkeeper;
 	}
@@ -4013,7 +4047,7 @@ void ASoccerMatchManager::ApplySelectedClubKitToCharacter(
 			? SoccerGameInstance->GetCurrentMatchSetup().bPlayerTeamIsHome
 			: true;
 		const bool bCharacterTeamIsHome =
-			Character->GetTeam() == ESoccerTeam::PlayerTeam
+			UniformTeam == ESoccerTeam::PlayerTeam
 				? bPlayerTeamIsHome
 				: !bPlayerTeamIsHome;
 		KitType = bCharacterTeamIsHome
