@@ -1,6 +1,7 @@
 #include "SoccerClubSelectionWidget.h"
 
 #include "SoccerClubProfile.h"
+#include "SoccerClubIdButton.h"
 #include "SoccerGameInstance.h"
 #include "SoccerMatchManager.h"
 #include "SoccerSquadCatalog.h"
@@ -12,13 +13,20 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
+#include "Components/ScrollBox.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
+#include "Components/UniformGridPanel.h"
+#include "Components/UniformGridSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "GameFramework/PlayerController.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/Texture2D.h"
 
 namespace
 {
@@ -65,6 +73,7 @@ void USoccerClubSelectionWidget::InitializeForMatchManager(
         ? Cast<USoccerGameInstance>(World->GetGameInstance())
         : nullptr;
     RefreshAvailableClubs();
+    RebuildClubGrid();
     RefreshTexts();
 }
 
@@ -95,7 +104,10 @@ void USoccerClubSelectionWidget::ActivateMenu(bool bPauseGame)
     PlayerController->bShowMouseCursor = true;
     PlayerController->bEnableClickEvents = true;
     FInputModeUIOnly InputMode;
-    InputMode.SetWidgetToFocus(TakeWidget());
+    if (ConfirmButton != nullptr)
+    {
+        InputMode.SetWidgetToFocus(ConfirmButton->TakeWidget());
+    }
     InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
     PlayerController->SetInputMode(InputMode);
 
@@ -177,6 +189,160 @@ FString USoccerClubSelectionWidget::GetClubDisplayName(FName ClubId) const
     return ClubId.ToString();
 }
 
+USoccerClubProfile* USoccerClubSelectionWidget::GetClubProfile(
+    FName ClubId
+) const
+{
+    if (!IsValid(SoccerGameInstance))
+    {
+        return nullptr;
+    }
+
+    USoccerSquadCatalog* SquadCatalog =
+        SoccerGameInstance->FindSquadCatalogByClubId(ClubId);
+
+    return IsValid(SquadCatalog) ? SquadCatalog->ClubProfile : nullptr;
+}
+
+void USoccerClubSelectionWidget::RebuildClubGrid()
+{
+    ClubButtonsById.Reset();
+    ClubCardBordersById.Reset();
+
+    if (ClubGrid == nullptr || WidgetTree == nullptr)
+    {
+        return;
+    }
+
+    ClubGrid->ClearChildren();
+    ClubGrid->SetSlotPadding(FMargin(8.0f));
+    const int32 SafeColumnCount = FMath::Max(1, ClubGridColumnCount);
+
+    for (int32 ClubIndex = 0; ClubIndex < SelectableOpponentClubIds.Num(); ++ClubIndex)
+    {
+        const FName ClubId = SelectableOpponentClubIds[ClubIndex];
+        USoccerClubProfile* ClubProfile = GetClubProfile(ClubId);
+
+        USoccerClubIdButton* ClubButton =
+            WidgetTree->ConstructWidget<USoccerClubIdButton>();
+        ClubButton->SetClubId(ClubId);
+        ClubButton->OnClubIdClicked.AddDynamic(
+            this,
+            &USoccerClubSelectionWidget::HandleClubCardClicked
+        );
+
+        USizeBox* CardSize = WidgetTree->ConstructWidget<USizeBox>();
+        CardSize->SetWidthOverride(FMath::Max(120.0f, ClubCardWidth));
+        CardSize->SetHeightOverride(FMath::Max(140.0f, ClubCardHeight));
+
+        UBorder* CardBorder = WidgetTree->ConstructWidget<UBorder>();
+        CardBorder->SetPadding(FMargin(10.0f));
+        CardBorder->SetBrushColor(FLinearColor(0.07f, 0.10f, 0.15f, 1.0f));
+        CardSize->AddChild(CardBorder);
+
+        UVerticalBox* CardColumn = WidgetTree->ConstructWidget<UVerticalBox>();
+        CardBorder->AddChild(CardColumn);
+
+        USizeBox* CrestSize = WidgetTree->ConstructWidget<USizeBox>();
+        CrestSize->SetWidthOverride(FMath::Max(64.0f, ClubCrestSize));
+        CrestSize->SetHeightOverride(FMath::Max(64.0f, ClubCrestSize));
+
+        UOverlay* CrestOverlay = WidgetTree->ConstructWidget<UOverlay>();
+        CrestSize->AddChild(CrestOverlay);
+
+        UBorder* CrestFallback = WidgetTree->ConstructWidget<UBorder>();
+        const FLinearColor PrimaryColor = IsValid(ClubProfile)
+            ? ClubProfile->PrimaryColor
+            : FLinearColor(0.18f, 0.25f, 0.34f, 1.0f);
+        CrestFallback->SetBrushColor(FLinearColor(
+            PrimaryColor.R,
+            PrimaryColor.G,
+            PrimaryColor.B,
+            1.0f
+        ));
+        CrestOverlay->AddChildToOverlay(CrestFallback);
+
+        UTexture2D* CrestTexture = IsValid(ClubProfile)
+            ? ClubProfile->Crest.LoadSynchronous()
+            : nullptr;
+
+        if (IsValid(CrestTexture))
+        {
+            UImage* CrestImage = WidgetTree->ConstructWidget<UImage>();
+            CrestImage->SetBrushFromTexture(CrestTexture, true);
+            CrestImage->SetColorAndOpacity(FLinearColor::White);
+            CrestOverlay->AddChildToOverlay(CrestImage);
+        }
+        else
+        {
+            FString FallbackLabel = IsValid(ClubProfile) &&
+                !ClubProfile->ShortName.IsEmpty()
+                ? ClubProfile->ShortName.ToString()
+                : GetClubDisplayName(ClubId).Left(3).ToUpper();
+            UTextBlock* FallbackText = MakeClubSelectionText(
+                WidgetTree,
+                FallbackLabel,
+                28
+            );
+            UOverlaySlot* FallbackTextSlot =
+                CrestOverlay->AddChildToOverlay(FallbackText);
+            FallbackTextSlot->SetHorizontalAlignment(HAlign_Center);
+            FallbackTextSlot->SetVerticalAlignment(VAlign_Center);
+        }
+
+        UVerticalBoxSlot* CrestSlot =
+            CardColumn->AddChildToVerticalBox(CrestSize);
+        CrestSlot->SetHorizontalAlignment(HAlign_Center);
+        CrestSlot->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 10.0f));
+
+        UTextBlock* ClubNameText = MakeClubSelectionText(
+            WidgetTree,
+            GetClubDisplayName(ClubId),
+            17
+        );
+        ClubNameText->SetAutoWrapText(true);
+        UVerticalBoxSlot* ClubNameSlot =
+            CardColumn->AddChildToVerticalBox(ClubNameText);
+        ClubNameSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+        ClubNameSlot->SetVerticalAlignment(VAlign_Center);
+
+        ClubButton->AddChild(CardSize);
+
+        UUniformGridSlot* GridSlot = ClubGrid->AddChildToUniformGrid(
+            ClubButton,
+            ClubIndex / SafeColumnCount,
+            ClubIndex % SafeColumnCount
+        );
+        GridSlot->SetHorizontalAlignment(HAlign_Center);
+        GridSlot->SetVerticalAlignment(VAlign_Center);
+
+        ClubButtonsById.Add(ClubId, ClubButton);
+        ClubCardBordersById.Add(ClubId, CardBorder);
+    }
+}
+
+void USoccerClubSelectionWidget::RefreshCardSelectionStates()
+{
+    const FName SelectedClubId =
+        SelectableOpponentClubIds.IsValidIndex(SelectedOpponentIndex)
+        ? SelectableOpponentClubIds[SelectedOpponentIndex]
+        : NAME_None;
+
+    for (const TPair<FName, UBorder*>& CardPair : ClubCardBordersById)
+    {
+        if (CardPair.Value == nullptr)
+        {
+            continue;
+        }
+
+        CardPair.Value->SetBrushColor(
+            CardPair.Key == SelectedClubId
+            ? FLinearColor(0.10f, 0.52f, 0.27f, 1.0f)
+            : FLinearColor(0.07f, 0.10f, 0.15f, 1.0f)
+        );
+    }
+}
+
 void USoccerClubSelectionWidget::RefreshTexts()
 {
     const FName HumanClubId = IsValid(SoccerGameInstance)
@@ -211,6 +377,7 @@ void USoccerClubSelectionWidget::RefreshTexts()
                 : TEXT("Creá y vinculá al menos dos planteles de clubes.")
         ));
     }
+    RefreshCardSelectionStates();
 }
 
 void USoccerClubSelectionWidget::CycleOpponent(int32 Direction)
@@ -233,6 +400,18 @@ void USoccerClubSelectionWidget::HandlePreviousClicked()
 void USoccerClubSelectionWidget::HandleNextClicked()
 {
     CycleOpponent(1);
+}
+
+void USoccerClubSelectionWidget::HandleClubCardClicked(FName ClubId)
+{
+    const int32 ClubIndex = SelectableOpponentClubIds.IndexOfByKey(ClubId);
+    if (ClubIndex == INDEX_NONE)
+    {
+        return;
+    }
+
+    SelectedOpponentIndex = ClubIndex;
+    RefreshTexts();
 }
 
 void USoccerClubSelectionWidget::HandleConfirmClicked()
@@ -308,52 +487,51 @@ void USoccerClubSelectionWidget::BuildWidgetTree()
     BackgroundSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
     BackgroundSlot->SetOffsets(FMargin(0.0f));
 
-    USizeBox* CardSize = WidgetTree->ConstructWidget<USizeBox>();
-    CardSize->SetWidthOverride(720.0f);
-    CardSize->SetHeightOverride(420.0f);
-    UCanvasPanelSlot* CardSlot = Root->AddChildToCanvas(CardSize);
+    USizeBox* PanelSize = WidgetTree->ConstructWidget<USizeBox>();
+    PanelSize->SetWidthOverride(1080.0f);
+    PanelSize->SetHeightOverride(650.0f);
+    UCanvasPanelSlot* CardSlot = Root->AddChildToCanvas(PanelSize);
     CardSlot->SetAnchors(FAnchors(0.5f, 0.5f));
     CardSlot->SetAlignment(FVector2D(0.5f, 0.5f));
     CardSlot->SetPosition(FVector2D::ZeroVector);
-    CardSlot->SetSize(FVector2D(720.0f, 420.0f));
+    CardSlot->SetSize(FVector2D(1080.0f, 650.0f));
 
     UBorder* Card = WidgetTree->ConstructWidget<UBorder>();
     Card->SetPadding(FMargin(38.0f));
     Card->SetBrushColor(FLinearColor(0.05f, 0.075f, 0.11f, 1.0f));
-    CardSize->AddChild(Card);
+    PanelSize->AddChild(Card);
 
     UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
     Card->AddChild(Column);
 
     Column->AddChildToVerticalBox(
-        MakeClubSelectionText(WidgetTree, TEXT("CONFIGURAR ENCUENTRO"), 30)
+        MakeClubSelectionText(WidgetTree, TEXT("SELECCIONAR CLUB RIVAL"), 30)
     );
     HumanClubText = MakeClubSelectionText(WidgetTree, TEXT("Tu club"), 20);
     UVerticalBoxSlot* HumanSlot = Column->AddChildToVerticalBox(HumanClubText);
-    HumanSlot->SetPadding(FMargin(0.0f, 28.0f, 0.0f, 22.0f));
+    HumanSlot->SetPadding(FMargin(0.0f, 14.0f, 0.0f, 10.0f));
 
-    UHorizontalBox* Selector = WidgetTree->ConstructWidget<UHorizontalBox>();
-    Column->AddChildToVerticalBox(Selector);
-    UButton* PreviousButton = MakeClubSelectionButton(WidgetTree, TEXT("<"));
-    PreviousButton->OnClicked.AddDynamic(this, &USoccerClubSelectionWidget::HandlePreviousClicked);
-    Selector->AddChildToHorizontalBox(PreviousButton);
+    USizeBox* GridViewportSize = WidgetTree->ConstructWidget<USizeBox>();
+    GridViewportSize->SetHeightOverride(430.0f);
+    UScrollBox* GridScrollBox = WidgetTree->ConstructWidget<UScrollBox>();
+    GridScrollBox->SetOrientation(Orient_Vertical);
+    GridViewportSize->AddChild(GridScrollBox);
+    ClubGrid = WidgetTree->ConstructWidget<UUniformGridPanel>();
+    GridScrollBox->AddChild(ClubGrid);
+    UVerticalBoxSlot* GridViewportSlot =
+        Column->AddChildToVerticalBox(GridViewportSize);
+    GridViewportSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
-    USizeBox* OpponentSize = WidgetTree->ConstructWidget<USizeBox>();
-    OpponentSize->SetWidthOverride(430.0f);
-    OpponentClubText = MakeClubSelectionText(WidgetTree, TEXT("Rival"), 25);
-    OpponentSize->AddChild(OpponentClubText);
-    UHorizontalBoxSlot* OpponentSlot = Selector->AddChildToHorizontalBox(OpponentSize);
-    OpponentSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-
-    UButton* NextButton = MakeClubSelectionButton(WidgetTree, TEXT(">"));
-    NextButton->OnClicked.AddDynamic(this, &USoccerClubSelectionWidget::HandleNextClicked);
-    Selector->AddChildToHorizontalBox(NextButton);
+    OpponentClubText = MakeClubSelectionText(WidgetTree, TEXT("Rival"), 20);
+    UVerticalBoxSlot* OpponentSlot =
+        Column->AddChildToVerticalBox(OpponentClubText);
+    OpponentSlot->SetPadding(FMargin(0.0f, 8.0f, 0.0f, 2.0f));
 
     StatusText = MakeClubSelectionText(WidgetTree, TEXT("Elegí el rival."), 15);
     UVerticalBoxSlot* StatusSlot = Column->AddChildToVerticalBox(StatusText);
-    StatusSlot->SetPadding(FMargin(0.0f, 24.0f, 0.0f, 24.0f));
+    StatusSlot->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 10.0f));
 
-    ConfirmButton = MakeClubSelectionButton(WidgetTree, TEXT("CONTINUAR"));
+    ConfirmButton = MakeClubSelectionButton(WidgetTree, TEXT("JUGAR PARTIDO"));
     ConfirmButton->OnClicked.AddDynamic(this, &USoccerClubSelectionWidget::HandleConfirmClicked);
     Column->AddChildToVerticalBox(ConfirmButton);
 }
