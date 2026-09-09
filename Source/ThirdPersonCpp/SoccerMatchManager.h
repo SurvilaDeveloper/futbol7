@@ -824,7 +824,7 @@ private:
 	void CompleteVisualSubstitution();
 	void ResetVisualSubstitution(bool bRestoreOutgoingCharacter);
 	bool MoveVisualSubstitutionCharacterTowards(
-		ASoccerAICharacter* SoccerAICharacter,
+		ASoccerCharacterBase* SoccerCharacter,
 		const FVector& TargetLocation,
 		float MovementSpeed,
 		float AcceptanceRadius,
@@ -837,7 +837,7 @@ private:
 	) const;
 	void ShowDebugPlayerTeamSubstitutionSelection(const FString& Prefix) const;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution")
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution", meta = (DisplayName = "Enable Visual Substitutions"))
 	bool bEnableVisualBotSubstitutions = true;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution", meta = (ClampMin = "-1.0", ClampMax = "1.0"))
@@ -862,7 +862,7 @@ private:
 	float SubstitutionVisualSequenceTimeoutSeconds = 18.0f;
 
 	UPROPERTY(Transient)
-	ASoccerAICharacter* VisualSubstitutionOutgoingCharacter = nullptr;
+	ASoccerCharacterBase* VisualSubstitutionOutgoingCharacter = nullptr;
 
 	UPROPERTY(Transient)
 	ASoccerAICharacter* VisualSubstitutionIncomingProxy = nullptr;
@@ -873,6 +873,8 @@ private:
 	FVector VisualSubstitutionOutgoingTarget = FVector::ZeroVector;
 	FVector VisualSubstitutionIncomingTarget = FVector::ZeroVector;
 	float VisualSubstitutionElapsedSeconds = 0.0f;
+	bool bVisualSubstitutionAppliedHumanMoveInputLock = false;
+	bool bVisualSubstitutionUsesHumanActorForEntry = false;
 
 	int32 ApplySquadCatalogProfilesToTeam(
 		ESoccerTeam Team,

@@ -3132,15 +3132,26 @@ bool ASoccerMatchManager::ExecuteMatchSubstitutionImmediate(
 	const FSoccerMatchSubstitutionRequest& Request
 )
 {
-	SynchronizeMatchSquadActiveSlotsFromActors(Request.Team);
 	FSoccerMatchSquadState& State = GetMutableMatchSquadState(Request.Team);
-	FName ExecutionSlotId = NAME_None;
-	for (const TPair<FName, FName>& Pair : State.ActivePlayerByFormationSlot)
+	FName ExecutionSlotId = Request.FormationSlotId;
+	const FName* RequestedSlotPlayerId =
+		ExecutionSlotId.IsNone()
+			? nullptr
+			: State.ActivePlayerByFormationSlot.Find(ExecutionSlotId);
+	if (
+		RequestedSlotPlayerId == nullptr ||
+		*RequestedSlotPlayerId != Request.OutgoingPlayerId
+	)
 	{
-		if (Pair.Value == Request.OutgoingPlayerId)
+		SynchronizeMatchSquadActiveSlotsFromActors(Request.Team);
+		ExecutionSlotId = NAME_None;
+		for (const TPair<FName, FName>& ActivePair : State.ActivePlayerByFormationSlot)
 		{
-			ExecutionSlotId = Pair.Key;
-			break;
+			if (ActivePair.Value == Request.OutgoingPlayerId)
+			{
+				ExecutionSlotId = ActivePair.Key;
+				break;
+			}
 		}
 	}
 	if (
@@ -3175,8 +3186,8 @@ bool ASoccerMatchManager::ExecuteMatchSubstitutionImmediate(
 		return false;
 	}
 
-	MatchCharacter->ResetRuntimeStateForIncomingSubstitute();
 	MatchCharacter->SetPlayerProfileForMatch(IncomingProfile);
+	MatchCharacter->ResetRuntimeStateForIncomingSubstitute();
 	ApplySelectedClubKitToCharacter(MatchCharacter);
 
 	State.ActivePlayerByFormationSlot.Add(
@@ -3269,9 +3280,8 @@ bool ASoccerMatchManager::TryStartVisualSubstitution(
 		}
 	}
 
-	ASoccerAICharacter* OutgoingCharacter = Cast<ASoccerAICharacter>(
-		GetFormationSlotAssignedCharacter(Request.Team, ExecutionSlotId)
-	);
+	ASoccerCharacterBase* OutgoingCharacter =
+		GetFormationSlotAssignedCharacter(Request.Team, ExecutionSlotId);
 	UWorld* World = GetWorld();
 	USoccerGameInstance* SoccerGameInstance = World != nullptr
 		? Cast<USoccerGameInstance>(World->GetGameInstance())
@@ -3293,6 +3303,34 @@ bool ASoccerMatchManager::TryStartVisualSubstitution(
 		FormationSlot == nullptr ||
 		World == nullptr
 	)
+	{
+		return false;
+	}
+
+	ASoccerAICharacter* PresentationTemplate =
+		Cast<ASoccerAICharacter>(OutgoingCharacter);
+	if (!IsValid(PresentationTemplate))
+	{
+		for (const FSoccerFormationSlot& CandidateFormationSlot : Formation.Slots)
+		{
+			if (CandidateFormationSlot.SlotId == ExecutionSlotId)
+			{
+				continue;
+			}
+
+			PresentationTemplate = Cast<ASoccerAICharacter>(
+				GetFormationSlotAssignedCharacter(
+					Request.Team,
+					CandidateFormationSlot.SlotId
+				)
+			);
+			if (IsValid(PresentationTemplate))
+			{
+				break;
+			}
+		}
+	}
+	if (!IsValid(PresentationTemplate))
 	{
 		return false;
 	}
@@ -3326,7 +3364,7 @@ bool ASoccerMatchManager::TryStartVisualSubstitution(
 		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 	ASoccerAICharacter* IncomingProxy = World->SpawnActor<ASoccerAICharacter>(
-		OutgoingCharacter->GetClass(),
+		PresentationTemplate->GetClass(),
 		IncomingWaitingLocation,
 		IncomingRotation,
 		SpawnParameters
@@ -3343,8 +3381,8 @@ bool ASoccerMatchManager::TryStartVisualSubstitution(
 	}
 	IncomingProxy->Tags.AddUnique(FName(TEXT("SubstitutionPresentation")));
 	IncomingProxy->SetActorEnableCollision(false);
-	IncomingProxy->ResetRuntimeStateForIncomingSubstitute();
 	IncomingProxy->SetPlayerProfileForMatch(IncomingProfile);
+	IncomingProxy->ResetRuntimeStateForIncomingSubstitute();
 	ApplySelectedClubKitToCharacter(IncomingProxy);
 	IncomingProxy->SetAIChasingBall(false);
 
@@ -3359,43 +3397,71 @@ bool ASoccerMatchManager::TryStartVisualSubstitution(
 	VisualSubstitutionElapsedSeconds = 0.0f;
 	VisualSubstitutionPhase = ESoccerVisualSubstitutionPhase::OutgoingLeaving;
 
-	OutgoingCharacter->ReleaseAIBall(false);
+	if (ASoccerAICharacter* OutgoingAI =
+		Cast<ASoccerAICharacter>(OutgoingCharacter))
+	{
+		OutgoingAI->ReleaseAIBall(false);
+		OutgoingAI->SetAIChasingBall(false);
+	}
+	else if (AThirdPersonCppCharacter* OutgoingHuman =
+		Cast<AThirdPersonCppCharacter>(OutgoingCharacter))
+	{
+		OutgoingHuman->ReleaseBallForMatchRestart(false);
+		OutgoingHuman->ClearBallActionsForMatchRestriction();
+		if (APlayerController* PlayerController =
+			Cast<APlayerController>(OutgoingHuman->GetController()))
+		{
+			PlayerController->SetIgnoreMoveInput(true);
+			bVisualSubstitutionAppliedHumanMoveInputLock = true;
+		}
+	}
 	ReleaseControlledBallPossession(OutgoingCharacter);
-	OutgoingCharacter->SetAIChasingBall(false);
 
 	UE_LOG(
 		LogTemp,
 		Display,
-		TEXT("[SubstitutionVisual] Started team=%d slot=%s OUT=%s IN=%s."),
+		TEXT("[SubstitutionVisual] Started team=%d slot=%s OUT=%s IN=%s humanControlTransfer=%s."),
 		static_cast<int32>(Request.Team),
 		*ExecutionSlotId.ToString(),
 		*Request.OutgoingPlayerId.ToString(),
-		*Request.IncomingPlayerId.ToString()
+		*Request.IncomingPlayerId.ToString(),
+		Cast<AThirdPersonCppCharacter>(OutgoingCharacter) != nullptr
+			? TEXT("YES")
+			: TEXT("NO")
 	);
 	return true;
 }
 
 bool ASoccerMatchManager::MoveVisualSubstitutionCharacterTowards(
-	ASoccerAICharacter* SoccerAICharacter,
+	ASoccerCharacterBase* SoccerCharacter,
 	const FVector& TargetLocation,
 	float MovementSpeed,
 	float AcceptanceRadius,
 	float DeltaTime
 )
 {
-	if (!IsValid(SoccerAICharacter))
+	if (!IsValid(SoccerCharacter))
 	{
 		return true;
 	}
 
-	const FVector CurrentLocation = SoccerAICharacter->GetActorLocation();
+	const FVector CurrentLocation = SoccerCharacter->GetActorLocation();
 	FVector ToTarget = TargetLocation - CurrentLocation;
 	ToTarget.Z = 0.0f;
 	const float DistanceToTarget = ToTarget.Size();
 	const float SafeAcceptanceRadius = FMath::Max(5.0f, AcceptanceRadius);
 	if (DistanceToTarget <= SafeAcceptanceRadius)
 	{
-		SoccerAICharacter->ClearScriptedLocomotionVelocity();
+		if (ASoccerAICharacter* SoccerAICharacter =
+			Cast<ASoccerAICharacter>(SoccerCharacter))
+		{
+			SoccerAICharacter->ClearScriptedLocomotionVelocity();
+		}
+		else if (AThirdPersonCppCharacter* HumanCharacter =
+			Cast<AThirdPersonCppCharacter>(SoccerCharacter))
+		{
+			HumanCharacter->ClearThrowInScriptedMovementVelocity();
+		}
 		return true;
 	}
 
@@ -3407,7 +3473,7 @@ bool ASoccerMatchManager::MoveVisualSubstitutionCharacterTowards(
 		SafeMovementSpeed * SafeDeltaTime
 	);
 	const FVector PreviousLocation = CurrentLocation;
-	SoccerAICharacter->SetActorLocation(
+	SoccerCharacter->SetActorLocation(
 		CurrentLocation + MovementDirection * MovementStep,
 		true,
 		nullptr,
@@ -3415,21 +3481,30 @@ bool ASoccerMatchManager::MoveVisualSubstitutionCharacterTowards(
 	);
 
 	FVector ActualVelocity = SafeDeltaTime > KINDA_SMALL_NUMBER
-		? (SoccerAICharacter->GetActorLocation() - PreviousLocation) / SafeDeltaTime
+		? (SoccerCharacter->GetActorLocation() - PreviousLocation) / SafeDeltaTime
 		: FVector::ZeroVector;
 	ActualVelocity.Z = 0.0f;
-	SoccerAICharacter->SetScriptedLocomotionVelocity(
-		ActualVelocity,
-		ESoccerAIMovementMode::Jog,
-		ESoccerAIMovementReason::NearbyReposition
-	);
+	if (ASoccerAICharacter* SoccerAICharacter =
+		Cast<ASoccerAICharacter>(SoccerCharacter))
+	{
+		SoccerAICharacter->SetScriptedLocomotionVelocity(
+			ActualVelocity,
+			ESoccerAIMovementMode::Jog,
+			ESoccerAIMovementReason::NearbyReposition
+		);
+	}
+	else if (AThirdPersonCppCharacter* HumanCharacter =
+		Cast<AThirdPersonCppCharacter>(SoccerCharacter))
+	{
+		HumanCharacter->SetThrowInScriptedMovementVelocity(ActualVelocity);
+	}
 	if (!MovementDirection.IsNearlyZero())
 	{
-		SoccerAICharacter->SetActorRotation(MovementDirection.Rotation());
+		SoccerCharacter->SetActorRotation(MovementDirection.Rotation());
 	}
 
 	return FVector::Dist2D(
-		SoccerAICharacter->GetActorLocation(),
+		SoccerCharacter->GetActorLocation(),
 		TargetLocation
 	) <= SafeAcceptanceRadius;
 }
@@ -3442,8 +3517,44 @@ void ASoccerMatchManager::BeginVisualSubstitutionIncomingEntry()
 		return;
 	}
 
-	VisualSubstitutionOutgoingCharacter->ClearScriptedLocomotionVelocity();
-	VisualSubstitutionOutgoingCharacter->SetActorHiddenInGame(true);
+	if (ASoccerAICharacter* OutgoingAI =
+		Cast<ASoccerAICharacter>(VisualSubstitutionOutgoingCharacter))
+	{
+		OutgoingAI->ClearScriptedLocomotionVelocity();
+	}
+	else if (AThirdPersonCppCharacter* OutgoingHuman =
+		Cast<AThirdPersonCppCharacter>(VisualSubstitutionOutgoingCharacter))
+	{
+		OutgoingHuman->ClearThrowInScriptedMovementVelocity();
+
+		if (IsValid(VisualSubstitutionIncomingProxy))
+		{
+			USoccerPlayerProfile* IncomingProfile =
+				VisualSubstitutionIncomingProxy->GetPlayerProfile();
+			const FVector IncomingStartLocation =
+				VisualSubstitutionIncomingProxy->GetActorLocation();
+			const FRotator IncomingStartRotation =
+				VisualSubstitutionIncomingProxy->GetActorRotation();
+
+			VisualSubstitutionIncomingProxy->Destroy();
+			VisualSubstitutionIncomingProxy = nullptr;
+
+			OutgoingHuman->SetActorLocationAndRotation(
+				IncomingStartLocation,
+				IncomingStartRotation,
+				false,
+				nullptr,
+				ETeleportType::TeleportPhysics
+			);
+			OutgoingHuman->SetPlayerProfileForMatch(IncomingProfile);
+			ApplySelectedClubKitToCharacter(OutgoingHuman);
+			bVisualSubstitutionUsesHumanActorForEntry = true;
+		}
+	}
+
+	VisualSubstitutionOutgoingCharacter->SetActorHiddenInGame(
+		!bVisualSubstitutionUsesHumanActorForEntry
+	);
 	VisualSubstitutionOutgoingCharacter->SetActorEnableCollision(false);
 	VisualSubstitutionPhase = ESoccerVisualSubstitutionPhase::IncomingEntering;
 	VisualSubstitutionElapsedSeconds = 0.0f;
@@ -3479,8 +3590,12 @@ void ASoccerMatchManager::UpdateVisualSubstitution(float DeltaTime)
 		return;
 	}
 
+	ASoccerCharacterBase* EnteringCharacter =
+		bVisualSubstitutionUsesHumanActorForEntry
+			? VisualSubstitutionOutgoingCharacter
+			: VisualSubstitutionIncomingProxy;
 	const bool bIncomingArrived = MoveVisualSubstitutionCharacterTowards(
-		VisualSubstitutionIncomingProxy,
+		EnteringCharacter,
 		VisualSubstitutionIncomingTarget,
 		SubstitutionIncomingMovementSpeedCmPerSecond,
 		SubstitutionMovementAcceptanceRadiusCm,
@@ -3494,7 +3609,7 @@ void ASoccerMatchManager::UpdateVisualSubstitution(float DeltaTime)
 
 void ASoccerMatchManager::CompleteVisualSubstitution()
 {
-	ASoccerAICharacter* OutgoingCharacter =
+	ASoccerCharacterBase* OutgoingCharacter =
 		VisualSubstitutionOutgoingCharacter;
 	ASoccerAICharacter* IncomingProxy =
 		VisualSubstitutionIncomingProxy;
@@ -3562,12 +3677,33 @@ void ASoccerMatchManager::ResetVisualSubstitution(
 	}
 	if (IsValid(VisualSubstitutionOutgoingCharacter))
 	{
-		VisualSubstitutionOutgoingCharacter->ClearScriptedLocomotionVelocity();
+		if (ASoccerAICharacter* OutgoingAI =
+			Cast<ASoccerAICharacter>(VisualSubstitutionOutgoingCharacter))
+		{
+			OutgoingAI->ClearScriptedLocomotionVelocity();
+		}
+		else if (AThirdPersonCppCharacter* OutgoingHuman =
+			Cast<AThirdPersonCppCharacter>(VisualSubstitutionOutgoingCharacter))
+		{
+			OutgoingHuman->ClearThrowInScriptedMovementVelocity();
+		}
 		if (bRestoreOutgoingCharacter)
 		{
 			VisualSubstitutionOutgoingCharacter->SetActorHiddenInGame(false);
 			VisualSubstitutionOutgoingCharacter->SetActorEnableCollision(true);
 		}
+	}
+	if (bVisualSubstitutionAppliedHumanMoveInputLock)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (APlayerController* PlayerController =
+				UGameplayStatics::GetPlayerController(World, 0))
+			{
+				PlayerController->SetIgnoreMoveInput(false);
+			}
+		}
+		bVisualSubstitutionAppliedHumanMoveInputLock = false;
 	}
 
 	ActiveVisualSubstitutionRequest = FSoccerMatchSubstitutionRequest();
@@ -3577,6 +3713,7 @@ void ASoccerMatchManager::ResetVisualSubstitution(
 	VisualSubstitutionOutgoingTarget = FVector::ZeroVector;
 	VisualSubstitutionIncomingTarget = FVector::ZeroVector;
 	VisualSubstitutionElapsedSeconds = 0.0f;
+	bVisualSubstitutionUsesHumanActorForEntry = false;
 }
 
 bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
