@@ -457,6 +457,7 @@ void ASoccerMatchManager::EndPlay(
 	CancelThrowInRestart();
 	CancelGoalLineRestart();
 	CancelPenaltyKickRestart();
+	ResetVisualSubstitution(true);
 
 	UWorld* World = GetWorld();
 
@@ -488,6 +489,12 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 
 	UpdateMatchClock(DeltaTime);
 	UpdatePendingMatchSubstitutions();
+	UpdateVisualSubstitution(DeltaTime);
+	if (VisualSubstitutionPhase != ESoccerVisualSubstitutionPhase::None)
+	{
+		DestroyActiveRestartHumanRestrictionIndicator();
+		return;
+	}
 	UpdateOpponentCoachAI(DeltaTime);
 	UpdateOpponentCoachSubstitutionAI(DeltaTime);
 	UpdateLiveTacticalShapeTransitions();
@@ -3036,14 +3043,47 @@ void ASoccerMatchManager::DebugRequestAutomaticSubstitution(ESoccerTeam Team)
 
 bool ASoccerMatchManager::IsSafeMomentForSubstitution() const
 {
-	return
-		CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime ||
-		(IsMatchPeriodGameplayActive() && IsKickoffMatchStateActive());
+	if (CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime)
+	{
+		return true;
+	}
+
+	if (!IsMatchPeriodGameplayActive() || !ActiveMatchState)
+	{
+		return false;
+	}
+
+	switch (ActiveMatchState->GetStateId())
+	{
+	case ESoccerMatchStateId::BallOutOfPlayDelay:
+	case ESoccerMatchStateId::PenaltyFoulDelay:
+	case ESoccerMatchStateId::PenaltyConfiguration:
+	case ESoccerMatchStateId::PenaltyPreparation:
+	case ESoccerMatchStateId::OffsideConfiguration:
+	case ESoccerMatchStateId::OffsidePreparation:
+	case ESoccerMatchStateId::FaultConfiguration:
+	case ESoccerMatchStateId::FaultPreparation:
+	case ESoccerMatchStateId::CornerConfiguration:
+	case ESoccerMatchStateId::CornerPreparation:
+	case ESoccerMatchStateId::GoalKickConfiguration:
+	case ESoccerMatchStateId::GoalKickPreparation:
+	case ESoccerMatchStateId::ThrowInConfiguration:
+	case ESoccerMatchStateId::ThrowInPreparation:
+	case ESoccerMatchStateId::KickoffConfiguration:
+	case ESoccerMatchStateId::KickoffPreparation:
+		return true;
+
+	default:
+		return false;
+	}
 }
 
 void ASoccerMatchManager::UpdatePendingMatchSubstitutions()
 {
-	if (!IsSafeMomentForSubstitution())
+	if (
+		VisualSubstitutionPhase != ESoccerVisualSubstitutionPhase::None ||
+		!IsSafeMomentForSubstitution()
+	)
 	{
 		return;
 	}
@@ -3056,15 +3096,39 @@ void ASoccerMatchManager::UpdatePendingMatchSubstitutions()
 		PendingMatchSubstitutions.RemoveAt(Index);
 		bRebuildKickoff =
 			bRebuildKickoff || (bExecuted && IsKickoffMatchStateActive());
+
+		if (VisualSubstitutionPhase != ESoccerVisualSubstitutionPhase::None)
+		{
+			break;
+		}
 	}
 
-	if (bRebuildKickoff)
+	if (
+		bRebuildKickoff &&
+		VisualSubstitutionPhase == ESoccerVisualSubstitutionPhase::None
+	)
 	{
 		StartKickoff(PendingKickoffTeam);
 	}
 }
 
 bool ASoccerMatchManager::ExecuteMatchSubstitution(
+	const FSoccerMatchSubstitutionRequest& Request
+)
+{
+	if (
+		bEnableVisualBotSubstitutions &&
+		CurrentMatchPeriod != ESoccerMatchPeriod::HalfTime &&
+		TryStartVisualSubstitution(Request)
+	)
+	{
+		return true;
+	}
+
+	return ExecuteMatchSubstitutionImmediate(Request);
+}
+
+bool ASoccerMatchManager::ExecuteMatchSubstitutionImmediate(
 	const FSoccerMatchSubstitutionRequest& Request
 )
 {
@@ -3143,6 +3207,376 @@ bool ASoccerMatchManager::ExecuteMatchSubstitution(
 		*MatchCharacter->GetName()
 	);
 	return true;
+}
+
+bool ASoccerMatchManager::IsCharacterInVisualSubstitution(
+	const ASoccerAICharacter* SoccerAICharacter
+) const
+{
+	return
+		VisualSubstitutionPhase != ESoccerVisualSubstitutionPhase::None &&
+		IsValid(SoccerAICharacter) &&
+		(
+			SoccerAICharacter == VisualSubstitutionOutgoingCharacter ||
+			SoccerAICharacter == VisualSubstitutionIncomingProxy
+		);
+}
+
+FVector ASoccerMatchManager::BuildSubstitutionFieldLocation(
+	float LocalLongitudinalOffset,
+	float OutsideTouchlineDistance,
+	float CharacterWorldZ
+) const
+{
+	const float TouchlineSign = SubstitutionBenchTouchlineSign < 0.0f
+		? -1.0f
+		: 1.0f;
+	const FVector LocalLocation(
+		SoccerFieldDimensions::HalfwayLineX + LocalLongitudinalOffset,
+		TouchlineSign *
+			(SoccerFieldDimensions::HalfPitchWidthCm + OutsideTouchlineDistance),
+		0.0f
+	);
+
+	FVector WorldLocation = IsValid(SoccerField)
+		? SoccerField->PitchLocalToWorld(LocalLocation)
+		: GetActorLocation() + LocalLocation;
+	WorldLocation.Z = CharacterWorldZ;
+	return WorldLocation;
+}
+
+bool ASoccerMatchManager::TryStartVisualSubstitution(
+	const FSoccerMatchSubstitutionRequest& Request
+)
+{
+	if (
+		VisualSubstitutionPhase != ESoccerVisualSubstitutionPhase::None ||
+		!IsValid(SoccerField)
+	)
+	{
+		return false;
+	}
+
+	SynchronizeMatchSquadActiveSlotsFromActors(Request.Team);
+	FSoccerMatchSquadState& State = GetMutableMatchSquadState(Request.Team);
+	FName ExecutionSlotId = NAME_None;
+	for (const TPair<FName, FName>& ActivePair : State.ActivePlayerByFormationSlot)
+	{
+		if (ActivePair.Value == Request.OutgoingPlayerId)
+		{
+			ExecutionSlotId = ActivePair.Key;
+			break;
+		}
+	}
+
+	ASoccerAICharacter* OutgoingCharacter = Cast<ASoccerAICharacter>(
+		GetFormationSlotAssignedCharacter(Request.Team, ExecutionSlotId)
+	);
+	UWorld* World = GetWorld();
+	USoccerGameInstance* SoccerGameInstance = World != nullptr
+		? Cast<USoccerGameInstance>(World->GetGameInstance())
+		: nullptr;
+	USoccerPlayerProfile* IncomingProfile = IsValid(SoccerGameInstance)
+		? SoccerGameInstance->FindPlayerProfileById(Request.IncomingPlayerId)
+		: nullptr;
+
+	const FSoccerFormationDefinition& Formation =
+		SoccerFormationLibrary::GetDefinition(GetFormationSystemForTeam(Request.Team));
+	const FSoccerFormationSlot* FormationSlot =
+		FindFormationSlotById(Formation, ExecutionSlotId);
+
+	if (
+		ExecutionSlotId.IsNone() ||
+		!State.AvailableBenchPlayerIds.Contains(Request.IncomingPlayerId) ||
+		!IsValid(OutgoingCharacter) ||
+		!IsValid(IncomingProfile) ||
+		FormationSlot == nullptr ||
+		World == nullptr
+	)
+	{
+		return false;
+	}
+
+	const float CharacterWorldZ = OutgoingCharacter->GetActorLocation().Z;
+	const float TeamLongitudinalSign =
+		Request.Team == ESoccerTeam::PlayerTeam ? -1.0f : 1.0f;
+	const FVector IncomingWaitingLocation = BuildSubstitutionFieldLocation(
+		TeamLongitudinalSign *
+			FMath::Max(0.0f, SubstitutionIncomingWaitingLongitudinalOffsetCm),
+		FMath::Max(50.0f, SubstitutionOutsideTouchlineDistanceCm),
+		CharacterWorldZ
+	);
+	const FVector OutgoingTargetLocation = BuildSubstitutionFieldLocation(
+		0.0f,
+		FMath::Max(50.0f, SubstitutionOutsideTouchlineDistanceCm),
+		CharacterWorldZ
+	);
+
+	FVector IncomingFacingDirection =
+		GetFormationSlotWorldLocation(Request.Team, *FormationSlot) -
+		IncomingWaitingLocation;
+	IncomingFacingDirection.Z = 0.0f;
+	const FRotator IncomingRotation = IncomingFacingDirection.IsNearlyZero()
+		? OutgoingCharacter->GetActorRotation()
+		: IncomingFacingDirection.Rotation();
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = this;
+	SpawnParameters.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	ASoccerAICharacter* IncomingProxy = World->SpawnActor<ASoccerAICharacter>(
+		OutgoingCharacter->GetClass(),
+		IncomingWaitingLocation,
+		IncomingRotation,
+		SpawnParameters
+	);
+	if (!IsValid(IncomingProxy))
+	{
+		return false;
+	}
+
+	if (AController* PresentationController = IncomingProxy->GetController())
+	{
+		PresentationController->UnPossess();
+		PresentationController->Destroy();
+	}
+	IncomingProxy->Tags.AddUnique(FName(TEXT("SubstitutionPresentation")));
+	IncomingProxy->SetActorEnableCollision(false);
+	IncomingProxy->ResetRuntimeStateForIncomingSubstitute();
+	IncomingProxy->SetPlayerProfileForMatch(IncomingProfile);
+	ApplySelectedClubKitToCharacter(IncomingProxy);
+	IncomingProxy->SetAIChasingBall(false);
+
+	ActiveVisualSubstitutionRequest = Request;
+	ActiveVisualSubstitutionRequest.FormationSlotId = ExecutionSlotId;
+	VisualSubstitutionOutgoingCharacter = OutgoingCharacter;
+	VisualSubstitutionIncomingProxy = IncomingProxy;
+	VisualSubstitutionOutgoingTarget = OutgoingTargetLocation;
+	VisualSubstitutionIncomingTarget =
+		GetFormationSlotWorldLocation(Request.Team, *FormationSlot);
+	VisualSubstitutionIncomingTarget.Z = CharacterWorldZ;
+	VisualSubstitutionElapsedSeconds = 0.0f;
+	VisualSubstitutionPhase = ESoccerVisualSubstitutionPhase::OutgoingLeaving;
+
+	OutgoingCharacter->ReleaseAIBall(false);
+	ReleaseControlledBallPossession(OutgoingCharacter);
+	OutgoingCharacter->SetAIChasingBall(false);
+
+	UE_LOG(
+		LogTemp,
+		Display,
+		TEXT("[SubstitutionVisual] Started team=%d slot=%s OUT=%s IN=%s."),
+		static_cast<int32>(Request.Team),
+		*ExecutionSlotId.ToString(),
+		*Request.OutgoingPlayerId.ToString(),
+		*Request.IncomingPlayerId.ToString()
+	);
+	return true;
+}
+
+bool ASoccerMatchManager::MoveVisualSubstitutionCharacterTowards(
+	ASoccerAICharacter* SoccerAICharacter,
+	const FVector& TargetLocation,
+	float MovementSpeed,
+	float AcceptanceRadius,
+	float DeltaTime
+)
+{
+	if (!IsValid(SoccerAICharacter))
+	{
+		return true;
+	}
+
+	const FVector CurrentLocation = SoccerAICharacter->GetActorLocation();
+	FVector ToTarget = TargetLocation - CurrentLocation;
+	ToTarget.Z = 0.0f;
+	const float DistanceToTarget = ToTarget.Size();
+	const float SafeAcceptanceRadius = FMath::Max(5.0f, AcceptanceRadius);
+	if (DistanceToTarget <= SafeAcceptanceRadius)
+	{
+		SoccerAICharacter->ClearScriptedLocomotionVelocity();
+		return true;
+	}
+
+	const FVector MovementDirection = ToTarget.GetSafeNormal();
+	const float SafeDeltaTime = FMath::Clamp(DeltaTime, 0.0f, 0.10f);
+	const float SafeMovementSpeed = FMath::Max(50.0f, MovementSpeed);
+	const float MovementStep = FMath::Min(
+		DistanceToTarget,
+		SafeMovementSpeed * SafeDeltaTime
+	);
+	const FVector PreviousLocation = CurrentLocation;
+	SoccerAICharacter->SetActorLocation(
+		CurrentLocation + MovementDirection * MovementStep,
+		true,
+		nullptr,
+		ETeleportType::None
+	);
+
+	FVector ActualVelocity = SafeDeltaTime > KINDA_SMALL_NUMBER
+		? (SoccerAICharacter->GetActorLocation() - PreviousLocation) / SafeDeltaTime
+		: FVector::ZeroVector;
+	ActualVelocity.Z = 0.0f;
+	SoccerAICharacter->SetScriptedLocomotionVelocity(
+		ActualVelocity,
+		ESoccerAIMovementMode::Jog,
+		ESoccerAIMovementReason::NearbyReposition
+	);
+	if (!MovementDirection.IsNearlyZero())
+	{
+		SoccerAICharacter->SetActorRotation(MovementDirection.Rotation());
+	}
+
+	return FVector::Dist2D(
+		SoccerAICharacter->GetActorLocation(),
+		TargetLocation
+	) <= SafeAcceptanceRadius;
+}
+
+void ASoccerMatchManager::BeginVisualSubstitutionIncomingEntry()
+{
+	if (!IsValid(VisualSubstitutionOutgoingCharacter))
+	{
+		CompleteVisualSubstitution();
+		return;
+	}
+
+	VisualSubstitutionOutgoingCharacter->ClearScriptedLocomotionVelocity();
+	VisualSubstitutionOutgoingCharacter->SetActorHiddenInGame(true);
+	VisualSubstitutionOutgoingCharacter->SetActorEnableCollision(false);
+	VisualSubstitutionPhase = ESoccerVisualSubstitutionPhase::IncomingEntering;
+	VisualSubstitutionElapsedSeconds = 0.0f;
+
+	UE_LOG(LogTemp, Display, TEXT("[SubstitutionVisual] Outgoing player crossed the touchline; incoming player entering."));
+}
+
+void ASoccerMatchManager::UpdateVisualSubstitution(float DeltaTime)
+{
+	if (VisualSubstitutionPhase == ESoccerVisualSubstitutionPhase::None)
+	{
+		return;
+	}
+
+	VisualSubstitutionElapsedSeconds += FMath::Max(0.0f, DeltaTime);
+	const bool bTimedOut =
+		VisualSubstitutionElapsedSeconds >=
+		FMath::Max(1.0f, SubstitutionVisualSequenceTimeoutSeconds);
+
+	if (VisualSubstitutionPhase == ESoccerVisualSubstitutionPhase::OutgoingLeaving)
+	{
+		const bool bOutgoingArrived = MoveVisualSubstitutionCharacterTowards(
+			VisualSubstitutionOutgoingCharacter,
+			VisualSubstitutionOutgoingTarget,
+			SubstitutionOutgoingMovementSpeedCmPerSecond,
+			SubstitutionMovementAcceptanceRadiusCm,
+			DeltaTime
+		);
+		if (bOutgoingArrived || bTimedOut)
+		{
+			BeginVisualSubstitutionIncomingEntry();
+		}
+		return;
+	}
+
+	const bool bIncomingArrived = MoveVisualSubstitutionCharacterTowards(
+		VisualSubstitutionIncomingProxy,
+		VisualSubstitutionIncomingTarget,
+		SubstitutionIncomingMovementSpeedCmPerSecond,
+		SubstitutionMovementAcceptanceRadiusCm,
+		DeltaTime
+	);
+	if (bIncomingArrived || bTimedOut)
+	{
+		CompleteVisualSubstitution();
+	}
+}
+
+void ASoccerMatchManager::CompleteVisualSubstitution()
+{
+	ASoccerAICharacter* OutgoingCharacter =
+		VisualSubstitutionOutgoingCharacter;
+	ASoccerAICharacter* IncomingProxy =
+		VisualSubstitutionIncomingProxy;
+	const FSoccerMatchSubstitutionRequest CompletedRequest =
+		ActiveVisualSubstitutionRequest;
+
+	if (IsValid(OutgoingCharacter))
+	{
+		const FRotator FinalRotation = IsValid(IncomingProxy)
+			? IncomingProxy->GetActorRotation()
+			: OutgoingCharacter->GetActorRotation();
+		OutgoingCharacter->SetActorLocationAndRotation(
+			VisualSubstitutionIncomingTarget,
+			FinalRotation,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics
+		);
+		OutgoingCharacter->SetActorHiddenInGame(false);
+		OutgoingCharacter->SetActorEnableCollision(true);
+	}
+
+	if (IsValid(IncomingProxy))
+	{
+		IncomingProxy->Destroy();
+	}
+	VisualSubstitutionIncomingProxy = nullptr;
+
+	const bool bExecuted = ExecuteMatchSubstitutionImmediate(CompletedRequest);
+	if (bExecuted)
+	{
+		UE_LOG(
+			LogTemp,
+			Display,
+			TEXT("[SubstitutionVisual] Completed OUT=%s IN=%s."),
+			*CompletedRequest.OutgoingPlayerId.ToString(),
+			*CompletedRequest.IncomingPlayerId.ToString()
+		);
+	}
+	else
+	{
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[SubstitutionVisual] Failed during final materialization OUT=%s IN=%s."),
+			*CompletedRequest.OutgoingPlayerId.ToString(),
+			*CompletedRequest.IncomingPlayerId.ToString()
+		);
+	}
+
+	ResetVisualSubstitution(false);
+	if (bExecuted && IsKickoffMatchStateActive())
+	{
+		StartKickoff(PendingKickoffTeam);
+	}
+}
+
+void ASoccerMatchManager::ResetVisualSubstitution(
+	bool bRestoreOutgoingCharacter
+)
+{
+	if (IsValid(VisualSubstitutionIncomingProxy))
+	{
+		VisualSubstitutionIncomingProxy->Destroy();
+	}
+	if (IsValid(VisualSubstitutionOutgoingCharacter))
+	{
+		VisualSubstitutionOutgoingCharacter->ClearScriptedLocomotionVelocity();
+		if (bRestoreOutgoingCharacter)
+		{
+			VisualSubstitutionOutgoingCharacter->SetActorHiddenInGame(false);
+			VisualSubstitutionOutgoingCharacter->SetActorEnableCollision(true);
+		}
+	}
+
+	ActiveVisualSubstitutionRequest = FSoccerMatchSubstitutionRequest();
+	VisualSubstitutionPhase = ESoccerVisualSubstitutionPhase::None;
+	VisualSubstitutionOutgoingCharacter = nullptr;
+	VisualSubstitutionIncomingProxy = nullptr;
+	VisualSubstitutionOutgoingTarget = FVector::ZeroVector;
+	VisualSubstitutionIncomingTarget = FVector::ZeroVector;
+	VisualSubstitutionElapsedSeconds = 0.0f;
 }
 
 bool ASoccerMatchManager::MaterializeConfiguredMatchTeams()
@@ -17892,7 +18326,11 @@ void ASoccerMatchManager::CollectFormationPlayersForTeam(
 	for (TActorIterator<ASoccerCharacterBase> It(World); It; ++It)
 	{
 		ASoccerCharacterBase* Candidate = *It;
-		if (IsValid(Candidate) && Candidate->GetTeam() == Team)
+		if (
+			IsValid(Candidate) &&
+			!Candidate->ActorHasTag(FName(TEXT("SubstitutionPresentation"))) &&
+			Candidate->GetTeam() == Team
+		)
 		{
 			OutPlayers.Add(Candidate);
 		}

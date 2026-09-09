@@ -231,6 +231,19 @@ void ASoccerAIController::Tick(float DeltaTime)
 		return;
 	}
 
+	if (
+		IsValid(MatchManager) &&
+		MatchManager->IsCharacterInVisualSubstitution(SoccerCharacter)
+	)
+	{
+		StopMovement();
+		ClearAerialBallInterceptionMovement();
+		ClearPredictiveBallChaseMovement(SoccerCharacter);
+		ClearFocus(EAIFocusPriority::Gameplay);
+		SoccerCharacter->SetAIChasingBall(false);
+		return;
+	}
+
 	if (SoccerCharacter->IsTackleFallReactionActive())
 	{
 		StopMovement();

@@ -52,6 +52,13 @@ enum class ESoccerAttackPassType : uint8
 	RetentionSpace
 };
 
+enum class ESoccerVisualSubstitutionPhase : uint8
+{
+	None,
+	OutgoingLeaving,
+	IncomingEntering
+};
+
 
 UCLASS()
 class THIRDPERSONCPP_API ASoccerMatchManager : public AActor
@@ -147,6 +154,10 @@ public:
 	bool GetPendingMatchSubstitution(
 		ESoccerTeam Team,
 		FSoccerMatchSubstitutionRequest& OutRequest
+	) const;
+
+	bool IsCharacterInVisualSubstitution(
+		const ASoccerAICharacter* SoccerAICharacter
 	) const;
 
 	/** Temporary Stage 9K keyboard tests. */
@@ -802,7 +813,66 @@ private:
 	void UpdatePendingMatchSubstitutions();
 	bool IsSafeMomentForSubstitution() const;
 	bool ExecuteMatchSubstitution(const FSoccerMatchSubstitutionRequest& Request);
+	bool ExecuteMatchSubstitutionImmediate(
+		const FSoccerMatchSubstitutionRequest& Request
+	);
+	bool TryStartVisualSubstitution(
+		const FSoccerMatchSubstitutionRequest& Request
+	);
+	void UpdateVisualSubstitution(float DeltaTime);
+	void BeginVisualSubstitutionIncomingEntry();
+	void CompleteVisualSubstitution();
+	void ResetVisualSubstitution(bool bRestoreOutgoingCharacter);
+	bool MoveVisualSubstitutionCharacterTowards(
+		ASoccerAICharacter* SoccerAICharacter,
+		const FVector& TargetLocation,
+		float MovementSpeed,
+		float AcceptanceRadius,
+		float DeltaTime
+	);
+	FVector BuildSubstitutionFieldLocation(
+		float LocalLongitudinalOffset,
+		float OutsideTouchlineDistance,
+		float CharacterWorldZ
+	) const;
 	void ShowDebugPlayerTeamSubstitutionSelection(const FString& Prefix) const;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution")
+	bool bEnableVisualBotSubstitutions = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution", meta = (ClampMin = "-1.0", ClampMax = "1.0"))
+	float SubstitutionBenchTouchlineSign = 1.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution", meta = (ClampMin = "50.0"))
+	float SubstitutionOutsideTouchlineDistanceCm = 150.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution", meta = (ClampMin = "0.0"))
+	float SubstitutionIncomingWaitingLongitudinalOffsetCm = 150.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution", meta = (ClampMin = "50.0"))
+	float SubstitutionOutgoingMovementSpeedCmPerSecond = 430.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution", meta = (ClampMin = "50.0"))
+	float SubstitutionIncomingMovementSpeedCmPerSecond = 480.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution", meta = (ClampMin = "5.0"))
+	float SubstitutionMovementAcceptanceRadiusCm = 35.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match Squad|Visual Substitution", meta = (ClampMin = "1.0"))
+	float SubstitutionVisualSequenceTimeoutSeconds = 18.0f;
+
+	UPROPERTY(Transient)
+	ASoccerAICharacter* VisualSubstitutionOutgoingCharacter = nullptr;
+
+	UPROPERTY(Transient)
+	ASoccerAICharacter* VisualSubstitutionIncomingProxy = nullptr;
+
+	FSoccerMatchSubstitutionRequest ActiveVisualSubstitutionRequest;
+	ESoccerVisualSubstitutionPhase VisualSubstitutionPhase =
+		ESoccerVisualSubstitutionPhase::None;
+	FVector VisualSubstitutionOutgoingTarget = FVector::ZeroVector;
+	FVector VisualSubstitutionIncomingTarget = FVector::ZeroVector;
+	float VisualSubstitutionElapsedSeconds = 0.0f;
 
 	int32 ApplySquadCatalogProfilesToTeam(
 		ESoccerTeam Team,
