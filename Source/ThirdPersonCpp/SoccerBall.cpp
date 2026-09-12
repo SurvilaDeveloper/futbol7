@@ -1825,52 +1825,16 @@ bool ASoccerBall::CalculateDampingAwareLaunchVelocity(
 }
 
 void ASoccerBall::ApplyPreLaunchSeparation(
-    const FVector& Direction,
-    float LaunchSpeed,
-    float MaxSeparationDistance
+    const FVector& /*Direction*/,
+    float /*LaunchSpeed*/,
+    float /*MaxSeparationDistance*/
 )
 {
-    if (!bEnablePreLaunchSeparation || BallMesh == nullptr)
-    {
-        return;
-    }
-
-    FVector SafeDirection = Direction;
-    SafeDirection.Z = 0.0f;
-    SafeDirection = SafeDirection.GetSafeNormal();
-
-    if (SafeDirection.IsNearlyZero())
-    {
-        return;
-    }
-
-    float SeparationDistance = GetPreLaunchSeparationDistance(LaunchSpeed);
-
-    if (MaxSeparationDistance >= 0.0f)
-    {
-        SeparationDistance = FMath::Min(SeparationDistance, MaxSeparationDistance);
-    }
-
-    if (SeparationDistance <= 0.0f)
-    {
-        return;
-    }
-
-    BallMesh->SetSimulatePhysics(true);
-    BallMesh->WakeAllRigidBodies();
-
-    const FVector NewLocation =
-        GetActorLocation() + SafeDirection * SeparationDistance;
-
-    SetActorLocation(
-        NewLocation,
-        false,
-        nullptr,
-        ETeleportType::TeleportPhysics
-    );
-
-    BallMesh->WakeAllRigidBodies();
-    MarkTrajectoryChanged();
+	/*
+	 * Kept as a compatibility no-op because existing Blueprint instances may
+	 * still serialize the legacy pre-launch settings. Open-play kicks now start
+	 * at the ball's real contact location and change velocity only.
+	 */
 }
 
 void ASoccerBall::KickToTarget(
@@ -2152,41 +2116,6 @@ void ASoccerBall::KickToAirTarget(
 
     SetPossessed(false);
 
-    const FVector InitialStart =
-        GetActorLocation();
-
-    FVector InitialDirection =
-        TargetLocation -
-        InitialStart;
-
-    InitialDirection.Z =
-        0.0f;
-
-    const float InitialDistance2D =
-        InitialDirection.Size();
-
-    InitialDirection =
-        InitialDirection.GetSafeNormal();
-
-    if (
-        InitialDistance2D >= 10.0f &&
-        !InitialDirection.IsNearlyZero()
-        )
-    {
-        const float PreLaunchScaledSpeed =
-            GetScaledHorizontalLaunchSpeed(
-                HorizontalSpeed,
-                100.0f
-            );
-
-        ApplyPreLaunchSeparation(
-            InitialDirection,
-            PreLaunchScaledSpeed,
-            InitialDistance2D *
-            0.5f
-        );
-    }
-
     const FVector Start =
         GetActorLocation();
 
@@ -2326,41 +2255,6 @@ void ASoccerBall::ChargedKickToTarget(
             100.0f
         );
 
-    const FVector InitialStart =
-        GetActorLocation();
-
-    FVector InitialEnd =
-        TargetLocation;
-
-    InitialEnd.Z =
-        InitialStart.Z;
-
-    FVector InitialDirection =
-        InitialEnd -
-        InitialStart;
-
-    InitialDirection.Z =
-        0.0f;
-
-    const float InitialDistance2D =
-        InitialDirection.Size();
-
-    InitialDirection =
-        InitialDirection.GetSafeNormal();
-
-    if (
-        InitialDistance2D >= 10.0f &&
-        !InitialDirection.IsNearlyZero()
-        )
-    {
-        ApplyPreLaunchSeparation(
-            InitialDirection,
-            ScaledHorizontalSpeed,
-            InitialDistance2D *
-            0.5f
-        );
-    }
-
     const FVector Start =
         GetActorLocation();
 
@@ -2470,7 +2364,7 @@ void ASoccerBall::DribbleTouch(
     const FVector& Direction,
     float TouchSpeed,
     float UpwardSpeed,
-    bool bUsePreLaunchSeparation
+    bool /*bUsePreLaunchSeparation*/
 )
 {
     if (BallMesh == nullptr)
@@ -2503,14 +2397,6 @@ void ASoccerBall::DribbleTouch(
     );
 
     BallMesh->WakeAllRigidBodies();
-
-    if (bUsePreLaunchSeparation)
-    {
-        ApplyPreLaunchSeparation(
-            SafeDirection,
-            ScaledTouchSpeed
-        );
-    }
 
     FVector NewVelocity =
         SafeDirection *

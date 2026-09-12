@@ -25,6 +25,30 @@
 #include "SoccerPlayerProfile.h"
 #include "GameHUD.h"
 
+namespace
+{
+	const TCHAR* GetHumanPossessionDebugControlStateName(
+		ESoccerPlayerControlState ControlState
+	)
+	{
+		switch (ControlState)
+		{
+		case ESoccerPlayerControlState::Manual:
+			return TEXT("Manual");
+		case ESoccerPlayerControlState::ChasingBall:
+			return TEXT("ChasingBall");
+		case ESoccerPlayerControlState::PossessingBall:
+			return TEXT("PossessingBall");
+		case ESoccerPlayerControlState::DribbleTurning:
+			return TEXT("DribbleTurning");
+		case ESoccerPlayerControlState::Kicking:
+			return TEXT("Kicking");
+		default:
+			return TEXT("Unknown");
+		}
+	}
+}
+
 AThirdPersonCppCharacter::AThirdPersonCppCharacter()
 {
 	SelectedMovementSpeed = JogSpeed;
@@ -613,6 +637,13 @@ bool AThirdPersonCppCharacter::IsPossessingBall() const
 	return SoccerControlState == ESoccerPlayerControlState::PossessingBall;
 }
 
+bool AThirdPersonCppCharacter::HasHumanLogicalBallControl() const
+{
+	return
+		SoccerControlState == ESoccerPlayerControlState::PossessingBall ||
+		bHumanPhysicalActionRetainsLogicalPossession;
+}
+
 bool AThirdPersonCppCharacter::IsChasingBall() const
 {
 	return SoccerControlState == ESoccerPlayerControlState::ChasingBall;
@@ -810,27 +841,13 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 	}
 	else if (SoccerControlState == ESoccerPlayerControlState::DribbleTurning)
 	{
-		if (
-			!bActiveStrongRunDribbleTurnHasImpactedBall &&
-			!bActiveNormalRunDribbleTurnHasImpactedBall
-			)
-		{
-			UpdatePossessedBallLocation();
-		}
+		// The montage follows the live ball. Physical contact is validated at
+		// the authored impact instant; the ball is never pinned to the player.
 	}
 	else if (SoccerControlState == ESoccerPlayerControlState::Kicking)
 	{
-		const bool bKeepRestartBallStationary =
-			IsValid(MatchManager) &&
-			MatchManager->CanHumanFootRestartTakerExecuteNow(this);
-
-		if (
-			!bActiveKickHasImpactedBall &&
-			!bKeepRestartBallStationary
-		)
-		{
-			UpdatePossessedBallLocation();
-		}
+		// Open-play kicks no longer drag the ball through the montage. Restarts
+		// remain stationary because their state owns the legal restart position.
 	}
 
 	UpdateStrongRunDribbleTurnActorRotation(DeltaTime);
@@ -859,13 +876,14 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 
 void AThirdPersonCppCharacter::UpdatePossessionIndicator()
 {
+	UpdateHumanPossessionDebugSnapshot();
+
 	if (PossessionIndicator == nullptr)
 	{
 		return;
 	}
 
-	const bool bShouldShowIndicator =
-		SoccerControlState == ESoccerPlayerControlState::PossessingBall;
+	const bool bShouldShowIndicator = HasHumanLogicalBallControl();
 
 	PossessionIndicator->SetHiddenInGame(!bShouldShowIndicator);
 	PossessionIndicator->SetVisibility(bShouldShowIndicator, true);
@@ -899,6 +917,296 @@ void AThirdPersonCppCharacter::UpdatePossessionIndicator()
 
 	PossessionIndicator->SetRelativeScale3D(
 		PossessionIndicatorBaseScale * Pulse
+	);
+}
+
+void AThirdPersonCppCharacter::UpdateHumanPossessionDebugSnapshot()
+{
+	if (!bDebugHumanPossession)
+	{
+		bHumanPossessionDebugSnapshotInitialized = false;
+		bHumanPossessionDebugLastManagerOwnedByHuman = false;
+		bHumanPossessionDebugLastIndicatorExpected = false;
+		return;
+	}
+
+	ASoccerCharacterBase* ManagerOwner =
+		IsValid(MatchManager)
+		? MatchManager->GetPossessingCharacter()
+		: nullptr;
+	const bool bManagerOwnedByHuman = ManagerOwner == this;
+	const bool bIndicatorExpected = HasHumanLogicalBallControl();
+
+	if (!bHumanPossessionDebugSnapshotInitialized)
+	{
+		bHumanPossessionDebugSnapshotInitialized = true;
+		HumanPossessionDebugLastControlState = SoccerControlState;
+		bHumanPossessionDebugLastManagerOwnedByHuman = bManagerOwnedByHuman;
+		bHumanPossessionDebugLastIndicatorExpected = bIndicatorExpected;
+		LogHumanPossessionDebugEvent(TEXT("SNAPSHOT"), TEXT("DebugEnabled"));
+		return;
+	}
+
+	const bool bStateChanged =
+		HumanPossessionDebugLastControlState != SoccerControlState;
+	const bool bManagerOwnershipChanged =
+		bHumanPossessionDebugLastManagerOwnedByHuman != bManagerOwnedByHuman;
+	const bool bIndicatorChanged =
+		bHumanPossessionDebugLastIndicatorExpected != bIndicatorExpected;
+
+	if (bStateChanged || bManagerOwnershipChanged || bIndicatorChanged)
+	{
+		FString Reason;
+		if (bStateChanged)
+		{
+			Reason = FString::Printf(
+				TEXT("ControlState:%s->%s"),
+				GetHumanPossessionDebugControlStateName(
+					HumanPossessionDebugLastControlState
+				),
+				GetHumanPossessionDebugControlStateName(SoccerControlState)
+			);
+		}
+		if (bManagerOwnershipChanged)
+		{
+			const FString ManagerTransition = FString::Printf(
+				TEXT("ManagerOwnership:%s->%s"),
+				bHumanPossessionDebugLastManagerOwnedByHuman
+					? TEXT("YES")
+					: TEXT("NO"),
+				bManagerOwnedByHuman ? TEXT("YES") : TEXT("NO")
+			);
+			if (!Reason.IsEmpty())
+			{
+				Reason += TEXT("+");
+			}
+			Reason += ManagerTransition;
+		}
+		if (bIndicatorChanged)
+		{
+			const FString IndicatorTransition = FString::Printf(
+				TEXT("Indicator:%s->%s"),
+				bHumanPossessionDebugLastIndicatorExpected
+					? TEXT("ON")
+					: TEXT("OFF"),
+				bIndicatorExpected ? TEXT("ON") : TEXT("OFF")
+			);
+			if (!Reason.IsEmpty())
+			{
+				Reason += TEXT("+");
+			}
+			Reason += IndicatorTransition;
+		}
+
+		LogHumanPossessionDebugEvent(TEXT("SNAPSHOT"), *Reason);
+	}
+
+	HumanPossessionDebugLastControlState = SoccerControlState;
+	bHumanPossessionDebugLastManagerOwnedByHuman = bManagerOwnedByHuman;
+	bHumanPossessionDebugLastIndicatorExpected = bIndicatorExpected;
+}
+
+void AThirdPersonCppCharacter::LogHumanPossessionDebugEvent(
+	const TCHAR* Event,
+	const TCHAR* Reason,
+	const FVector& ReferenceDirection
+)
+{
+	if (!bDebugHumanPossession)
+	{
+		return;
+	}
+
+	const TCHAR* StateName =
+		GetHumanPossessionDebugControlStateName(SoccerControlState);
+
+	ASoccerCharacterBase* ManagerOwner =
+		IsValid(MatchManager)
+		? MatchManager->GetPossessingCharacter()
+		: nullptr;
+	const bool bManagerOwnedByHuman = ManagerOwner == this;
+	FString ManagerOwnerName = TEXT("NO_MANAGER");
+	if (IsValid(MatchManager))
+	{
+		if (!IsValid(ManagerOwner))
+		{
+			ManagerOwnerName = TEXT("None");
+		}
+		else if (ManagerOwner == this)
+		{
+			ManagerOwnerName = TEXT("Human");
+		}
+		else
+		{
+			ManagerOwnerName = GetNameSafe(ManagerOwner);
+		}
+	}
+
+	FVector SafeReferenceDirection = ReferenceDirection;
+	SafeReferenceDirection.Z = 0.0f;
+	SafeReferenceDirection = SafeReferenceDirection.GetSafeNormal();
+	if (
+		SafeReferenceDirection.IsNearlyZero() &&
+		bHumanDribbleRepositionPreparedTouch
+	)
+	{
+		SafeReferenceDirection = HumanDribbleRepositionPreparedDirection;
+		SafeReferenceDirection.Z = 0.0f;
+		SafeReferenceDirection = SafeReferenceDirection.GetSafeNormal();
+	}
+	if (SafeReferenceDirection.IsNearlyZero() && bHasDesiredDribbleDirection)
+	{
+		SafeReferenceDirection = DesiredDribbleDirection;
+		SafeReferenceDirection.Z = 0.0f;
+		SafeReferenceDirection = SafeReferenceDirection.GetSafeNormal();
+	}
+	if (SafeReferenceDirection.IsNearlyZero())
+	{
+		SafeReferenceDirection = CurrentDribbleDirection;
+		SafeReferenceDirection.Z = 0.0f;
+		SafeReferenceDirection = SafeReferenceDirection.GetSafeNormal();
+	}
+	if (SafeReferenceDirection.IsNearlyZero())
+	{
+		SafeReferenceDirection = GetActorForwardVector();
+		SafeReferenceDirection.Z = 0.0f;
+		SafeReferenceDirection = SafeReferenceDirection.GetSafeNormal();
+	}
+
+	const bool bHasBall = IsValid(ControlledBall);
+	float HorizontalDistance = -1.0f;
+	float BallHeightFromGround = -1.0f;
+	float BallSpeed2D = -1.0f;
+	float BallVerticalSpeed = 0.0f;
+	float ForwardDistance = 0.0f;
+	float LateralDistance = 0.0f;
+	float DistanceToTouchPoint = -1.0f;
+	float BallTravelSinceLastTouch = -1.0f;
+	bool bFootContact = false;
+	bool bPlayableHeight = false;
+	bool bDirectionalContact = false;
+	FString BallName = TEXT("None");
+
+	if (bHasBall)
+	{
+		BallName = GetNameSafe(ControlledBall);
+		FVector ToBall = ControlledBall->GetActorLocation() - GetActorLocation();
+		ToBall.Z = 0.0f;
+		HorizontalDistance = ToBall.Size();
+
+		float CharacterGroundZ = GetActorLocation().Z - 96.0f;
+		if (const UCapsuleComponent* CharacterCapsule = GetCapsuleComponent())
+		{
+			CharacterGroundZ =
+				GetActorLocation().Z -
+				CharacterCapsule->GetScaledCapsuleHalfHeight();
+		}
+		BallHeightFromGround =
+			ControlledBall->GetActorLocation().Z - CharacterGroundZ;
+
+		const FVector BallPhysicsVelocity =
+			ControlledBall->GetBallPhysicsVelocity();
+		BallSpeed2D = BallPhysicsVelocity.Size2D();
+		BallVerticalSpeed = BallPhysicsVelocity.Z;
+
+		const FVector ReferenceRight = FVector::CrossProduct(
+			FVector::UpVector,
+			SafeReferenceDirection
+		).GetSafeNormal();
+		ForwardDistance = FVector::DotProduct(ToBall, SafeReferenceDirection);
+		LateralDistance = FMath::Abs(FVector::DotProduct(ToBall, ReferenceRight));
+
+		FVector TouchPointDirection = ToBall.GetSafeNormal();
+		if (TouchPointDirection.IsNearlyZero())
+		{
+			TouchPointDirection = SafeReferenceDirection;
+		}
+		const FVector TouchPoint =
+			GetActorLocation() +
+			TouchPointDirection * DribbleForwardExtraOffset;
+		DistanceToTouchPoint = FVector::Dist2D(
+			TouchPoint,
+			ControlledBall->GetActorLocation()
+		);
+		BallTravelSinceLastTouch = FVector::Dist2D(
+			ControlledBall->GetActorLocation(),
+			LastDribbleTouchBallLocation
+		);
+
+		bFootContact = IsBallWithinHumanFootPhysicalContact(ControlledBall);
+		bPlayableHeight = IsBallAtPlayablePossessionHeight(ControlledBall);
+		bDirectionalContact = IsBallWithinHumanDribbleTurnContact(
+			ControlledBall,
+			SafeReferenceDirection
+		);
+	}
+
+	const float PhysicalPossessionDistance = FMath::Min(
+		FMath::Max(1.0f, DribbleMaxPossessionDistance),
+		FMath::Max(1.0f, HumanPhysicalPossessionMaxDistance)
+	);
+	const float PlayableMaximumHeight = FMath::Min(
+		FMath::Max(10.0f, BallPossessionMaxHeight),
+		FMath::Max(10.0f, HumanFootContactMaximumHeight)
+	);
+	const float MaximumDirectionalLateralDistance = FMath::Min(
+		FMath::Max(1.0f, HumanDribbleTurnContactMaxLateralOffset),
+		FMath::Max(1.0f, HumanFootContactMaxDistance)
+	);
+	const float CurrentTime = GetWorld() != nullptr
+		? GetWorld()->GetTimeSeconds()
+		: 0.0f;
+	const float TimeSinceLastTouch = CurrentTime - LastDribbleTouchTime;
+	const bool bCooldownReady =
+		TimeSinceLastTouch >= DribbleTouchCooldown;
+	const bool bTouchPointReady =
+		DistanceToTouchPoint >= 0.0f &&
+		DistanceToTouchPoint <= DribbleTouchDistance;
+	const bool bIndicatorExpected = HasHumanLogicalBallControl();
+
+	++HumanPossessionDebugEventSequence;
+	UE_LOG(
+		LogTemp,
+		Warning,
+		TEXT("[HumanPossessionDebug] seq=%d event=%s reason=%s state=%s indicatorExpected=%s actionReservation=%s managerOwner=%s managerOwnsHuman=%s ball=%s dist=%.1f possessionMax=%.1f footContact=%s footMax=%.1f height=%.1f footHeight=[%.1f,%.1f] playableHeight=%s playableRange=[-20.0,%.1f] forward=%.1f lateral=%.1f directionalContact=%s rearTolerance=%.1f lateralMax=%.1f playerSpeed=%.1f ballSpeed=%.1f ballVz=%.1f touchPointReady=%s touchPointDist=%.1f touchRadius=%.1f cooldownReady=%s canTouch=%s sinceTouch=%.3f maxWait=%.3f travel=%.1f rearm=%.1f stuckLimit=%.1f reposition=%s prepared=%s"),
+		HumanPossessionDebugEventSequence,
+		Event != nullptr ? Event : TEXT("Unknown"),
+		Reason != nullptr ? Reason : TEXT("Unspecified"),
+		StateName,
+		bIndicatorExpected ? TEXT("ON") : TEXT("OFF"),
+		bHumanPhysicalActionRetainsLogicalPossession ? TEXT("YES") : TEXT("NO"),
+		*ManagerOwnerName,
+		bManagerOwnedByHuman ? TEXT("YES") : TEXT("NO"),
+		*BallName,
+		HorizontalDistance,
+		PhysicalPossessionDistance,
+		bFootContact ? TEXT("YES") : TEXT("NO"),
+		HumanFootContactMaxDistance,
+		BallHeightFromGround,
+		HumanFootContactMinimumHeight,
+		HumanFootContactMaximumHeight,
+		bPlayableHeight ? TEXT("YES") : TEXT("NO"),
+		PlayableMaximumHeight,
+		ForwardDistance,
+		LateralDistance,
+		bDirectionalContact ? TEXT("YES") : TEXT("NO"),
+		HumanDribbleTurnContactRearTolerance,
+		MaximumDirectionalLateralDistance,
+		GetVelocity().Size2D(),
+		BallSpeed2D,
+		BallVerticalSpeed,
+		bTouchPointReady ? TEXT("YES") : TEXT("NO"),
+		DistanceToTouchPoint,
+		DribbleTouchDistance,
+		bCooldownReady ? TEXT("YES") : TEXT("NO"),
+		bCanDribbleTouch ? TEXT("YES") : TEXT("NO"),
+		TimeSinceLastTouch,
+		DribbleMaxTouchWaitTime,
+		BallTravelSinceLastTouch,
+		DribbleRearmDistance,
+		DribbleStuckBallSpeed,
+		bHumanDribbleRepositioningBehindBall ? TEXT("YES") : TEXT("NO"),
+		bHumanDribbleRepositionPreparedTouch ? TEXT("YES") : TEXT("NO")
 	);
 }
 
@@ -1512,6 +1820,19 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
 
 void AThirdPersonCppCharacter::EnterManualControl()
 {
+	if (
+		SoccerControlState == ESoccerPlayerControlState::PossessingBall ||
+		SoccerControlState == ESoccerPlayerControlState::DribbleTurning ||
+		SoccerControlState == ESoccerPlayerControlState::Kicking
+	)
+	{
+		LogHumanPossessionDebugEvent(
+			TEXT("STATE_EXIT"),
+			TEXT("EnterManualControlCalled"),
+			DesiredDribbleDirection
+		);
+	}
+
 	if (IsAerialActionApproaching() || IsAerialActionWaitingToStart())
 	{
 		CancelAerialAction();
@@ -1525,6 +1846,8 @@ void AThirdPersonCppCharacter::EnterManualControl()
 	ClearAutoPassFollowState();
 	ClearBallPursuitTarget();
 	ClearHumanBallClaim();
+	ClearHumanDribbleRepositionState();
+	bHumanPhysicalActionRetainsLogicalPossession = false;
 
 	SoccerControlState = ESoccerPlayerControlState::Manual;
 	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
@@ -1532,6 +1855,22 @@ void AThirdPersonCppCharacter::EnterManualControl()
 
 void AThirdPersonCppCharacter::EnterChasingBall()
 {
+	if (
+		SoccerControlState == ESoccerPlayerControlState::PossessingBall ||
+		SoccerControlState == ESoccerPlayerControlState::DribbleTurning ||
+		SoccerControlState == ESoccerPlayerControlState::Kicking
+	)
+	{
+		LogHumanPossessionDebugEvent(
+			TEXT("STATE_EXIT"),
+			TEXT("EnterChasingBallCalled"),
+			DesiredDribbleDirection
+		);
+	}
+
+	ClearHumanDribbleRepositionState();
+	bHumanPhysicalActionRetainsLogicalPossession = false;
+
 	if (SoccerControlState != ESoccerPlayerControlState::ChasingBall)
 	{
 		ClearBallPursuitTarget();
@@ -1662,11 +2001,122 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 	const bool bHasPendingKick =
 		PendingKickMode != ESoccerPendingKickMode::None;
 
+	// A strong change of direction requested while chasing may need a physical
+	// setup behind the live ball before its montage can start. Keep that setup
+	// authoritative: normal pursuit and kick execution must not overtake it.
+	if (
+		bHasPendingKick &&
+		(
+			bHumanDribbleRepositioningBehindBall ||
+			bHumanDribbleRepositionPreparedTouch
+		)
+	)
+	{
+		const float PendingKickSetupMaximumDistance = FMath::Max(
+			FMath::Max(1.0f, HumanPhysicalPossessionMaxDistance),
+			FMath::Max(1.0f, HumanDribbleRepositionBehindDistance) +
+				FMath::Max(1.0f, HumanDribbleRepositionSetupAcceptanceRadius) +
+				1.0f
+		);
+
+		if (
+			DistanceToBall > PendingKickSetupMaximumDistance ||
+			!IsBallAtPlayablePossessionHeight(ControlledBall)
+		)
+		{
+			ClearHumanDribbleRepositionState();
+		}
+		else
+		{
+			FVector DesiredKickDirection =
+				PendingKickTarget - ControlledBall->GetActorLocation();
+			DesiredKickDirection.Z = 0.0f;
+			DesiredKickDirection = DesiredKickDirection.GetSafeNormal();
+
+			FVector StoredSetupDirection =
+				bHumanDribbleRepositioningBehindBall
+				? HumanDribbleRepositionDirection
+				: HumanDribbleRepositionPreparedDirection;
+			StoredSetupDirection.Z = 0.0f;
+			StoredSetupDirection = StoredSetupDirection.GetSafeNormal();
+
+			const float DirectionDot = FMath::Clamp(
+				FVector::DotProduct(
+					StoredSetupDirection,
+					DesiredKickDirection
+				),
+				-1.0f,
+				1.0f
+			);
+			const float DirectionChangeDegrees = FMath::RadiansToDegrees(
+				FMath::Acos(DirectionDot)
+			);
+
+			if (
+				DesiredKickDirection.IsNearlyZero() ||
+				StoredSetupDirection.IsNearlyZero()
+			)
+			{
+				ClearHumanDribbleRepositionState();
+			}
+			else if (
+				DirectionChangeDegrees > FMath::Clamp(
+					HumanDribbleRepositionDirectionResetAngleDegrees,
+					1.0f,
+					180.0f
+				)
+			)
+			{
+				StartHumanDribbleReposition(
+					DesiredKickDirection,
+					ControlledBall->GetActorLocation(),
+					TEXT("PendingKickDirectionChangedDuringReposition")
+				);
+			}
+
+			if (UpdateHumanDribbleRepositionMovement(
+				ControlledBall->GetActorLocation(),
+				PendingKickSetupMaximumDistance
+			))
+			{
+				return;
+			}
+
+			if (bHumanDribbleRepositionPreparedTouch)
+			{
+				if (bCanPossessBall)
+				{
+					ExecutePendingKick();
+				}
+				else if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+				{
+					Movement->StopMovementImmediately();
+				}
+
+				return;
+			}
+		}
+	}
+	else if (
+		!bHasPendingKick &&
+		(
+			bHumanDribbleRepositioningBehindBall ||
+			bHumanDribbleRepositionPreparedTouch
+		)
+	)
+	{
+		ClearHumanDribbleRepositionState();
+	}
+
 	if (bIsAutoPassFollowActive && !bHasPendingKick)
 	{
 		UpdateAutoPassFollowTargetState();
 
-		if (bAutoPassCanCollect && DistanceToBall <= AutoPassCollectDistance)
+		if (
+			bAutoPassCanCollect &&
+			DistanceToBall <= AutoPassCollectDistance &&
+			IsBallWithinHumanFootPhysicalContact(ControlledBall)
+		)
 		{
 			CollectAutoPassBallWithoutCollision();
 			return;
@@ -2284,7 +2734,10 @@ void AThirdPersonCppCharacter::PossessBall()
 		return;
 	}
 
-	if (!IsBallAtPlayablePossessionHeight(ControlledBall))
+	// Open-play control can only begin from real foot contact. A caller being
+	// close in 2D is not enough: the live rigid body may still be beyond the
+	// player's reach or passing overhead.
+	if (!IsBallWithinHumanFootPhysicalContact(ControlledBall))
 	{
 		return;
 	}
@@ -2292,6 +2745,8 @@ void AThirdPersonCppCharacter::PossessBall()
 	ClearAutoPassFollowState();
 	ClearBallPursuitTarget();
 	ClearHumanBallClaim();
+	ClearHumanDribbleRepositionState();
+	bHumanPhysicalActionRetainsLogicalPossession = false;
 
 	SoccerControlState = ESoccerPlayerControlState::PossessingBall;
 	PendingKickMode = ESoccerPendingKickMode::None;
@@ -2318,7 +2773,14 @@ void AThirdPersonCppCharacter::PossessBall()
 		LastDribbleTouchBallLocation = FVector::ZeroVector;
 	}
 
-	ControlledBall->StopBallKeepingPhysics();
+	// Foot possession is logical only. The ball keeps its rigid-body velocity,
+	// damping and spin; subsequent control comes from real dribble touches.
+	ControlledBall->SetPossessed(false);
+	LogHumanPossessionDebugEvent(
+		TEXT("ACQUIRE"),
+		TEXT("FootContactAccepted"),
+		CurrentDribbleDirection
+	);
 
 	if (GEngine)
 	{
@@ -2333,6 +2795,12 @@ void AThirdPersonCppCharacter::PossessBall()
 
 void AThirdPersonCppCharacter::ReleaseBallForAISteal()
 {
+	LogHumanPossessionDebugEvent(
+		TEXT("RELEASE"),
+		TEXT("AIStealCompleted"),
+		DesiredDribbleDirection
+	);
+
 	ClearHumanStealAttemptOnly();
 	ClearAutoPassFollowState();
 	ClearHumanJumpHeaderRequest(true, true);
@@ -2352,6 +2820,8 @@ void AThirdPersonCppCharacter::ReleaseBallForAISteal()
 	PendingDribbleInputDirection = FVector::ZeroVector;
 	bHasDesiredDribbleDirection = false;
 	bCanDribbleTouch = false;
+	ClearHumanDribbleRepositionState();
+	bHumanPhysicalActionRetainsLogicalPossession = false;
 
 	if (ControlledBall != nullptr)
 	{
@@ -2398,6 +2868,18 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 	const bool bWasKickOrDribbleTurn =
 		SoccerControlState == ESoccerPlayerControlState::Kicking ||
 		SoccerControlState == ESoccerPlayerControlState::DribbleTurning;
+	const bool bHadHumanPossessionContext =
+		SoccerControlState == ESoccerPlayerControlState::PossessingBall ||
+		bWasKickOrDribbleTurn;
+
+	if (bHadHumanPossessionContext)
+	{
+		LogHumanPossessionDebugEvent(
+			TEXT("RELEASE"),
+			TEXT("MatchRestrictionCleanup"),
+			DesiredDribbleDirection
+		);
+	}
 
 	ClearHumanStealAttemptOnly();
 	ClearAutoPassFollowState();
@@ -2428,6 +2910,7 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 	ActiveKickHorizontalSpeed = 0.0f;
 	ActiveKickMode = ESoccerPendingKickMode::None;
 	bActiveKickHasImpactedBall = false;
+	bActiveKickPhysicalContactMissed = false;
 	bActiveKickUsesChargedTrajectory = false;
 	bActiveKickWasHumanRestartExecution = false;
 
@@ -2440,6 +2923,7 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 	ActiveStrongRunDribbleTurnTouchSpeed = 0.0f;
 	ActiveStrongRunDribbleTurnUpwardSpeed = 0.0f;
 	bActiveStrongRunDribbleTurnHasImpactedBall = false;
+	bActiveStrongRunDribbleTurnPhysicalContactMissed = false;
 	bActiveStrongRunDribbleTurnShouldKickToTarget = false;
 	ActiveStrongRunDribbleTurnKickTarget = FVector::ZeroVector;
 	ActiveStrongRunDribbleTurnKickMode = ESoccerPendingKickMode::None;
@@ -2458,6 +2942,7 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 	ActiveNormalRunDribbleTurnTouchSpeed = 0.0f;
 	ActiveNormalRunDribbleTurnUpwardSpeed = 0.0f;
 	bActiveNormalRunDribbleTurnHasImpactedBall = false;
+	bActiveNormalRunDribbleTurnPhysicalContactMissed = false;
 	ActiveNormalRunDribbleTurnResumeSpeed = 0.0f;
 	ActiveNormalRunDribbleTurnDuration = 0.0f;
 	ActiveNormalRunDribbleTurnElapsedTime = 0.0f;
@@ -2467,6 +2952,8 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 	PendingDribbleInputDirection = FVector::ZeroVector;
 	bHasDesiredDribbleDirection = false;
 	bCanDribbleTouch = false;
+	ClearHumanDribbleRepositionState();
+	bHumanPhysicalActionRetainsLogicalPossession = false;
 
 	bIgnoreChaseCancelUntilMovementInputChanges = false;
 	IgnoredMovementInputForChaseCancel = FVector2D::ZeroVector;
@@ -2756,52 +3243,6 @@ bool AThirdPersonCppCharacter::IsHumanBallActionAllowedNow()
 		MatchManager->CanHumanStartBallActionNow(this);
 }
 
-void AThirdPersonCppCharacter::UpdatePossessedBallLocation()
-{
-	if (ControlledBall == nullptr)
-	{
-		return;
-	}
-
-	const FVector Forward = GetActorForwardVector();
-	const FVector Right = GetActorRightVector();
-
-	const float GroundZ =
-		GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-
-	const float Speed2D = GetVelocity().Size2D();
-	const bool bIsDribbling = Speed2D >= DribbleMinSpeed;
-
-	float ExtraForwardOffset = 0.0f;
-	float SideOffset = 0.0f;
-
-	if (bIsDribbling)
-	{
-		const float Time = GetWorld()->GetTimeSeconds();
-
-		const float Phase =
-			Time * DribbleFrequency * 2.0f * PI;
-
-		const float ForwardPulse =
-			FMath::Max(0.0f, FMath::Sin(Phase));
-
-		ExtraForwardOffset =
-			ForwardPulse * DribbleForwardExtraOffset;
-
-		SideOffset =
-			FMath::Sin(Phase * 0.5f) * DribbleSideOffset;
-	}
-
-	FVector BallLocation =
-		GetActorLocation()
-		+ Forward * (PossessedBallForwardOffset + ExtraForwardOffset)
-		+ Right * SideOffset;
-
-	BallLocation.Z = GroundZ + PossessedBallHeight;
-
-	ControlledBall->SetActorLocation(BallLocation);
-}
-
 void AThirdPersonCppCharacter::ClearAutoPassFollowState()
 {
 	bIsAutoPassFollowActive = false;
@@ -2830,60 +3271,6 @@ void AThirdPersonCppCharacter::StartAutoPassFollow(const FVector& TargetLocation
 	}
 
 	EnterChasingBall();
-}
-
-void AThirdPersonCppCharacter::PrepareAutoPassBallForCleanKick(const FVector& KickTarget)
-{
-	if (ControlledBall == nullptr)
-	{
-		return;
-	}
-
-	FVector LaunchDirection = KickTarget - GetActorLocation();
-	LaunchDirection.Z = 0.0f;
-
-	const float DistanceFromPlayerToTarget = LaunchDirection.Size();
-
-	LaunchDirection = LaunchDirection.GetSafeNormal();
-
-	if (LaunchDirection.IsNearlyZero())
-	{
-		LaunchDirection = GetActorForwardVector();
-		LaunchDirection.Z = 0.0f;
-		LaunchDirection = LaunchDirection.GetSafeNormal();
-	}
-
-	if (LaunchDirection.IsNearlyZero())
-	{
-		return;
-	}
-
-	float LaunchDistance = AutoPassPreKickBallDistanceFromPlayer;
-
-	if (DistanceFromPlayerToTarget > 10.0f)
-	{
-		LaunchDistance = FMath::Min(
-			LaunchDistance,
-			DistanceFromPlayerToTarget * 0.5f
-		);
-	}
-
-	const float GroundZ =
-		GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-
-	FVector CleanBallLocation =
-		GetActorLocation() + LaunchDirection * LaunchDistance;
-
-	CleanBallLocation.Z = GroundZ + PossessedBallHeight;
-
-	ControlledBall->SetPossessed(true);
-
-	ControlledBall->SetActorLocation(
-		CleanBallLocation,
-		false,
-		nullptr,
-		ETeleportType::TeleportPhysics
-	);
 }
 
 bool AThirdPersonCppCharacter::HasAutoPassBallReachedTarget(
@@ -2995,21 +3382,20 @@ void AThirdPersonCppCharacter::CollectAutoPassBallWithoutCollision()
 
 	// A horizontally close ball may still be several metres above the player.
 	// Keep following its physical trajectory instead of pulling it to the feet.
-	if (!IsBallAtPlayablePossessionHeight(ControlledBall))
+	if (!IsBallWithinHumanFootPhysicalContact(ControlledBall))
 	{
 		return;
 	}
 
 	ClearAutoPassFollowState();
+	PossessBall();
+	if (!IsPossessingBall())
+	{
+		EnterChasingBall();
+		return;
+	}
 
 	StartAutoPassCollectCarry();
-
-	PossessBall();
-
-	// Importante:
-	// PossessBall() llama a StopBallKeepingPhysics(), que deja fï¿½sica activa.
-	// Para este caso queremos que la pelota quede controlada y sin impulso fï¿½sico.
-	ControlledBall->SetPossessed(true);
 
 	FVector Forward = GetActorForwardVector();
 	Forward.Z = 0.0f;
@@ -3020,28 +3406,17 @@ void AThirdPersonCppCharacter::CollectAutoPassBallWithoutCollision()
 		Forward = FVector::ForwardVector;
 	}
 
-	const float GroundZ =
-		GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-
-	FVector BallLocation =
-		GetActorLocation()
-		+ Forward * PossessedBallForwardOffset;
-
-	BallLocation.Z = GroundZ + PossessedBallHeight;
-
-	ControlledBall->SetActorLocation(
-		BallLocation,
-		false,
-		nullptr,
-		ETeleportType::TeleportPhysics
-	);
-
-	// En vez de dejarla congelada, le damos un toque muy suave hacia adelante.
-	// Esto simula que el jugador la controlï¿½/frenï¿½, pero sin matarla de golpe.
+	// The control begins at the ball's real position. This is a physical touch,
+	// so an imperfect collection remains possible and no location is authored.
 	ControlledBall->DribbleTouch(
 		Forward,
 		AutoPassCollectSoftTouchSpeed,
 		0.0f
+	);
+	LogHumanPossessionDebugEvent(
+		TEXT("TOUCH_APPLIED"),
+		TEXT("AutoPassCollectionSoftTouch"),
+		Forward
 	);
 
 	CurrentDribbleDirection = Forward;
@@ -3078,6 +3453,11 @@ void AThirdPersonCppCharacter::RedirectAutoPassBallTowardTargetIfNeeded(float Di
 	}
 
 	if (DistanceToBall > AutoPassRedirectDistance)
+	{
+		return;
+	}
+
+	if (!IsBallWithinHumanFootPhysicalContact(ControlledBall))
 	{
 		return;
 	}
@@ -3215,10 +3595,216 @@ void AThirdPersonCppCharacter::UpdateAutoPassCollectCarry()
 	GetCharacterMovement()->Velocity = NewVelocity;
 }
 
+void AThirdPersonCppCharacter::ClearHumanDribbleRepositionState()
+{
+	bHumanDribbleRepositioningBehindBall = false;
+	HumanDribbleRepositionSideSign = 0.0f;
+	HumanDribbleRepositionDirection = FVector::ZeroVector;
+	bHumanDribbleRepositionPreparedTouch = false;
+	HumanDribbleRepositionPreparedDirection = FVector::ZeroVector;
+}
+
+void AThirdPersonCppCharacter::StartHumanDribbleReposition(
+	const FVector& IntendedDirection,
+	const FVector& BallLocation,
+	const TCHAR* Reason
+)
+{
+	FVector SafeDirection = IntendedDirection;
+	SafeDirection.Z = 0.0f;
+	SafeDirection = SafeDirection.GetSafeNormal();
+
+	if (SafeDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	const FVector IntendedRight = FVector::CrossProduct(
+		FVector::UpVector,
+		SafeDirection
+	).GetSafeNormal();
+	const FVector PlayerFromBall = GetActorLocation() - BallLocation;
+	const float PlayerLateralFromBall = FVector::DotProduct(
+		PlayerFromBall,
+		IntendedRight
+	);
+
+	bHumanDribbleRepositionPreparedTouch = false;
+	HumanDribbleRepositionPreparedDirection = FVector::ZeroVector;
+	bHumanDribbleRepositioningBehindBall = true;
+	HumanDribbleRepositionDirection = SafeDirection;
+
+	if (FMath::Abs(PlayerLateralFromBall) > 2.0f)
+	{
+		HumanDribbleRepositionSideSign =
+			PlayerLateralFromBall > 0.0f ? 1.0f : -1.0f;
+	}
+	else
+	{
+		FVector ActorRight = GetActorRightVector();
+		ActorRight.Z = 0.0f;
+		ActorRight = ActorRight.GetSafeNormal();
+		HumanDribbleRepositionSideSign =
+			FVector::DotProduct(ActorRight, IntendedRight) >= 0.0f
+			? 1.0f
+			: -1.0f;
+	}
+
+	LogHumanPossessionDebugEvent(
+		TEXT("REPOSITION_START"),
+		Reason,
+		SafeDirection
+	);
+}
+
+bool AThirdPersonCppCharacter::UpdateHumanDribbleRepositionMovement(
+	const FVector& BallLocation,
+	float MaximumControlDistance
+)
+{
+	if (!bHumanDribbleRepositioningBehindBall)
+	{
+		return false;
+	}
+
+	FVector SetupDirection = HumanDribbleRepositionDirection;
+	SetupDirection.Z = 0.0f;
+	SetupDirection = SetupDirection.GetSafeNormal();
+
+	if (SetupDirection.IsNearlyZero())
+	{
+		ClearHumanDribbleRepositionState();
+		return false;
+	}
+
+	const FVector SetupRight = FVector::CrossProduct(
+		FVector::UpVector,
+		SetupDirection
+	).GetSafeNormal();
+	const float SetupAcceptance = FMath::Max(
+		1.0f,
+		HumanDribbleRepositionSetupAcceptanceRadius
+	);
+	const float MaximumSetupRadius = FMath::Max(
+		1.0f,
+		MaximumControlDistance - SetupAcceptance
+	);
+	const float BehindDistance = FMath::Clamp(
+		HumanDribbleRepositionBehindDistance,
+		1.0f,
+		MaximumSetupRadius
+	);
+	const float MaximumSideClearance = FMath::Sqrt(FMath::Max(
+		1.0f,
+		FMath::Square(MaximumSetupRadius) - FMath::Square(BehindDistance)
+	));
+	const float SideClearance = FMath::Clamp(
+		HumanDribbleRepositionSideClearance,
+		1.0f,
+		MaximumSideClearance
+	);
+
+	FVector ToBall = BallLocation - GetActorLocation();
+	ToBall.Z = 0.0f;
+	const FVector PlayerFromBall = GetActorLocation() - BallLocation;
+	const float PlayerLateralFromBall = FVector::DotProduct(
+		PlayerFromBall,
+		SetupRight
+	);
+	const float BallForwardDistance = FVector::DotProduct(
+		ToBall,
+		SetupDirection
+	);
+	const bool bIsDeepEnoughBehindBall =
+		BallForwardDistance >= BehindDistance - SetupAcceptance;
+	const bool bIsCenteredBehindBall =
+		FMath::Abs(PlayerLateralFromBall) <= SetupAcceptance;
+
+	if (bIsDeepEnoughBehindBall && bIsCenteredBehindBall)
+	{
+		ClearHumanDribbleRepositionState();
+		bHumanDribbleRepositionPreparedTouch = true;
+		HumanDribbleRepositionPreparedDirection = SetupDirection;
+		LogHumanPossessionDebugEvent(
+			TEXT("REPOSITION_READY"),
+			TEXT("HumanReachedBehindBallSetup"),
+			SetupDirection
+		);
+		return false;
+	}
+
+	const float SafeSideSign =
+		HumanDribbleRepositionSideSign >= 0.0f ? 1.0f : -1.0f;
+	const bool bNeedsLateralClearance =
+		!bIsDeepEnoughBehindBall &&
+		FMath::Abs(PlayerLateralFromBall) < SideClearance;
+
+	FVector RepositionTarget = GetActorLocation();
+	FVector RepositionMoveDirection = FVector::ZeroVector;
+
+	if (bNeedsLateralClearance)
+	{
+		RepositionMoveDirection = SetupRight * SafeSideSign;
+		RepositionTarget += RepositionMoveDirection * SideClearance;
+	}
+	else
+	{
+		RepositionTarget = BallLocation - SetupDirection * BehindDistance;
+		RepositionTarget.Z = GetActorLocation().Z;
+
+		if (!bIsDeepEnoughBehindBall)
+		{
+			RepositionTarget += SetupRight * SafeSideSign * SideClearance;
+		}
+
+		RepositionMoveDirection = RepositionTarget - GetActorLocation();
+		RepositionMoveDirection.Z = 0.0f;
+		RepositionMoveDirection = RepositionMoveDirection.GetSafeNormal();
+	}
+
+	if (!RepositionMoveDirection.IsNearlyZero())
+	{
+		AddMovementInput(
+			RepositionMoveDirection,
+			FMath::Clamp(
+				HumanDribbleRepositionInputScale,
+				0.1f,
+				1.0f
+			)
+		);
+	}
+
+	if (ASoccerDebugManager::IsWorldDrawingEnabled(
+		this,
+		ESoccerDebugCategory::PlayerInput
+	))
+	{
+		DrawDebugSphere(
+			GetWorld(),
+			RepositionTarget,
+			SetupAcceptance,
+			12,
+			FColor::Cyan,
+			false,
+			0.0f,
+			0,
+			1.5f
+		);
+	}
+
+	// This frame belongs exclusively to the physical setup. No turn montage or
+	// kick may start until the live player reaches the live behind-ball target.
+	return true;
+}
+
 void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 {
 	if (ControlledBall == nullptr)
 	{
+		LogHumanPossessionDebugEvent(
+			TEXT("RELEASE"),
+			TEXT("ControlledBallMissingDuringDribble")
+		);
 		EnterManualControl();
 		return;
 	}
@@ -3236,15 +3822,34 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 
 	PendingDribbleInputDirection = FVector::ZeroVector;
 
-	FVector ToBall = ControlledBall->GetActorLocation() - GetActorLocation();
+	const FVector BallLocation = ControlledBall->GetActorLocation();
+	FVector ToBall = BallLocation - GetActorLocation();
 	ToBall.Z = 0.0f;
 
 	const float DistanceToBall = ToBall.Size();
+	const float PhysicalPossessionDistance = FMath::Min(
+		FMath::Max(1.0f, DribbleMaxPossessionDistance),
+		FMath::Max(1.0f, HumanPhysicalPossessionMaxDistance)
+	);
 
-	// Si la pelota se fue demasiado lejos, dejamos de considerarla poseï¿½da.
-	if (DistanceToBall > DribbleMaxPossessionDistance)
+	// Logical possession never drags the rigid body back. Once the live ball
+	// escapes the physical control envelope it becomes genuinely free.
+	if (
+		DistanceToBall > PhysicalPossessionDistance ||
+		!IsBallAtPlayablePossessionHeight(ControlledBall)
+	)
 	{
-		EnterManualControl();
+		const bool bDistanceExceeded =
+			DistanceToBall > PhysicalPossessionDistance;
+		const bool bHeightRejected =
+			!IsBallAtPlayablePossessionHeight(ControlledBall);
+		const TCHAR* ReleaseReason =
+			bDistanceExceeded && bHeightRejected
+			? TEXT("PhysicalEnvelopeDistanceAndHeight")
+			: (bDistanceExceeded
+				? TEXT("PhysicalEnvelopeDistanceExceeded")
+				: TEXT("PhysicalEnvelopeHeightRejected"));
+		ReleaseHumanPhysicalPossession(false, ReleaseReason);
 
 		if (GEngine)
 		{
@@ -3263,6 +3868,8 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 	// Esto evita el bucle: alcanza pelota -> la toca -> la sigue -> la toca...
 	if (!bHasInputThisFrame)
 	{
+		ClearHumanDribbleRepositionState();
+
 		if (bIsAutoPassCollectCarrying)
 		{
 			return;
@@ -3278,34 +3885,71 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 
 	if (!bHasDesiredDribbleDirection)
 	{
+		ClearHumanDribbleRepositionState();
 		return;
 	}
 
-	// Con input: el jugador va hacia la pelota.
+	FVector IntendedDribbleDirection = DesiredDribbleDirection;
+	IntendedDribbleDirection.Z = 0.0f;
+	IntendedDribbleDirection = IntendedDribbleDirection.GetSafeNormal();
+
+	if (IntendedDribbleDirection.IsNearlyZero())
+	{
+		IntendedDribbleDirection = CurrentDribbleDirection;
+		IntendedDribbleDirection.Z = 0.0f;
+		IntendedDribbleDirection = IntendedDribbleDirection.GetSafeNormal();
+	}
+
+	if (IntendedDribbleDirection.IsNearlyZero())
+	{
+		IntendedDribbleDirection = GetActorForwardVector();
+		IntendedDribbleDirection.Z = 0.0f;
+		IntendedDribbleDirection = IntendedDribbleDirection.GetSafeNormal();
+	}
+
+	if (IntendedDribbleDirection.IsNearlyZero())
+	{
+		ClearHumanDribbleRepositionState();
+		return;
+	}
+
+	if (bHumanDribbleRepositionPreparedTouch)
+	{
+		FVector PreparedDirection = HumanDribbleRepositionPreparedDirection;
+		PreparedDirection.Z = 0.0f;
+		PreparedDirection = PreparedDirection.GetSafeNormal();
+
+		const float PreparedDirectionDot = FMath::Clamp(
+			FVector::DotProduct(
+				PreparedDirection,
+				IntendedDribbleDirection
+			),
+			-1.0f,
+			1.0f
+		);
+		const float PreparedDirectionChangeDegrees =
+			FMath::RadiansToDegrees(FMath::Acos(PreparedDirectionDot));
+
+		if (
+			PreparedDirection.IsNearlyZero() ||
+			PreparedDirectionChangeDegrees > FMath::Clamp(
+				HumanDribbleRepositionDirectionResetAngleDegrees,
+				1.0f,
+				180.0f
+			)
+		)
+		{
+			bHumanDribbleRepositionPreparedTouch = false;
+			HumanDribbleRepositionPreparedDirection = FVector::ZeroVector;
+		}
+	}
+
+	// This radial direction is used after any required behind-ball setup.
 	FVector MoveDirection = ToBall.GetSafeNormal();
 
 	if (MoveDirection.IsNearlyZero())
 	{
-		MoveDirection = CurrentDribbleDirection;
-	}
-
-	if (MoveDirection.IsNearlyZero())
-	{
-		MoveDirection = GetActorForwardVector();
-		MoveDirection.Z = 0.0f;
-		MoveDirection = MoveDirection.GetSafeNormal();
-	}
-
-	AddMovementInput(MoveDirection, 1.0f);
-
-	// Mientras todavï¿½a no llegï¿½ a la pelota, mira hacia la pelota.
-	if (!MoveDirection.IsNearlyZero())
-	{
-		FRotator TargetRotation = MoveDirection.Rotation();
-		TargetRotation.Pitch = 0.0f;
-		TargetRotation.Roll = 0.0f;
-
-		SetActorRotation(TargetRotation);
+		MoveDirection = IntendedDribbleDirection;
 	}
 
 	const float CurrentTime = GetWorld()->GetTimeSeconds();
@@ -3315,7 +3959,7 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 
 	const float BallTravelSinceLastTouch =
 		FVector::Dist2D(
-			ControlledBall->GetActorLocation(),
+			BallLocation,
 			LastDribbleTouchBallLocation
 		);
 
@@ -3351,9 +3995,7 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 
 	if (TouchPointDirection.IsNearlyZero())
 	{
-		TouchPointDirection = GetActorForwardVector();
-		TouchPointDirection.Z = 0.0f;
-		TouchPointDirection = TouchPointDirection.GetSafeNormal();
+		TouchPointDirection = IntendedDribbleDirection;
 	}
 
 	const FVector DribbleTouchPoint =
@@ -3377,37 +4019,131 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 	const float DistanceToDribbleTouchPoint =
 		FVector::Dist2D(
 			DribbleTouchPoint,
-			ControlledBall->GetActorLocation()
+			BallLocation
+		);
+	const bool bTouchTimingReady =
+		DistanceToDribbleTouchPoint <= DribbleTouchDistance &&
+		bCooldownReady &&
+		bCanDribbleTouch &&
+		IsBallWithinHumanFootPhysicalContact(ControlledBall);
+
+	// Keep the setup direction stable across frames. A meaningful input turn
+	// starts a fresh setup instead of making the chosen side alternate.
+	if (bHumanDribbleRepositioningBehindBall)
+	{
+		FVector StoredDirection = HumanDribbleRepositionDirection;
+		StoredDirection.Z = 0.0f;
+		StoredDirection = StoredDirection.GetSafeNormal();
+
+		const float DirectionDot = FMath::Clamp(
+			FVector::DotProduct(StoredDirection, IntendedDribbleDirection),
+			-1.0f,
+			1.0f
+		);
+		const float DirectionChangeDegrees = FMath::RadiansToDegrees(
+			FMath::Acos(DirectionDot)
 		);
 
-	if (DistanceToDribbleTouchPoint <= DribbleTouchDistance && bCooldownReady && bCanDribbleTouch)
+		if (
+			StoredDirection.IsNearlyZero() ||
+			DirectionChangeDegrees > FMath::Clamp(
+				HumanDribbleRepositionDirectionResetAngleDegrees,
+				1.0f,
+				180.0f
+			)
+		)
+		{
+			// A new requested direction retargets the setup instead of cancelling
+			// it. Cancelling here used to let the touch-ready branch start a turn
+			// montage in the very next frame, before the human had actually reached
+			// a safe side of the ball.
+			StartHumanDribbleReposition(
+				IntendedDribbleDirection,
+				BallLocation,
+				TEXT("RequestedDirectionChangedDuringReposition")
+			);
+		}
+	}
+
+	const FVector IntendedRight = FVector::CrossProduct(
+		FVector::UpVector,
+		IntendedDribbleDirection
+	).GetSafeNormal();
+	const float BallForwardProjection = FVector::DotProduct(
+		ToBall,
+		IntendedDribbleDirection
+	);
+	const float BallLateralProjection = FVector::DotProduct(
+		ToBall,
+		IntendedRight
+	);
+	const float RepositionActivationDistance = FMath::Min(
+		FMath::Max(1.0f, HumanDribbleRepositionActivationDistance),
+		PhysicalPossessionDistance
+	);
+
+	// If a real touch is already ready it keeps priority. Otherwise, a ball
+	// under, behind or too far across the body starts a path around the ball.
+	if (
+		!bHumanDribbleRepositioningBehindBall &&
+		!bTouchTimingReady &&
+		DistanceToBall <= RepositionActivationDistance &&
+		(
+			BallForwardProjection <= FMath::Max(
+				0.0f,
+				HumanDribbleRepositionEnterForwardDistance
+			) ||
+			FMath::Abs(BallLateralProjection) >= FMath::Max(
+				0.0f,
+				HumanDribbleRepositionEnterLateralOffset
+			)
+		)
+	)
 	{
-		FVector TouchDirection = DesiredDribbleDirection;
-		TouchDirection.Z = 0.0f;
-		TouchDirection = TouchDirection.GetSafeNormal();
+		StartHumanDribbleReposition(
+			IntendedDribbleDirection,
+			BallLocation,
+			TEXT("BallNotSafelyAheadOfRequestedDirection")
+		);
+	}
 
-		if (TouchDirection.IsNearlyZero())
-		{
-			TouchDirection = CurrentDribbleDirection;
-			TouchDirection.Z = 0.0f;
-			TouchDirection = TouchDirection.GetSafeNormal();
-		}
+	if (UpdateHumanDribbleRepositionMovement(
+		BallLocation,
+		PhysicalPossessionDistance
+	))
+	{
+		return;
+	}
 
-		if (TouchDirection.IsNearlyZero())
-		{
-			TouchDirection = GetActorForwardVector();
-			TouchDirection.Z = 0.0f;
-			TouchDirection = TouchDirection.GetSafeNormal();
-		}
+	// CharacterMovement turns toward input at RotationRate. Not snapping actor
+	// rotation every frame prevents alternating 180-degree turns at the centre.
+	AddMovementInput(MoveDirection, 1.0f);
 
-		if (TryStartStrongRunDribbleTurnForDirection(TouchDirection))
-		{
-			return;
-		}
+	if (bTouchTimingReady)
+	{
+		const bool bSkipRedundantTurnMontage =
+			bHumanDribbleRepositionPreparedTouch;
+		LogHumanPossessionDebugEvent(
+			TEXT("TOUCH_READY"),
+			bSkipRedundantTurnMontage
+				? TEXT("PreparedPhysicalTouch")
+				: TEXT("RegularPhysicalTouch"),
+			IntendedDribbleDirection
+		);
+		ClearHumanDribbleRepositionState();
+		const FVector TouchDirection = IntendedDribbleDirection;
 
-		if (TryStartNormalRunDribbleTurnForDirection(TouchDirection))
+		if (!bSkipRedundantTurnMontage)
 		{
-			return;
+			if (TryStartStrongRunDribbleTurnForDirection(TouchDirection))
+			{
+				return;
+			}
+
+			if (TryStartNormalRunDribbleTurnForDirection(TouchDirection))
+			{
+				return;
+			}
 		}
 
 
@@ -3450,6 +4186,13 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 			CurrentDribbleDirection,
 			TouchSpeedToUse,
 			DribbleTouchUpwardSpeed
+		);
+		LogHumanPossessionDebugEvent(
+			TEXT("TOUCH_APPLIED"),
+			bSkipRedundantTurnMontage
+				? TEXT("PreparedDribbleImpulse")
+				: TEXT("DirectDribbleImpulse"),
+			CurrentDribbleDirection
 		);
 
 		LastDribbleTouchTime = CurrentTime;
@@ -3563,6 +4306,52 @@ bool AThirdPersonCppCharacter::TryStartStrongRunDribbleTurnForDirection(
 		return false;
 	}
 
+	float PhysicalMontagePlayRate =
+		BuildHumanKickMontagePhysicalPlayRate(
+			ControlledBall,
+			StrongRunDribbleTurnImpactDelay,
+			false
+		);
+
+	if (
+		bUseHumanKickMontagePhysicalTiming &&
+		!CanHumanDribbleTurnMaintainContactAtImpact(
+			ControlledBall,
+			SafeDesiredDirection,
+			TurnMontage,
+			true,
+			StrongRunDribbleTurnImpactDelay,
+			PhysicalMontagePlayRate
+		)
+	)
+	{
+		const float FastestPhysicalPlayRate = FMath::Max(
+			1.0f,
+			HumanKickMontageMaximumPhysicalPlayRate
+		);
+
+		if (CanHumanDribbleTurnMaintainContactAtImpact(
+			ControlledBall,
+			SafeDesiredDirection,
+			TurnMontage,
+			true,
+			StrongRunDribbleTurnImpactDelay,
+			FastestPhysicalPlayRate
+		))
+		{
+			PhysicalMontagePlayRate = FastestPhysicalPlayRate;
+		}
+		else
+		{
+			StartHumanDribbleReposition(
+				SafeDesiredDirection,
+				ControlledBall->GetActorLocation(),
+				TEXT("StrongTurnPredictedContactLoss")
+			);
+			return true;
+		}
+	}
+
 	const float TouchSpeedToUse = FMath::Clamp(
 		DribbleTouchSpeed + PlayerSpeed2D * DribbleTouchPlayerSpeedMultiplier,
 		DribbleTouchSpeed,
@@ -3573,7 +4362,13 @@ bool AThirdPersonCppCharacter::TryStartStrongRunDribbleTurnForDirection(
 		SafeDesiredDirection,
 		TurnMontage,
 		TouchSpeedToUse,
-		DribbleTouchUpwardSpeed
+		DribbleTouchUpwardSpeed,
+		false,
+		FVector::ZeroVector,
+		ESoccerPendingKickMode::None,
+		0.0f,
+		false,
+		PhysicalMontagePlayRate
 	);
 
 	return true;
@@ -3588,7 +4383,8 @@ void AThirdPersonCppCharacter::StartStrongRunDribbleTurn(
 	const FVector& KickTarget,
 	ESoccerPendingKickMode KickMode,
 	float KickHorizontalSpeed,
-	bool bUsesChargedTrajectory
+	bool bUsesChargedTrajectory,
+	float MinimumPhysicalMontagePlayRate
 )
 {
 	if (ControlledBall == nullptr || TurnMontage == nullptr)
@@ -3605,12 +4401,15 @@ void AThirdPersonCppCharacter::StartStrongRunDribbleTurn(
 		return;
 	}
 
+	ClearHumanDribbleRepositionState();
+
 	ActiveStrongRunDribbleTurnDirection = SafeDesiredDirection;
 	ActiveStrongRunDribbleTurnTouchSpeed = TouchSpeed;
 	ActiveStrongRunDribbleTurnUpwardSpeed = UpwardSpeed;
 	ActiveStrongRunDribbleTurnResumeSpeed = FastRunSpeed;
 
 	bActiveStrongRunDribbleTurnHasImpactedBall = false;
+	bActiveStrongRunDribbleTurnPhysicalContactMissed = false;
 
 	bActiveStrongRunDribbleTurnShouldKickToTarget =
 		bShouldKickToTargetAfterTurn;
@@ -3621,7 +4420,16 @@ void AThirdPersonCppCharacter::StartStrongRunDribbleTurn(
 	bActiveStrongRunDribbleTurnUsesChargedTrajectory =
 		bUsesChargedTrajectory;
 
+	bHumanPhysicalActionRetainsLogicalPossession =
+		SoccerControlState == ESoccerPlayerControlState::PossessingBall;
 	SoccerControlState = ESoccerPlayerControlState::DribbleTurning;
+	LogHumanPossessionDebugEvent(
+		TEXT("ACTION_START"),
+		bShouldKickToTargetAfterTurn
+			? TEXT("StrongTurnBeforeKick")
+			: TEXT("StrongDribbleTurn"),
+		SafeDesiredDirection
+	);
 
 	const FVector CurrentVelocity = GetVelocity();
 	ActiveStrongRunDribbleTurnInitialSpeed = CurrentVelocity.Size2D();
@@ -3653,15 +4461,35 @@ void AThirdPersonCppCharacter::StartStrongRunDribbleTurn(
 	ActiveStrongRunDribbleTurnResumeSpeed = FastRunSpeed *
 		GetPlayerProfileBalanceTurnSpeedRetention(StrongTurnAngleDegrees);
 
-	ControlledBall->SetPossessed(true);
-	UpdatePossessedBallLocation();
-
-	const float MontageDuration = PlayAnimMontage(TurnMontage);
+	// The live ball is never attached or repositioned for a turn montage.
+	ControlledBall->SetPossessed(false);
+	const float AuthoredMontageLength = FMath::Max(
+		0.05f,
+		TurnMontage->GetPlayLength()
+	);
+	const float TurnMontagePlayRate = FMath::Clamp(
+		FMath::Max(
+			BuildHumanKickMontagePhysicalPlayRate(
+				ControlledBall,
+				StrongRunDribbleTurnImpactDelay,
+				false
+			),
+			MinimumPhysicalMontagePlayRate
+		),
+		1.0f,
+		FMath::Max(1.0f, HumanKickMontageMaximumPhysicalPlayRate)
+	);
+	const float MontagePlayResult = PlayAnimMontage(
+		TurnMontage,
+		TurnMontagePlayRate
+	);
+	const float MontageDuration =
+		AuthoredMontageLength / FMath::Max(1.0f, TurnMontagePlayRate);
 
 	ActiveStrongRunDribbleTurnDuration = MontageDuration;
 	ActiveStrongRunDribbleTurnElapsedTime = 0.0f;
 
-	if (MontageDuration <= 0.0f)
+	if (MontagePlayResult <= 0.0f)
 	{
 		PerformStrongRunDribbleTurnImpact();
 		FinishStrongRunDribbleTurnAnimation();
@@ -3686,7 +4514,8 @@ void AThirdPersonCppCharacter::StartStrongRunDribbleTurn(
 	GetWorldTimerManager().ClearTimer(StrongRunDribbleTurnFinishTimerHandle);
 
 	const float SafeImpactDelay = FMath::Clamp(
-		StrongRunDribbleTurnImpactDelay,
+		StrongRunDribbleTurnImpactDelay /
+			FMath::Max(1.0f, TurnMontagePlayRate),
 		0.0f,
 		MontageDuration
 	);
@@ -3712,6 +4541,12 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 {
 	if (ControlledBall == nullptr)
 	{
+		bActiveStrongRunDribbleTurnHasImpactedBall = true;
+		bActiveStrongRunDribbleTurnPhysicalContactMissed = true;
+		ReleaseHumanPhysicalPossession(
+			false,
+			TEXT("StrongTurnBallMissingAtImpact")
+		);
 		return;
 	}
 
@@ -3721,13 +4556,27 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 	}
 
 	bActiveStrongRunDribbleTurnHasImpactedBall = true;
-
 	FVector SafeDirection = ActiveStrongRunDribbleTurnDirection;
 	SafeDirection.Z = 0.0f;
 	SafeDirection = SafeDirection.GetSafeNormal();
 
 	if (SafeDirection.IsNearlyZero())
 	{
+		bActiveStrongRunDribbleTurnPhysicalContactMissed = true;
+		ReleaseHumanPhysicalPossession(
+			false,
+			TEXT("StrongTurnDirectionInvalidAtImpact")
+		);
+		return;
+	}
+
+	if (!IsBallWithinHumanDribbleTurnContact(ControlledBall, SafeDirection))
+	{
+		bActiveStrongRunDribbleTurnPhysicalContactMissed = true;
+		ReleaseHumanPhysicalPossession(
+			false,
+			TEXT("StrongTurnDirectionalContactMiss")
+		);
 		return;
 	}
 
@@ -3739,15 +4588,15 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 	{
 		if (!TryRegisterHumanKickTouchForRules())
 		{
+			bActiveStrongRunDribbleTurnPhysicalContactMissed = true;
 			bActiveStrongRunDribbleTurnShouldKickToTarget = false;
 			ActiveStrongRunDribbleTurnKickMode = ESoccerPendingKickMode::None;
+			ReleaseHumanPhysicalPossession(
+				false,
+				TEXT("StrongTurnKickRejectedByMatchRules")
+			);
 			return;
 		}
-		if (ActiveStrongRunDribbleTurnKickMode == ESoccerPendingKickMode::KickAndFollow)
-		{
-			PrepareAutoPassBallForCleanKick(ActiveStrongRunDribbleTurnKickTarget);
-		}
-
 		FVector ExecutedKickTarget = ActiveStrongRunDribbleTurnKickTarget;
 		float ExecutedKickHorizontalSpeed =
 			ActiveStrongRunDribbleTurnKickHorizontalSpeed;
@@ -3797,6 +4646,12 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 				TargetKickMaxTravelTime
 			);
 		}
+		LogHumanPossessionDebugEvent(
+			TEXT("KICK_APPLIED"),
+			TEXT("StrongTurnKickImpact"),
+			SafeDirection
+		);
+		bHumanPhysicalActionRetainsLogicalPossession = false;
 
 		if (
 			ActiveStrongRunDribbleTurnKickMode !=
@@ -3807,6 +4662,10 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 		}
 
 		LastKickTime = GetWorld()->GetTimeSeconds();
+		if (IsValid(MatchManager))
+		{
+			MatchManager->ReleaseControlledBallPossession(this);
+		}
 
 		return;
 	}
@@ -3832,7 +4691,12 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 		ExecutedTurnDirection,
 		ExecutedTurnTouchSpeed,
 		ActiveStrongRunDribbleTurnUpwardSpeed,
-		true
+		false
+	);
+	LogHumanPossessionDebugEvent(
+		TEXT("TOUCH_APPLIED"),
+		TEXT("StrongTurnDribbleImpulse"),
+		ExecutedTurnDirection
 	);
 }
 
@@ -3852,18 +4716,36 @@ void AThirdPersonCppCharacter::FinishStrongRunDribbleTurnAnimation()
 	const FVector FinishedDirection = ActiveStrongRunDribbleTurnDirection;
 	const float FinishedResumeSpeed = ActiveStrongRunDribbleTurnResumeSpeed;
 	const FVector FinishedKickTarget = ActiveStrongRunDribbleTurnKickTarget;
+	const bool bPhysicalContactMissed =
+		bActiveStrongRunDribbleTurnPhysicalContactMissed;
 
 	ActiveStrongRunDribbleTurnDirection = FVector::ZeroVector;
 	ActiveStrongRunDribbleTurnTouchSpeed = 0.0f;
 	ActiveStrongRunDribbleTurnUpwardSpeed = 0.0f;
 
 	bActiveStrongRunDribbleTurnHasImpactedBall = false;
+	bActiveStrongRunDribbleTurnPhysicalContactMissed = false;
 
 	bActiveStrongRunDribbleTurnShouldKickToTarget = false;
 	ActiveStrongRunDribbleTurnKickTarget = FVector::ZeroVector;
 	ActiveStrongRunDribbleTurnKickMode = ESoccerPendingKickMode::None;
 	ActiveStrongRunDribbleTurnKickHorizontalSpeed = 0.0f;
 	bActiveStrongRunDribbleTurnUsesChargedTrajectory = false;
+	ActiveStrongRunDribbleTurnResumeSpeed = 0.0f;
+	ActiveStrongRunDribbleTurnDuration = 0.0f;
+	ActiveStrongRunDribbleTurnElapsedTime = 0.0f;
+	ActiveStrongRunDribbleTurnInitialSpeed = 0.0f;
+	ActiveStrongRunDribbleTurnInitialDirection = FVector::ZeroVector;
+	bIsStrongRunDribbleTurnActorRotating = false;
+	StrongRunDribbleTurnActorRotationElapsedTime = 0.0f;
+	StrongRunDribbleTurnActorRotationCurrentDuration = 0.0f;
+	StrongRunDribbleTurnActorTotalYawDelta = 0.0f;
+
+	if (bPhysicalContactMissed)
+	{
+		EnterManualControl();
+		return;
+	}
 
 	if (bShouldKickToTarget)
 	{
@@ -3881,14 +4763,15 @@ void AThirdPersonCppCharacter::FinishStrongRunDribbleTurnAnimation()
 
 	ClearHumanBallClaim();
 	SoccerControlState = ESoccerPlayerControlState::PossessingBall;
+	bHumanPhysicalActionRetainsLogicalPossession = false;
 	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
+	LogHumanPossessionDebugEvent(
+		TEXT("CONTROL_RESUMED"),
+		TEXT("StrongTurnCompleted"),
+		FinishedDirection
+	);
 
 	ResumeDribbleMovementAfterTurn(FinishedDirection, FinishedResumeSpeed);
-
-	ActiveStrongRunDribbleTurnDuration = 0.0f;
-	ActiveStrongRunDribbleTurnElapsedTime = 0.0f;
-	ActiveStrongRunDribbleTurnInitialSpeed = 0.0f;
-	ActiveStrongRunDribbleTurnInitialDirection = FVector::ZeroVector;
 }
 
 bool AThirdPersonCppCharacter::TryStartStrongRunDribbleTurnForPendingKick()
@@ -3943,6 +4826,54 @@ bool AThirdPersonCppCharacter::TryStartStrongRunDribbleTurnForPendingKick()
 		return false;
 	}
 
+	float PhysicalMontagePlayRate =
+		BuildHumanKickMontagePhysicalPlayRate(
+			ControlledBall,
+			StrongRunDribbleTurnImpactDelay,
+			false
+		);
+
+	if (
+		bUseHumanKickMontagePhysicalTiming &&
+		!CanHumanDribbleTurnMaintainContactAtImpact(
+			ControlledBall,
+			DesiredKickDirection,
+			TurnMontage,
+			true,
+			StrongRunDribbleTurnImpactDelay,
+			PhysicalMontagePlayRate
+		)
+	)
+	{
+		const float FastestPhysicalPlayRate = FMath::Max(
+			1.0f,
+			HumanKickMontageMaximumPhysicalPlayRate
+		);
+
+		if (CanHumanDribbleTurnMaintainContactAtImpact(
+			ControlledBall,
+			DesiredKickDirection,
+			TurnMontage,
+			true,
+			StrongRunDribbleTurnImpactDelay,
+			FastestPhysicalPlayRate
+		))
+		{
+			PhysicalMontagePlayRate = FastestPhysicalPlayRate;
+		}
+		else
+		{
+			// Preserve PendingKickMode/Target. MoveTowardBall will now finish
+			// this live behind-ball setup before asking ExecutePendingKick again.
+			StartHumanDribbleReposition(
+				DesiredKickDirection,
+				ControlledBall->GetActorLocation(),
+				TEXT("StrongTurnBeforeKickPredictedContactLoss")
+			);
+			return true;
+		}
+	}
+
 	const float TouchSpeedToUse = FMath::Clamp(
 		DribbleTouchSpeed + PlayerSpeed2D * DribbleTouchPlayerSpeedMultiplier,
 		DribbleTouchSpeed,
@@ -3970,7 +4901,8 @@ bool AThirdPersonCppCharacter::TryStartStrongRunDribbleTurnForPendingKick()
 		KickTargetToUse,
 		KickModeToUse,
 		HorizontalSpeedToUse,
-		false
+		false,
+		PhysicalMontagePlayRate
 	);
 
 	return true;
@@ -4083,6 +5015,52 @@ bool AThirdPersonCppCharacter::TryStartNormalRunDribbleTurnForDirection(
 		return false;
 	}
 
+	float PhysicalMontagePlayRate =
+		BuildHumanKickMontagePhysicalPlayRate(
+			ControlledBall,
+			NormalRunDribbleTurnImpactDelay,
+			false
+		);
+
+	if (
+		bUseHumanKickMontagePhysicalTiming &&
+		!CanHumanDribbleTurnMaintainContactAtImpact(
+			ControlledBall,
+			SafeDesiredDirection,
+			TurnMontage,
+			false,
+			NormalRunDribbleTurnImpactDelay,
+			PhysicalMontagePlayRate
+		)
+	)
+	{
+		const float FastestPhysicalPlayRate = FMath::Max(
+			1.0f,
+			HumanKickMontageMaximumPhysicalPlayRate
+		);
+
+		if (CanHumanDribbleTurnMaintainContactAtImpact(
+			ControlledBall,
+			SafeDesiredDirection,
+			TurnMontage,
+			false,
+			NormalRunDribbleTurnImpactDelay,
+			FastestPhysicalPlayRate
+		))
+		{
+			PhysicalMontagePlayRate = FastestPhysicalPlayRate;
+		}
+		else
+		{
+			StartHumanDribbleReposition(
+				SafeDesiredDirection,
+				ControlledBall->GetActorLocation(),
+				TEXT("NormalTurnPredictedContactLoss")
+			);
+			return true;
+		}
+	}
+
 	const float TouchSpeedToUse = FMath::Clamp(
 		DribbleTouchSpeed + PlayerSpeed2D * DribbleTouchPlayerSpeedMultiplier,
 		DribbleTouchSpeed,
@@ -4093,7 +5071,8 @@ bool AThirdPersonCppCharacter::TryStartNormalRunDribbleTurnForDirection(
 		SafeDesiredDirection,
 		TurnMontage,
 		TouchSpeedToUse,
-		DribbleTouchUpwardSpeed
+		DribbleTouchUpwardSpeed,
+		PhysicalMontagePlayRate
 	);
 
 	return true;
@@ -4103,7 +5082,8 @@ void AThirdPersonCppCharacter::StartNormalRunDribbleTurn(
 	const FVector& DesiredDirection,
 	UAnimMontage* TurnMontage,
 	float TouchSpeed,
-	float UpwardSpeed
+	float UpwardSpeed,
+	float MinimumPhysicalMontagePlayRate
 )
 {
 	if (ControlledBall == nullptr || TurnMontage == nullptr)
@@ -4119,6 +5099,8 @@ void AThirdPersonCppCharacter::StartNormalRunDribbleTurn(
 	{
 		return;
 	}
+
+	ClearHumanDribbleRepositionState();
 
 	const FVector CurrentVelocity = GetVelocity();
 
@@ -4156,18 +5138,46 @@ void AThirdPersonCppCharacter::StartNormalRunDribbleTurn(
 		GetPlayerProfileBalanceTurnSpeedRetention(NormalTurnAngleDegrees);
 
 	bActiveNormalRunDribbleTurnHasImpactedBall = false;
+	bActiveNormalRunDribbleTurnPhysicalContactMissed = false;
 
+	bHumanPhysicalActionRetainsLogicalPossession =
+		SoccerControlState == ESoccerPlayerControlState::PossessingBall;
 	SoccerControlState = ESoccerPlayerControlState::DribbleTurning;
+	LogHumanPossessionDebugEvent(
+		TEXT("ACTION_START"),
+		TEXT("NormalDribbleTurn"),
+		SafeDesiredDirection
+	);
 
-	ControlledBall->SetPossessed(true);
-	UpdatePossessedBallLocation();
-
-	const float MontageDuration = PlayAnimMontage(TurnMontage);
+	// Preserve the live rigid body throughout the turn animation.
+	ControlledBall->SetPossessed(false);
+	const float AuthoredMontageLength = FMath::Max(
+		0.05f,
+		TurnMontage->GetPlayLength()
+	);
+	const float TurnMontagePlayRate = FMath::Clamp(
+		FMath::Max(
+			BuildHumanKickMontagePhysicalPlayRate(
+				ControlledBall,
+				NormalRunDribbleTurnImpactDelay,
+				false
+			),
+			MinimumPhysicalMontagePlayRate
+		),
+		1.0f,
+		FMath::Max(1.0f, HumanKickMontageMaximumPhysicalPlayRate)
+	);
+	const float MontagePlayResult = PlayAnimMontage(
+		TurnMontage,
+		TurnMontagePlayRate
+	);
+	const float MontageDuration =
+		AuthoredMontageLength / FMath::Max(1.0f, TurnMontagePlayRate);
 
 	ActiveNormalRunDribbleTurnDuration = MontageDuration;
 	ActiveNormalRunDribbleTurnElapsedTime = 0.0f;
 
-	if (MontageDuration <= 0.0f)
+	if (MontagePlayResult <= 0.0f)
 	{
 		PerformNormalRunDribbleTurnImpact();
 		FinishNormalRunDribbleTurnAnimation();
@@ -4192,7 +5202,8 @@ void AThirdPersonCppCharacter::StartNormalRunDribbleTurn(
 	GetWorldTimerManager().ClearTimer(NormalRunDribbleTurnFinishTimerHandle);
 
 	const float SafeImpactDelay = FMath::Clamp(
-		NormalRunDribbleTurnImpactDelay,
+		NormalRunDribbleTurnImpactDelay /
+			FMath::Max(1.0f, TurnMontagePlayRate),
 		0.0f,
 		MontageDuration
 	);
@@ -4218,6 +5229,12 @@ void AThirdPersonCppCharacter::PerformNormalRunDribbleTurnImpact()
 {
 	if (ControlledBall == nullptr)
 	{
+		bActiveNormalRunDribbleTurnHasImpactedBall = true;
+		bActiveNormalRunDribbleTurnPhysicalContactMissed = true;
+		ReleaseHumanPhysicalPossession(
+			false,
+			TEXT("NormalTurnBallMissingAtImpact")
+		);
 		return;
 	}
 
@@ -4227,13 +5244,27 @@ void AThirdPersonCppCharacter::PerformNormalRunDribbleTurnImpact()
 	}
 
 	bActiveNormalRunDribbleTurnHasImpactedBall = true;
-
 	FVector SafeDirection = ActiveNormalRunDribbleTurnDirection;
 	SafeDirection.Z = 0.0f;
 	SafeDirection = SafeDirection.GetSafeNormal();
 
 	if (SafeDirection.IsNearlyZero())
 	{
+		bActiveNormalRunDribbleTurnPhysicalContactMissed = true;
+		ReleaseHumanPhysicalPossession(
+			false,
+			TEXT("NormalTurnDirectionInvalidAtImpact")
+		);
+		return;
+	}
+
+	if (!IsBallWithinHumanDribbleTurnContact(ControlledBall, SafeDirection))
+	{
+		bActiveNormalRunDribbleTurnPhysicalContactMissed = true;
+		ReleaseHumanPhysicalPossession(
+			false,
+			TEXT("NormalTurnDirectionalContactMiss")
+		);
 		return;
 	}
 
@@ -4262,7 +5293,12 @@ void AThirdPersonCppCharacter::PerformNormalRunDribbleTurnImpact()
 		ExecutedTurnDirection,
 		ExecutedTurnTouchSpeed,
 		ActiveNormalRunDribbleTurnUpwardSpeed,
-		true
+		false
+	);
+	LogHumanPossessionDebugEvent(
+		TEXT("TOUCH_APPLIED"),
+		TEXT("NormalTurnDribbleImpulse"),
+		ExecutedTurnDirection
 	);
 
 }
@@ -4276,6 +5312,8 @@ void AThirdPersonCppCharacter::FinishNormalRunDribbleTurnAnimation()
 
 	const FVector FinishedDirection = ActiveNormalRunDribbleTurnDirection;
 	const float FinishedResumeSpeed = ActiveNormalRunDribbleTurnResumeSpeed;
+	const bool bPhysicalContactMissed =
+		bActiveNormalRunDribbleTurnPhysicalContactMissed;
 
 	ActiveNormalRunDribbleTurnDirection = FVector::ZeroVector;
 	ActiveNormalRunDribbleTurnTouchSpeed = 0.0f;
@@ -4283,22 +5321,33 @@ void AThirdPersonCppCharacter::FinishNormalRunDribbleTurnAnimation()
 	ActiveNormalRunDribbleTurnResumeSpeed = 0.0f;
 
 	bActiveNormalRunDribbleTurnHasImpactedBall = false;
-
-	ClearHumanBallClaim();
-	SoccerControlState = ESoccerPlayerControlState::PossessingBall;
-	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
-
-	ResumeDribbleMovementAfterTurn(FinishedDirection, FinishedResumeSpeed);
-
+	bActiveNormalRunDribbleTurnPhysicalContactMissed = false;
 	ActiveNormalRunDribbleTurnDuration = 0.0f;
 	ActiveNormalRunDribbleTurnElapsedTime = 0.0f;
 	ActiveNormalRunDribbleTurnInitialSpeed = 0.0f;
 	ActiveNormalRunDribbleTurnInitialDirection = FVector::ZeroVector;
-
 	bIsNormalRunDribbleTurnActorRotating = false;
 	NormalRunDribbleTurnActorRotationElapsedTime = 0.0f;
 	NormalRunDribbleTurnActorRotationCurrentDuration = 0.0f;
 	NormalRunDribbleTurnActorTotalYawDelta = 0.0f;
+
+	if (bPhysicalContactMissed)
+	{
+		EnterManualControl();
+		return;
+	}
+
+	ClearHumanBallClaim();
+	SoccerControlState = ESoccerPlayerControlState::PossessingBall;
+	bHumanPhysicalActionRetainsLogicalPossession = false;
+	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
+	LogHumanPossessionDebugEvent(
+		TEXT("CONTROL_RESUMED"),
+		TEXT("NormalTurnCompleted"),
+		FinishedDirection
+	);
+
+	ResumeDribbleMovementAfterTurn(FinishedDirection, FinishedResumeSpeed);
 }
 
 void AThirdPersonCppCharacter::StartStrongRunDribbleTurnActorRotation(
@@ -5631,6 +6680,10 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 
 	if (ControlledBall == nullptr)
 	{
+		LogHumanPossessionDebugEvent(
+			TEXT("KICK_ABORT"),
+			TEXT("ControlledBallMissingBeforeKick")
+		);
 		EnterManualControl();
 		return;
 	}
@@ -5643,8 +6696,12 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 	if (
 		IsValid(MatchManager) &&
 		!MatchManager->CanCharacterTouchBallNow(this)
-		)
+	)
 	{
+		LogHumanPossessionDebugEvent(
+			TEXT("KICK_ABORT"),
+			TEXT("MatchRulesBlockedBeforeKick")
+		);
 		PendingKickMode = ESoccerPendingKickMode::None;
 		bHasPendingKickHorizontalSpeedOverride = false;
 		PendingKickHorizontalSpeedOverride = 0.0f;
@@ -5662,9 +6719,13 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 	// when the physical ball returns to a playable height.
 	if (
 		!bHumanRestartExecution &&
-		!IsBallAtPlayablePossessionHeight(ControlledBall)
+		!IsBallWithinHumanFootPhysicalContact(ControlledBall)
 	)
 	{
+		LogHumanPossessionDebugEvent(
+			TEXT("KICK_WAIT"),
+			TEXT("FootContactMissingBeforeKick")
+		);
 		EnterChasingBall();
 		return;
 	}
@@ -5713,17 +6774,19 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 			bHasPendingKickHorizontalSpeedOverride = false;
 			PendingKickHorizontalSpeedOverride = 0.0f;
 
-			EnterManualControl();
+			if (bHumanRestartExecution)
+			{
+				EnterManualControl();
+			}
+			else
+			{
+				ReleaseHumanPhysicalPossession(
+					false,
+					TEXT("DirectKickRejectedByMatchRules")
+				);
+			}
 
 			return;
-		}
-
-		if (
-			ExecutedMode == ESoccerPendingKickMode::KickAndFollow &&
-			!bHumanRestartExecution
-		)
-		{
-			PrepareAutoPassBallForCleanKick(ExecutedTarget);
 		}
 
 		// KickAndFollow is normally a self-pass/dribble action, except when the
@@ -5775,8 +6838,19 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 				TargetKickMaxTravelTime
 			);
 		}
+		LogHumanPossessionDebugEvent(
+			TEXT("KICK_APPLIED"),
+			bHumanRestartExecution
+				? TEXT("RestartKickWithoutMontage")
+				: TEXT("OpenPlayKickWithoutMontage"),
+			ExecutedTarget - ControlledBall->GetActorLocation()
+		);
 
 		LastKickTime = GetWorld()->GetTimeSeconds();
+		if (IsValid(MatchManager))
+		{
+			MatchManager->ReleaseControlledBallPossession(this);
+		}
 		PendingKickMode = ESoccerPendingKickMode::None;
 
 		bHasPendingKickHorizontalSpeedOverride = false;
@@ -5801,6 +6875,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 	ActiveKickHorizontalSpeed = HorizontalSpeedToUse;
 	ActiveKickMode = PendingKickMode;
 	bActiveKickHasImpactedBall = false;
+	bActiveKickPhysicalContactMissed = false;
 	bActiveKickUsesChargedTrajectory = bUseChargedTrajectory;
 	bActiveKickWasHumanRestartExecution = bHumanRestartExecution;
 
@@ -5809,14 +6884,25 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 	bHasPendingKickHorizontalSpeedOverride = false;
 	PendingKickHorizontalSpeedOverride = 0.0f;
 
+	bHumanPhysicalActionRetainsLogicalPossession =
+		!bHumanRestartExecution &&
+		SoccerControlState == ESoccerPlayerControlState::PossessingBall;
 	SoccerControlState = ESoccerPlayerControlState::Kicking;
+	LogHumanPossessionDebugEvent(
+		TEXT("ACTION_START"),
+		bHumanRestartExecution
+			? TEXT("RestartKickMontage")
+			: TEXT("OpenPlayKickMontage"),
+		ActiveKickTarget - ControlledBall->GetActorLocation()
+	);
 
 	GetCharacterMovement()->StopMovementImmediately();
 
 	if (!bHumanRestartExecution)
 	{
-		ControlledBall->SetPossessed(true);
-		UpdatePossessedBallLocation();
+		// Open play keeps the ball live throughout the montage. The actual
+		// contact test at impact decides whether the kick succeeds.
+		ControlledBall->SetPossessed(false);
 	}
 	else
 	{
@@ -5826,18 +6912,37 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		ControlledBall->StopBallKeepingPhysics();
 	}
 
-	const float MontageDuration = PlayAnimMontage(KickMontage);
+	const float AuthoredMontageLength = FMath::Max(
+		0.05f,
+		KickMontage->GetPlayLength()
+	);
+	const float AuthoredImpactDelay = GetKickImpactDelayForMontage(
+		KickMontage,
+		AuthoredMontageLength
+	);
+	const float MontagePlayRate = BuildHumanKickMontagePhysicalPlayRate(
+		ControlledBall,
+		AuthoredImpactDelay,
+		bHumanRestartExecution
+	);
+	const float MontagePlayResult = PlayAnimMontage(
+		KickMontage,
+		MontagePlayRate
+	);
 
-	if (MontageDuration <= 0.0f)
+	if (MontagePlayResult <= 0.0f)
 	{
 		PerformPendingKickImpact();
 		FinishPendingKickAnimation();
 		return;
 	}
 
-	const float ImpactDelay = GetKickImpactDelayForMontage(
-		KickMontage,
-		MontageDuration
+	const float MontageDuration =
+		AuthoredMontageLength / FMath::Max(1.0f, MontagePlayRate);
+	const float ImpactDelay = FMath::Clamp(
+		AuthoredImpactDelay / FMath::Max(1.0f, MontagePlayRate),
+		FMath::Max(0.01f, HumanKickMontageMinimumPhysicalImpactDelay),
+		FMath::Max(0.05f, MontageDuration - 0.05f)
 	);
 
 	GetWorldTimerManager().ClearTimer(KickImpactTimerHandle);
@@ -5888,6 +6993,12 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 {
 	if (ControlledBall == nullptr)
 	{
+		bActiveKickHasImpactedBall = true;
+		bActiveKickPhysicalContactMissed = true;
+		ReleaseHumanPhysicalPossession(
+			false,
+			TEXT("KickBallMissingAtImpact")
+		);
 		return;
 	}
 
@@ -5896,20 +7007,37 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 		return;
 	}
 
+	if (
+		!bActiveKickWasHumanRestartExecution &&
+		!IsBallWithinHumanFootPhysicalContact(ControlledBall)
+	)
+	{
+		bActiveKickHasImpactedBall = true;
+		bActiveKickPhysicalContactMissed = true;
+		ReleaseHumanPhysicalPossession(
+			false,
+			TEXT("KickFootContactMissAtImpact")
+		);
+		return;
+	}
+
 	bActiveKickHasImpactedBall = true;
 
 	if (!TryRegisterHumanKickTouchForRules())
 	{
-		EnterManualControl();
+		bActiveKickPhysicalContactMissed = true;
+		if (bActiveKickWasHumanRestartExecution)
+		{
+			EnterManualControl();
+		}
+		else
+		{
+			ReleaseHumanPhysicalPossession(
+				false,
+				TEXT("KickRejectedByMatchRulesAtImpact")
+			);
+		}
 		return;
-	}
-
-	if (
-		ActiveKickMode == ESoccerPendingKickMode::KickAndFollow &&
-		!bActiveKickWasHumanRestartExecution
-	)
-	{
-		PrepareAutoPassBallForCleanKick(ActiveKickTarget);
 	}
 
 	FVector ExecutedKickTarget = ActiveKickTarget;
@@ -5967,6 +7095,14 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 			TargetKickMaxTravelTime
 		);
 	}
+	LogHumanPossessionDebugEvent(
+		TEXT("KICK_APPLIED"),
+		bActiveKickWasHumanRestartExecution
+			? TEXT("RestartKickMontageImpact")
+			: TEXT("OpenPlayKickMontageImpact"),
+		ExecutedKickTarget - ControlledBall->GetActorLocation()
+	);
+	bHumanPhysicalActionRetainsLogicalPossession = false;
 
 	if (ActiveKickMode != ESoccerPendingKickMode::KickAndFollow)
 	{
@@ -5974,6 +7110,10 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 	}
 
 	LastKickTime = GetWorld()->GetTimeSeconds();
+	if (IsValid(MatchManager))
+	{
+		MatchManager->ReleaseControlledBallPossession(this);
+	}
 
 	if (GEngine)
 	{
@@ -5997,14 +7137,21 @@ void AThirdPersonCppCharacter::FinishPendingKickAnimation()
 	const FVector FinishedKickTarget = ActiveKickTarget;
 	const bool bFinishedHumanRestartExecution =
 		bActiveKickWasHumanRestartExecution;
+	const bool bPhysicalContactMissed =
+		bActiveKickPhysicalContactMissed;
 
 	ActiveKickMode = ESoccerPendingKickMode::None;
 	ActiveKickHorizontalSpeed = 0.0f;
 	bActiveKickHasImpactedBall = false;
+	bActiveKickPhysicalContactMissed = false;
 	bActiveKickUsesChargedTrajectory = false;
 	bActiveKickWasHumanRestartExecution = false;
 
-	if (
+	if (bPhysicalContactMissed)
+	{
+		EnterManualControl();
+	}
+	else if (
 		FinishedKickMode == ESoccerPendingKickMode::KickAndFollow &&
 		!bFinishedHumanRestartExecution
 	)
@@ -6720,7 +7867,10 @@ void AThirdPersonCppCharacter::UpdateHumanStealAttempt()
 		SoccerBall->GetActorLocation()
 	);
 
-	if (DistanceToBall > HumanStealSuccessDistance)
+	if (
+		DistanceToBall > HumanStealSuccessDistance ||
+		!IsBallWithinHumanFootPhysicalContact(SoccerBall)
+	)
 	{
 		return;
 	}
@@ -6818,14 +7968,13 @@ void AThirdPersonCppCharacter::CompleteHumanStealAttempt(
 	// primero asignamos la pelota al ControlledBall del humano.
 	ControlledBall = SoccerBall;
 
-	// PossessBall performs the authoritative height validation. Do not mark the
-	// rigid body possessed until that validation has actually succeeded.
+	// PossessBall validates real foot contact and records logical control only.
+	// The ball keeps the velocity and spin it had when the opponent released it.
 	PossessBall();
 
 	if (!IsPossessingBall())
 	{
 		ControlledBall->SetPossessed(false);
-		ControlledBall->StopBallKeepingPhysics();
 
 		PendingKickMode = SavedPendingKickMode;
 		PendingKickTarget = SavedPendingKickTarget;
@@ -6837,10 +7986,6 @@ void AThirdPersonCppCharacter::CompleteHumanStealAttempt(
 		EnterChasingBall();
 		return;
 	}
-
-	ControlledBall->SetPossessed(true);
-
-	UpdatePossessedBallLocation();
 
 	// PossessBall() limpia PendingKickMode, asï¿½ que restauramos
 	// el destino que el jugador pudo haber marcado durante el robo.
@@ -6938,5 +8083,425 @@ bool AThirdPersonCppCharacter::IsBallAtPlayablePossessionHeight(
 
 	return
 		BallHeightFromGround >= -20.0f &&
-		BallHeightFromGround <= BallPossessionMaxHeight;
+		BallHeightFromGround <= FMath::Min(
+			FMath::Max(10.0f, BallPossessionMaxHeight),
+			FMath::Max(10.0f, HumanFootContactMaximumHeight)
+		);
+}
+
+bool AThirdPersonCppCharacter::IsBallWithinHumanFootPhysicalContact(
+	const ASoccerBall* SoccerBall
+) const
+{
+	if (!IsValid(SoccerBall))
+	{
+		return false;
+	}
+
+	const UCapsuleComponent* CharacterCapsule = GetCapsuleComponent();
+	if (CharacterCapsule == nullptr)
+	{
+		return false;
+	}
+
+	const float CharacterGroundZ =
+		GetActorLocation().Z -
+		CharacterCapsule->GetScaledCapsuleHalfHeight();
+	const float BallHeightFromGround =
+		SoccerBall->GetActorLocation().Z - CharacterGroundZ;
+	const float HorizontalDistance = FVector::Dist2D(
+		GetActorLocation(),
+		SoccerBall->GetActorLocation()
+	);
+
+	return
+		HorizontalDistance <= FMath::Max(
+			1.0f,
+			HumanFootContactMaxDistance
+		) &&
+		BallHeightFromGround >= HumanFootContactMinimumHeight &&
+		BallHeightFromGround <= FMath::Max(
+			HumanFootContactMinimumHeight,
+			HumanFootContactMaximumHeight
+		);
+}
+
+bool AThirdPersonCppCharacter::IsBallWithinHumanDribbleTurnContact(
+	const ASoccerBall* SoccerBall,
+	const FVector& IntendedDirection
+) const
+{
+	if (!IsBallWithinHumanFootPhysicalContact(SoccerBall))
+	{
+		return false;
+	}
+
+	if (!bRequireDirectionalDribbleTurnContact)
+	{
+		return true;
+	}
+
+	FVector SafeDirection = IntendedDirection;
+	SafeDirection.Z = 0.0f;
+	SafeDirection = SafeDirection.GetSafeNormal();
+
+	if (SafeDirection.IsNearlyZero())
+	{
+		SafeDirection = GetActorForwardVector();
+		SafeDirection.Z = 0.0f;
+		SafeDirection = SafeDirection.GetSafeNormal();
+	}
+
+	if (SafeDirection.IsNearlyZero())
+	{
+		return false;
+	}
+
+	FVector ToBall = SoccerBall->GetActorLocation() - GetActorLocation();
+	ToBall.Z = 0.0f;
+
+	const FVector ContactRight = FVector::CrossProduct(
+		FVector::UpVector,
+		SafeDirection
+	).GetSafeNormal();
+	const float ForwardDistance = FVector::DotProduct(
+		ToBall,
+		SafeDirection
+	);
+	const float LateralDistance = FMath::Abs(FVector::DotProduct(
+		ToBall,
+		ContactRight
+	));
+	const float MaximumLateralDistance = FMath::Min(
+		FMath::Max(1.0f, HumanDribbleTurnContactMaxLateralOffset),
+		FMath::Max(1.0f, HumanFootContactMaxDistance)
+	);
+
+	return
+		ForwardDistance >= -FMath::Max(
+			0.0f,
+			HumanDribbleTurnContactRearTolerance
+		) &&
+		LateralDistance <= MaximumLateralDistance;
+}
+
+bool AThirdPersonCppCharacter::CanHumanDribbleTurnMaintainContactAtImpact(
+	const ASoccerBall* SoccerBall,
+	const FVector& IntendedDirection,
+	UAnimMontage* TurnMontage,
+	bool bStrongRunTurn,
+	float AuthoredImpactDelay,
+	float MontagePlayRate
+) const
+{
+	if (
+		!IsValid(SoccerBall) ||
+		TurnMontage == nullptr ||
+		!IsBallWithinHumanFootPhysicalContact(SoccerBall)
+	)
+	{
+		return false;
+	}
+
+	FVector SafeDirection = IntendedDirection;
+	SafeDirection.Z = 0.0f;
+	SafeDirection = SafeDirection.GetSafeNormal();
+
+	if (SafeDirection.IsNearlyZero())
+	{
+		return false;
+	}
+
+	FVector RelativeLocation =
+		SoccerBall->GetActorLocation() - GetActorLocation();
+	RelativeLocation.Z = 0.0f;
+
+	FVector BallVelocity = SoccerBall->GetBallPhysicsVelocity();
+	BallVelocity.Z = 0.0f;
+
+	FVector InitialPlayerVelocity = GetVelocity();
+	InitialPlayerVelocity.Z = 0.0f;
+	const float InitialPlayerSpeed = InitialPlayerVelocity.Size2D();
+	FVector InitialPlayerDirection = InitialPlayerVelocity.GetSafeNormal();
+
+	if (InitialPlayerDirection.IsNearlyZero())
+	{
+		InitialPlayerDirection = GetActorForwardVector();
+		InitialPlayerDirection.Z = 0.0f;
+		InitialPlayerDirection = InitialPlayerDirection.GetSafeNormal();
+	}
+
+	if (InitialPlayerDirection.IsNearlyZero())
+	{
+		InitialPlayerDirection = SafeDirection;
+	}
+
+	const float SafePlayRate = FMath::Max(1.0f, MontagePlayRate);
+	const float MontageDuration =
+		FMath::Max(0.05f, TurnMontage->GetPlayLength()) / SafePlayRate;
+	const float PredictedImpactTime = FMath::Clamp(
+		FMath::Max(0.0f, AuthoredImpactDelay) / SafePlayRate,
+		0.0f,
+		MontageDuration
+	);
+
+	const float DirectionDot = FMath::Clamp(
+		FVector::DotProduct(InitialPlayerDirection, SafeDirection),
+		-1.0f,
+		1.0f
+	);
+	const float TurnAngleDegrees = FMath::RadiansToDegrees(
+		FMath::Acos(DirectionDot)
+	);
+	const float ResumeSpeed =
+		(bStrongRunTurn ? FastRunSpeed : RunSpeed) *
+		GetPlayerProfileBalanceTurnSpeedRetention(TurnAngleDegrees);
+	const float ConfiguredZeroTime = bStrongRunTurn
+		? StrongRunDribbleTurnZeroSpeedTime
+		: NormalRunDribbleTurnZeroSpeedTime;
+	const float MaximumZeroTime = FMath::Max(
+		0.01f,
+		MontageDuration - 0.01f
+	);
+	const float ZeroTime = FMath::Clamp(
+		ConfiguredZeroTime,
+		0.01f,
+		MaximumZeroTime
+	);
+	const float AccelerationDuration = FMath::Max(
+		0.01f,
+		MontageDuration - ZeroTime
+	);
+	const float MinimumNormalTurnSpeed = bStrongRunTurn
+		? 0.0f
+		: FMath::Clamp(
+			NormalRunDribbleTurnMinimumSpeed,
+			0.0f,
+			FMath::Min(InitialPlayerSpeed, ResumeSpeed)
+		);
+
+	// Integrate the same two movement phases used while the montage is playing.
+	// The old prediction assumed a constant player velocity, even though the
+	// runtime first brakes in the old direction and then accelerates in the new
+	// one. That mismatch allowed several montages whose impact was not reachable.
+	FVector PredictedPlayerDisplacement = FVector::ZeroVector;
+	constexpr int32 PredictionStepCount = 16;
+	const float PredictionStepTime =
+		PredictedImpactTime / static_cast<float>(PredictionStepCount);
+
+	for (int32 StepIndex = 0; StepIndex < PredictionStepCount; ++StepIndex)
+	{
+		const float SampleTime =
+			(static_cast<float>(StepIndex) + 0.5f) * PredictionStepTime;
+		float SampleSpeed = MinimumNormalTurnSpeed;
+		FVector SampleDirection = InitialPlayerDirection;
+
+		if (SampleTime <= ZeroTime)
+		{
+			const float Alpha = FMath::Clamp(
+				SampleTime / ZeroTime,
+				0.0f,
+				1.0f
+			);
+			const float MovementAlpha = bStrongRunTurn
+				? Alpha
+				: FMath::InterpEaseInOut(0.0f, 1.0f, Alpha, 2.0f);
+			SampleSpeed = FMath::Lerp(
+				InitialPlayerSpeed,
+				MinimumNormalTurnSpeed,
+				MovementAlpha
+			);
+		}
+		else
+		{
+			const float Alpha = FMath::Clamp(
+				(SampleTime - ZeroTime) / AccelerationDuration,
+				0.0f,
+				1.0f
+			);
+			const float MovementAlpha = bStrongRunTurn
+				? Alpha
+				: FMath::InterpEaseInOut(0.0f, 1.0f, Alpha, 2.0f);
+			SampleSpeed = FMath::Lerp(
+				MinimumNormalTurnSpeed,
+				ResumeSpeed,
+				MovementAlpha
+			);
+			SampleDirection = SafeDirection;
+		}
+
+		PredictedPlayerDisplacement +=
+			SampleDirection * SampleSpeed * PredictionStepTime;
+	}
+
+	const FVector PredictedRelativeLocation =
+		RelativeLocation +
+		BallVelocity * PredictedImpactTime -
+		PredictedPlayerDisplacement;
+	const float ContactRadius = FMath::Max(
+		1.0f,
+		HumanFootContactMaxDistance
+	);
+	const float PredictionSafetyMargin = FMath::Clamp(
+		HumanDribbleTurnPredictionSafetyMargin,
+		0.0f,
+		FMath::Max(0.0f, ContactRadius - 1.0f)
+	);
+	const float PredictedContactRadius = FMath::Max(
+		1.0f,
+		ContactRadius - PredictionSafetyMargin
+	);
+
+	if (
+		PredictedRelativeLocation.SizeSquared2D() >
+		FMath::Square(PredictedContactRadius)
+	)
+	{
+		return false;
+	}
+
+	if (!bRequireDirectionalDribbleTurnContact)
+	{
+		return true;
+	}
+
+	const FVector ContactRight = FVector::CrossProduct(
+		FVector::UpVector,
+		SafeDirection
+	).GetSafeNormal();
+	const float PredictedForwardDistance = FVector::DotProduct(
+		PredictedRelativeLocation,
+		SafeDirection
+	);
+	const float PredictedLateralDistance = FMath::Abs(FVector::DotProduct(
+		PredictedRelativeLocation,
+		ContactRight
+	));
+	const float MaximumLateralDistance = FMath::Min(
+		FMath::Max(1.0f, HumanDribbleTurnContactMaxLateralOffset),
+		ContactRadius
+	);
+	const float PredictedMaximumLateralDistance = FMath::Max(
+		1.0f,
+		MaximumLateralDistance - PredictionSafetyMargin
+	);
+	const float PredictedMinimumForwardDistance =
+		-FMath::Max(0.0f, HumanDribbleTurnContactRearTolerance) +
+		PredictionSafetyMargin;
+
+	return
+		PredictedForwardDistance >= PredictedMinimumForwardDistance &&
+		PredictedLateralDistance <= PredictedMaximumLateralDistance;
+}
+
+float AThirdPersonCppCharacter::BuildHumanKickMontagePhysicalPlayRate(
+	const ASoccerBall* SoccerBall,
+	float AuthoredImpactDelay,
+	bool bTreatAsRestart
+) const
+{
+	if (
+		bTreatAsRestart ||
+		!bUseHumanKickMontagePhysicalTiming ||
+		!IsValid(SoccerBall)
+	)
+	{
+		return 1.0f;
+	}
+
+	FVector RelativeLocation =
+		SoccerBall->GetActorLocation() - GetActorLocation();
+	RelativeLocation.Z = 0.0f;
+	FVector RelativeVelocity =
+		SoccerBall->GetBallPhysicsVelocity() - GetVelocity();
+	RelativeVelocity.Z = 0.0f;
+
+	const float ContactRadius = FMath::Max(
+		1.0f,
+		HumanFootContactMaxDistance
+	);
+	const float RelativeSpeedSquared = RelativeVelocity.SizeSquared2D();
+	if (
+		RelativeSpeedSquared <= KINDA_SMALL_NUMBER ||
+		RelativeLocation.SizeSquared2D() > FMath::Square(ContactRadius)
+	)
+	{
+		return 1.0f;
+	}
+
+	const float QuadraticB = 2.0f * FVector::DotProduct(
+		RelativeLocation,
+		RelativeVelocity
+	);
+	const float QuadraticC =
+		RelativeLocation.SizeSquared2D() - FMath::Square(ContactRadius);
+	const float Discriminant =
+		QuadraticB * QuadraticB -
+		4.0f * RelativeSpeedSquared * QuadraticC;
+	if (Discriminant <= 0.0f)
+	{
+		return 1.0f;
+	}
+
+	const float ExitTime =
+		(-QuadraticB + FMath::Sqrt(Discriminant)) /
+		(2.0f * RelativeSpeedSquared);
+	if (ExitTime <= KINDA_SMALL_NUMBER)
+	{
+		return FMath::Max(1.0f, HumanKickMontageMaximumPhysicalPlayRate);
+	}
+
+	const float SafeContactTime = FMath::Max(
+		HumanKickMontageMinimumPhysicalImpactDelay,
+		ExitTime * FMath::Clamp(
+			HumanKickMontageContactWindowSafetyFraction,
+			0.10f,
+			1.0f
+		)
+	);
+	const float RequiredPlayRate =
+		FMath::Max(0.01f, AuthoredImpactDelay) /
+		FMath::Max(0.01f, SafeContactTime);
+
+	return FMath::Clamp(
+		RequiredPlayRate,
+		1.0f,
+		FMath::Max(1.0f, HumanKickMontageMaximumPhysicalPlayRate)
+	);
+}
+
+void AThirdPersonCppCharacter::ReleaseHumanPhysicalPossession(
+	bool bContinueChasing,
+	const TCHAR* Reason
+)
+{
+	LogHumanPossessionDebugEvent(
+		TEXT("RELEASE"),
+		Reason,
+		DesiredDribbleDirection
+	);
+	bHumanPhysicalActionRetainsLogicalPossession = false;
+
+	if (IsValid(ControlledBall))
+	{
+		ControlledBall->SetPossessed(false);
+	}
+
+	if (!IsValid(MatchManager))
+	{
+		FindMatchManager();
+	}
+	if (IsValid(MatchManager))
+	{
+		MatchManager->ReleaseControlledBallPossession(this);
+	}
+
+	if (bContinueChasing && IsValid(ControlledBall))
+	{
+		EnterChasingBall();
+	}
+	else
+	{
+		EnterManualControl();
+	}
 }

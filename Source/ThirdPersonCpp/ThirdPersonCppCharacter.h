@@ -51,6 +51,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Control")
 		bool IsPossessingBall() const;
 
+	// Includes the short interval between the start of a physical kick/turn
+	// animation and its real ball-contact result. It never pins or moves the ball.
+	UFUNCTION(BlueprintPure, Category = "Soccer|Control")
+		bool HasHumanLogicalBallControl() const;
+
 	UFUNCTION(BlueprintPure, Category = "Soccer|Control")
 		bool IsChasingBall() const;
 
@@ -239,13 +244,11 @@ protected:
 	);
 
 	void PossessBall();
-	void UpdatePossessedBallLocation();
 
 	void StartAutoPassFollow(const FVector& TargetLocation);
 	void ClearAutoPassFollowState();
 	void UpdateAutoPassFollowTargetState();
 	void CollectAutoPassBallWithoutCollision();
-	void PrepareAutoPassBallForCleanKick(const FVector& KickTarget);
 	void RedirectAutoPassBallTowardTargetIfNeeded(float DistanceToBall);
 void StartAutoPassCollectCarry();
 	void UpdateAutoPassCollectCarry();
@@ -281,6 +284,22 @@ void StartAutoPassCollectCarry();
 
 	void PerformPendingKickImpact();
 	void FinishPendingKickAnimation();
+	bool IsBallWithinHumanFootPhysicalContact(
+		const ASoccerBall* SoccerBall
+	) const;
+	bool IsBallWithinHumanDribbleTurnContact(
+		const ASoccerBall* SoccerBall,
+		const FVector& IntendedDirection
+	) const;
+	float BuildHumanKickMontagePhysicalPlayRate(
+		const ASoccerBall* SoccerBall,
+		float AuthoredImpactDelay,
+		bool bTreatAsRestart
+	) const;
+	void ReleaseHumanPhysicalPossession(
+		bool bContinueChasing,
+		const TCHAR* Reason
+	);
 
 	float GetKickImpactDelayForMontage(UAnimMontage* KickMontage, float MontageDuration) const;
 
@@ -294,6 +313,24 @@ void StartAutoPassCollectCarry();
 
 	void RegisterDribbleInput(const FVector& Direction, float Value);
 	void UpdatePhysicalDribbleControl();
+	void ClearHumanDribbleRepositionState();
+	void StartHumanDribbleReposition(
+		const FVector& IntendedDirection,
+		const FVector& BallLocation,
+		const TCHAR* Reason
+	);
+	bool UpdateHumanDribbleRepositionMovement(
+		const FVector& BallLocation,
+		float MaximumControlDistance
+	);
+	bool CanHumanDribbleTurnMaintainContactAtImpact(
+		const ASoccerBall* SoccerBall,
+		const FVector& IntendedDirection,
+		UAnimMontage* TurnMontage,
+		bool bStrongRunTurn,
+		float AuthoredImpactDelay,
+		float MontagePlayRate
+	) const;
 
 	void StartChargedKickRelease();
 	void FinishChargedKickRelease();
@@ -319,7 +356,8 @@ void StartAutoPassCollectCarry();
 		const FVector& KickTarget = FVector::ZeroVector,
 		ESoccerPendingKickMode KickMode = ESoccerPendingKickMode::None,
 		float KickHorizontalSpeed = 0.0f,
-		bool bUsesChargedTrajectory = false
+		bool bUsesChargedTrajectory = false,
+		float MinimumPhysicalMontagePlayRate = 1.0f
 	);
 
 	void PerformStrongRunDribbleTurnImpact();
@@ -341,7 +379,8 @@ void StartAutoPassCollectCarry();
 		const FVector& DesiredDirection,
 		UAnimMontage* TurnMontage,
 		float TouchSpeed,
-		float UpwardSpeed
+		float UpwardSpeed,
+		float MinimumPhysicalMontagePlayRate = 1.0f
 	);
 
 	void PerformNormalRunDribbleTurnImpact();
@@ -384,6 +423,12 @@ void StartAutoPassCollectCarry();
 	void DisableMarkerCollision(AActor* MarkerActor) const;
 
 	void UpdatePossessionIndicator();
+	void UpdateHumanPossessionDebugSnapshot();
+	void LogHumanPossessionDebugEvent(
+		const TCHAR* Event,
+		const TCHAR* Reason,
+		const FVector& ReferenceDirection = FVector::ZeroVector
+	);
 
 	void UpdatePlayerEnergy(float DeltaTime);
 	void UpdateEnergyAdjustedMovementSpeed();
@@ -411,6 +456,24 @@ private:
 		ASoccerBall* ControlledBall = nullptr;
 
 	ESoccerPlayerControlState SoccerControlState = ESoccerPlayerControlState::Manual;
+
+	// A physical action may temporarily use DribbleTurning/Kicking while the
+	// human still owns the chance to make the authored contact. This is logical
+	// ownership only: ball simulation, collision and transform remain untouched.
+	bool bHumanPhysicalActionRetainsLogicalPossession = false;
+
+	// Event-only diagnostics for human control of the live physical ball. It
+	// records acquisitions, touches, repositioning, action-state changes and the
+	// exact condition that releases control without producing one line per frame.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Debug|Human Possession")
+		bool bDebugHumanPossession = false;
+
+	bool bHumanPossessionDebugSnapshotInitialized = false;
+	ESoccerPlayerControlState HumanPossessionDebugLastControlState =
+		ESoccerPlayerControlState::Manual;
+	bool bHumanPossessionDebugLastManagerOwnedByHuman = false;
+	bool bHumanPossessionDebugLastIndicatorExpected = false;
+	int32 HumanPossessionDebugEventSequence = 0;
 
 	// This is deliberately separate from ChasingBall: that control state is
 	// also entered by automatic aerial follow-ups and other non-click systems.
@@ -578,6 +641,20 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|Control")
 		float BallPossessionMaxHeight = 180.0f;
 
+	// Logical foot possession is released when the live simulated ball escapes
+	// this radius. This mirrors the physical-possession contract used by bots.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Control|Physical", meta = (ClampMin = "1.0"))
+		float HumanPhysicalPossessionMaxDistance = 145.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Control|Physical Contact", meta = (ClampMin = "1.0"))
+		float HumanFootContactMaxDistance = 92.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Control|Physical Contact")
+		float HumanFootContactMinimumHeight = -15.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Control|Physical Contact", meta = (ClampMin = "10.0"))
+		float HumanFootContactMaximumHeight = 82.0f;
+
 	bool IsBallAtPlayablePossessionHeight(const ASoccerBall* SoccerBall) const;
 
 	// Patada hacia punto seleccionado.
@@ -686,6 +763,7 @@ private:
 	ESoccerPendingKickMode ActiveKickMode = ESoccerPendingKickMode::None;
 
 	bool bActiveKickHasImpactedBall = false;
+	bool bActiveKickPhysicalContactMissed = false;
 
 	bool bActiveKickUsesChargedTrajectory = false;
 
@@ -701,6 +779,18 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
 		float KickAnimationFinishExtraDelay = 0.05f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact")
+		bool bUseHumanKickMontagePhysicalTiming = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "1.0", ClampMax = "3.0"))
+		float HumanKickMontageMaximumPhysicalPlayRate = 2.10f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "0.10", ClampMax = "1.0"))
+		float HumanKickMontageContactWindowSafetyFraction = 0.72f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "0.01", ClampMax = "0.20"))
+		float HumanKickMontageMinimumPhysicalImpactDelay = 0.05f;
 
 	float SelectedMovementSpeed = 350.0f;
 	
@@ -734,6 +824,32 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling")
 		float DribbleNoInputStopSpeed = 20.0f;
 
+	// Close to the ball, the human circles around it before touching whenever
+	// the ball is not safely ahead of the requested dribble direction.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling|Physical Reposition", meta = (ClampMin = "1.0"))
+		float HumanDribbleRepositionActivationDistance = 90.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling|Physical Reposition", meta = (ClampMin = "0.0"))
+		float HumanDribbleRepositionEnterForwardDistance = 18.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling|Physical Reposition", meta = (ClampMin = "0.0"))
+		float HumanDribbleRepositionEnterLateralOffset = 45.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling|Physical Reposition", meta = (ClampMin = "1.0"))
+		float HumanDribbleRepositionBehindDistance = 65.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling|Physical Reposition", meta = (ClampMin = "1.0"))
+		float HumanDribbleRepositionSideClearance = 58.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling|Physical Reposition", meta = (ClampMin = "1.0"))
+		float HumanDribbleRepositionSetupAcceptanceRadius = 18.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling|Physical Reposition", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+		float HumanDribbleRepositionInputScale = 0.85f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling|Physical Reposition", meta = (ClampMin = "1.0", ClampMax = "180.0"))
+		float HumanDribbleRepositionDirectionResetAngleDegrees = 35.0f;
+
 	FVector PendingDribbleInputDirection = FVector::ZeroVector;
 	FVector DesiredDribbleDirection = FVector::ZeroVector;
 	FVector CurrentDribbleDirection = FVector::ZeroVector;
@@ -760,6 +876,12 @@ private:
 	bool bCanDribbleTouch = true;
 
 	FVector LastDribbleTouchBallLocation = FVector::ZeroVector;
+
+	bool bHumanDribbleRepositioningBehindBall = false;
+	float HumanDribbleRepositionSideSign = 0.0f;
+	FVector HumanDribbleRepositionDirection = FVector::ZeroVector;
+	bool bHumanDribbleRepositionPreparedTouch = false;
+	FVector HumanDribbleRepositionPreparedDirection = FVector::ZeroVector;
 
 	bool bForceDribbleTurnLocomotion = false;
 
@@ -791,6 +913,21 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|Dribble Turn|Strong Run")
 		float StrongRunDribbleTurnImpactDelay = 0.25f;
 
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribble Turn|Physical Contact")
+		bool bRequireDirectionalDribbleTurnContact = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribble Turn|Physical Contact", meta = (ClampMin = "0.0"))
+		float HumanDribbleTurnContactRearTolerance = 10.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribble Turn|Physical Contact", meta = (ClampMin = "1.0"))
+		float HumanDribbleTurnContactMaxLateralOffset = 65.0f;
+
+	// Extra room required by the preflight prediction before a turn montage is
+	// allowed to start. It absorbs frame integration and rigid-body damping
+	// differences without making the real contact test more permissive.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Dribble Turn|Physical Contact", meta = (ClampMin = "0.0"))
+		float HumanDribbleTurnPredictionSafetyMargin = 12.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|Dribble Turn|Strong Run")
 		float StrongRunDribbleTurnFinishExtraDelay = 0.05f;
 
@@ -819,6 +956,7 @@ private:
 	float ActiveStrongRunDribbleTurnUpwardSpeed = 0.0f;
 
 	bool bActiveStrongRunDribbleTurnHasImpactedBall = false;
+	bool bActiveStrongRunDribbleTurnPhysicalContactMissed = false;
 
 
 	bool bActiveStrongRunDribbleTurnShouldKickToTarget = false;
@@ -881,6 +1019,7 @@ private:
 	float ActiveNormalRunDribbleTurnUpwardSpeed = 0.0f;
 
 	bool bActiveNormalRunDribbleTurnHasImpactedBall = false;
+	bool bActiveNormalRunDribbleTurnPhysicalContactMissed = false;
 
 	float ActiveNormalRunDribbleTurnResumeSpeed = 0.0f;
 

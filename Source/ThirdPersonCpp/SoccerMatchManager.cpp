@@ -6721,7 +6721,7 @@ void ASoccerMatchManager::ReleaseAllHumanBallPossessions()
 		}
 
 		const bool bWasPossessingBall =
-			HumanCharacter->IsPossessingBall();
+			HumanCharacter->HasHumanLogicalBallControl();
 
 		if (bWasPossessingBall)
 		{
@@ -13473,8 +13473,8 @@ void ASoccerMatchManager::DetectPossession()
 		}
 
 		// La bandera base alimenta al AnimBlueprint y puede quedar con el valor
-		// del frame anterior. Para la logica del partido usamos el estado real
-		// de cada tipo de personaje, especialmente justo despues de un pase.
+		// del frame anterior. Para la logica del partido usamos el control efectivo
+		// de cada tipo de personaje, incluso durante una accion fisica antes del impacto.
 		bool bCandidateReallyPossessesBall =
 			Candidate->GetSoccerIsPossessingBall();
 
@@ -13488,7 +13488,7 @@ void ASoccerMatchManager::DetectPossession()
 			Cast<AThirdPersonCppCharacter>(Candidate))
 		{
 			bCandidateReallyPossessesBall =
-				CandidateHuman->IsPossessingBall();
+				CandidateHuman->HasHumanLogicalBallControl();
 		}
 
 		if (!bCandidateReallyPossessesBall)
@@ -23749,7 +23749,7 @@ void ASoccerMatchManager::UpdateHumanPassRequestState()
 		return;
 	}
 
-	if (ActiveHumanPassRequestingHuman->IsPossessingBall())
+	if (ActiveHumanPassRequestingHuman->HasHumanLogicalBallControl())
 	{
 		ClearActiveHumanPassRequest(
 			TEXT("Pedido de pase desactivado: el humano recibio la pelota"),
@@ -24233,7 +24233,7 @@ bool ASoccerMatchManager::ToggleHumanPassRequest(
 		return true;
 	}
 
-	if (RequestingHuman->IsPossessingBall())
+	if (RequestingHuman->HasHumanLogicalBallControl())
 	{
 		ClearActiveHumanPassRequest(
 			TEXT("No puedes pedir un pase mientras posees la pelota"),
