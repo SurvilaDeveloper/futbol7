@@ -11470,6 +11470,17 @@ FVector ASoccerMatchManager::GetThrowInMoveLocation(
 			: ThrowInOutsideStartLocation;
 	}
 
+	// Un arquero que no ejecuta el lateral conserva su posicion especifica.
+	// La forma colectiva del saque esta pensada para jugadores de campo y,
+	// aplicada al arquero, puede arrastrarlo varios metros fuera del arco.
+	if (SoccerAICharacter->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
+	{
+		return ProjectLocationToNavigation(
+			GetGoalkeeperMoveLocation(SoccerAICharacter),
+			SoccerAICharacter
+		);
+	}
+
 	if (SoccerAICharacter == ThrowInReceiverAI)
 	{
 		return ThrowInReceiverMoveLocation;

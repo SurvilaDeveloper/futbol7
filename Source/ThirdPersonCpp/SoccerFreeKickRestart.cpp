@@ -1521,12 +1521,21 @@ FVector FSoccerFreeKickRestart::GetMoveLocation(
 		return BuildReceiverMoveLocation(Manager);
 	}
 
-	if (
-		SoccerAICharacter->GetTeam() != RestartTeam &&
-		SoccerAICharacter->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper
-	)
+	if (SoccerAICharacter->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
 	{
-		return BuildOpponentMoveLocation(Manager, SoccerAICharacter);
+		// El arquero defensor conserva la cobertura especial de barrera.
+		if (SoccerAICharacter->GetTeam() != RestartTeam)
+		{
+			return BuildOpponentMoveLocation(Manager, SoccerAICharacter);
+		}
+
+		// El arquero del equipo ejecutor tampoco participa de la forma ofensiva
+		// de los jugadores de campo: acompana lateralmente la pelota sin dejar
+		// su profundidad segura durante la reanudacion.
+		return Manager.ProjectLocationToNavigation(
+			Manager.GetGoalkeeperMoveLocation(SoccerAICharacter),
+			SoccerAICharacter
+		);
 	}
 
 	if (SoccerAICharacter->GetTeam() == RestartTeam)
