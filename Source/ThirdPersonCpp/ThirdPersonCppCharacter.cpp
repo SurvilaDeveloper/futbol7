@@ -856,7 +856,7 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 	UpdateStrongRunDribbleTurnMovement(DeltaTime);
 	UpdateNormalRunDribbleTurnMovement(DeltaTime);
 
-	UpdateAutoPassCollectCarry();
+	UpdateControlledReceptionCarry();
 
 	UpdatePlayerEnergy(DeltaTime);
 
@@ -1847,6 +1847,7 @@ void AThirdPersonCppCharacter::EnterManualControl()
 	ClearBallPursuitTarget();
 	ClearHumanBallClaim();
 	ClearHumanDribbleRepositionState();
+	bInitialClickControlledReceptionPending = false;
 	bHumanPhysicalActionRetainsLogicalPossession = false;
 
 	SoccerControlState = ESoccerPlayerControlState::Manual;
@@ -1925,6 +1926,7 @@ void AThirdPersonCppCharacter::StartBallControl()
 
 	ClearHumanJumpHeaderRequest(true, true);
 	PendingKickMode = ESoccerPendingKickMode::None;
+	bInitialClickControlledReceptionPending = false;
 	EnterChasingBall();
 
 	/*
@@ -2112,20 +2114,52 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 	{
 		UpdateAutoPassFollowTargetState();
 
+		const bool bHasAutoPassFootContact =
+			IsBallWithinHumanFootPhysicalContact(ControlledBall);
+
+		// Intermediate contacts continue the auto-pass physically. Possession is
+		// reserved for the terminal phase and still requires real foot contact.
 		if (
-			bAutoPassCanCollect &&
-			DistanceToBall <= AutoPassCollectDistance &&
-			IsBallWithinHumanFootPhysicalContact(ControlledBall)
+			bAutoPassRedirectFinished &&
+			bCanPossessBall &&
+			bHasAutoPassFootContact
 		)
 		{
 			CollectAutoPassBallWithoutCollision();
 			return;
 		}
 
-		RedirectAutoPassBallTowardTargetIfNeeded(DistanceToBall);
+		if (!bAutoPassRedirectFinished)
+		{
+			RedirectAutoPassBallTowardTargetIfNeeded(DistanceToBall);
+		}
 
-		const FVector AutoPassMoveDirection =
-			ToPursuitTarget.GetSafeNormal();
+		FVector AutoPassMoveDirection = FVector::ZeroVector;
+
+		if (bAutoPassRedirectFinished)
+		{
+			// Once redirection is over, close the remaining gap to the real ball.
+			// A predictive pursuit point can otherwise stop the player short.
+			AutoPassMoveDirection = ToBall.GetSafeNormal();
+		}
+		else if (bHasAutoPassFootContact)
+		{
+			// After an intermediate touch, keep running toward the requested mark.
+			// This avoids turning back toward a stale predictive pursuit point.
+			FVector ToAutoPassTarget =
+				AutoPassTargetLocation - GetActorLocation();
+			ToAutoPassTarget.Z = 0.0f;
+			AutoPassMoveDirection = ToAutoPassTarget.GetSafeNormal();
+
+			if (AutoPassMoveDirection.IsNearlyZero())
+			{
+				AutoPassMoveDirection = ToPursuitTarget.GetSafeNormal();
+			}
+		}
+		else
+		{
+			AutoPassMoveDirection = ToPursuitTarget.GetSafeNormal();
+		}
 
 		if (!AutoPassMoveDirection.IsNearlyZero())
 		{
@@ -2150,7 +2184,25 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 	{
 		if (!bHasPendingKick)
 		{
+			const bool bShouldApplyInitialClickReception =
+				bInitialClickControlledReceptionPending;
+
 			PossessBall();
+
+			if (
+				bShouldApplyInitialClickReception &&
+				IsPossessingBall()
+			)
+			{
+				bInitialClickControlledReceptionPending = false;
+				StartControlledReceptionCarry(
+					InitialReceptionCarryDuration,
+					InitialReceptionCarryStartSpeedMultiplier,
+					InitialReceptionCarryMinSpeed,
+					InitialReceptionSoftTouchSpeed,
+					TEXT("InitialClickControlledReception")
+				);
+			}
 		}
 		else if (IsBallAtPlayablePossessionHeight(ControlledBall))
 		{
@@ -2892,6 +2944,7 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 	ClearHumanJumpHeaderRequest(true, true);
 	ClearHumanBallClaim();
 	ClearBallPursuitTarget();
+	bInitialClickControlledReceptionPending = false;
 
 	PendingKickMode = ESoccerPendingKickMode::None;
 	PendingKickTarget = FVector::ZeroVector;
@@ -3246,7 +3299,7 @@ bool AThirdPersonCppCharacter::IsHumanBallActionAllowedNow()
 void AThirdPersonCppCharacter::ClearAutoPassFollowState()
 {
 	bIsAutoPassFollowActive = false;
-	bAutoPassCanCollect = false;
+	bAutoPassRedirectFinished = false;
 	AutoPassTargetLocation = FVector::ZeroVector;
 	LastAutoPassBallLocation = FVector::ZeroVector;
 	LastAutoPassRedirectTime = -1000.0f;
@@ -3254,8 +3307,9 @@ void AThirdPersonCppCharacter::ClearAutoPassFollowState()
 
 void AThirdPersonCppCharacter::StartAutoPassFollow(const FVector& TargetLocation)
 {
+	bInitialClickControlledReceptionPending = false;
 	bIsAutoPassFollowActive = true;
-	bAutoPassCanCollect = false;
+	bAutoPassRedirectFinished = false;
 
 	AutoPassTargetLocation = TargetLocation;
 	AutoPassTargetLocation.Z = 0.0f;
@@ -3324,7 +3378,7 @@ void AThirdPersonCppCharacter::UpdateAutoPassFollowTargetState()
 		return;
 	}
 
-	if (bAutoPassCanCollect)
+	if (bAutoPassRedirectFinished)
 	{
 		return;
 	}
@@ -3351,14 +3405,14 @@ void AThirdPersonCppCharacter::UpdateAutoPassFollowTargetState()
 
 	if (bReachedTarget || bBallBecameLoose)
 	{
-		bAutoPassCanCollect = true;
+		bAutoPassRedirectFinished = true;
 
 		if (GEngine)
 		{
 			const FString Message =
 				bReachedTarget
 				? TEXT("Auto-pase: pelota llego a la zona objetivo")
-				: TEXT("Auto-pase: pelota desviada/lenta, captura habilitada");
+				: TEXT("Auto-pase: pelota desviada/lenta, redireccion finalizada");
 
 			GEngine->AddOnScreenDebugMessage(
 				-1,
@@ -3395,39 +3449,13 @@ void AThirdPersonCppCharacter::CollectAutoPassBallWithoutCollision()
 		return;
 	}
 
-	StartAutoPassCollectCarry();
-
-	FVector Forward = GetActorForwardVector();
-	Forward.Z = 0.0f;
-	Forward = Forward.GetSafeNormal();
-
-	if (Forward.IsNearlyZero())
-	{
-		Forward = FVector::ForwardVector;
-	}
-
-	// The control begins at the ball's real position. This is a physical touch,
-	// so an imperfect collection remains possible and no location is authored.
-	ControlledBall->DribbleTouch(
-		Forward,
+	StartControlledReceptionCarry(
+		AutoPassCollectCarryDuration,
+		AutoPassCollectCarryStartSpeedMultiplier,
+		AutoPassCollectCarryMinSpeed,
 		AutoPassCollectSoftTouchSpeed,
-		0.0f
+		TEXT("AutoPassCollectionSoftTouch")
 	);
-	LogHumanPossessionDebugEvent(
-		TEXT("TOUCH_APPLIED"),
-		TEXT("AutoPassCollectionSoftTouch"),
-		Forward
-	);
-
-	CurrentDribbleDirection = Forward;
-	DesiredDribbleDirection = Forward;
-	bHasDesiredDribbleDirection = true;
-
-	LastDribbleTouchBallLocation = ControlledBall->GetActorLocation();
-	LastDribbleTouchTime = GetWorld()->GetTimeSeconds();
-
-	// Evita que el sistema le dï¿½ otro toque inmediatamente en el frame siguiente.
-	bCanDribbleTouch = false;
 
 	if (GEngine)
 	{
@@ -3447,7 +3475,7 @@ void AThirdPersonCppCharacter::RedirectAutoPassBallTowardTargetIfNeeded(float Di
 		return;
 	}
 
-	if (!bIsAutoPassFollowActive || bAutoPassCanCollect)
+	if (!bIsAutoPassFollowActive || bAutoPassRedirectFinished)
 	{
 		return;
 	}
@@ -3511,9 +3539,21 @@ void AThirdPersonCppCharacter::RedirectAutoPassBallTowardTargetIfNeeded(float Di
 	}
 }
 
-void AThirdPersonCppCharacter::StartAutoPassCollectCarry()
+void AThirdPersonCppCharacter::StartControlledReceptionCarry(
+	float CarryDuration,
+	float CarryStartSpeedMultiplier,
+	float CarryMinSpeed,
+	float SoftTouchSpeed,
+	const TCHAR* ReceptionReason
+)
 {
-	if (GetWorld() == nullptr)
+	ClearControlledReceptionCarryState();
+
+	if (
+		GetWorld() == nullptr ||
+		ControlledBall == nullptr ||
+		!IsPossessingBall()
+	)
 	{
 		return;
 	}
@@ -3521,78 +3561,134 @@ void AThirdPersonCppCharacter::StartAutoPassCollectCarry()
 	FVector CurrentVelocity = GetVelocity();
 	CurrentVelocity.Z = 0.0f;
 
-	AutoPassCollectCarryDirection = CurrentVelocity.GetSafeNormal();
+	ControlledReceptionCarryDirection = CurrentVelocity.GetSafeNormal();
 
-	if (AutoPassCollectCarryDirection.IsNearlyZero())
+	if (ControlledReceptionCarryDirection.IsNearlyZero())
 	{
-		AutoPassCollectCarryDirection = GetActorForwardVector();
-		AutoPassCollectCarryDirection.Z = 0.0f;
-		AutoPassCollectCarryDirection = AutoPassCollectCarryDirection.GetSafeNormal();
+		ControlledReceptionCarryDirection = GetActorForwardVector();
+		ControlledReceptionCarryDirection.Z = 0.0f;
+		ControlledReceptionCarryDirection =
+			ControlledReceptionCarryDirection.GetSafeNormal();
 	}
 
-	if (AutoPassCollectCarryDirection.IsNearlyZero())
+	ControlledReceptionCarryDuration = FMath::Max(0.0f, CarryDuration);
+
+	if (
+		!ControlledReceptionCarryDirection.IsNearlyZero() &&
+		ControlledReceptionCarryDuration > KINDA_SMALL_NUMBER
+	)
 	{
-		return;
+		const float CurrentSpeed = GetVelocity().Size2D();
+
+		ControlledReceptionCarryStartSpeed = FMath::Max(
+			CurrentSpeed * FMath::Max(0.0f, CarryStartSpeedMultiplier),
+			FMath::Max(0.0f, CarryMinSpeed)
+		);
+
+		bIsControlledReceptionCarrying = true;
+		ControlledReceptionCarryStartTime = GetWorld()->GetTimeSeconds();
+		ControlledReceptionCarryEndTime =
+			ControlledReceptionCarryStartTime +
+			ControlledReceptionCarryDuration;
 	}
 
-	const float CurrentSpeed = GetVelocity().Size2D();
+	FVector Forward = GetActorForwardVector();
+	Forward.Z = 0.0f;
+	Forward = Forward.GetSafeNormal();
 
-	AutoPassCollectCarryStartSpeed = FMath::Max(
-		CurrentSpeed * AutoPassCollectCarryStartSpeedMultiplier,
-		AutoPassCollectCarryMinSpeed
+	if (Forward.IsNearlyZero())
+	{
+		Forward = ControlledReceptionCarryDirection;
+	}
+
+	if (Forward.IsNearlyZero())
+	{
+		Forward = FVector::ForwardVector;
+	}
+
+	// Reception always starts from the ball's real rigid-body location. The
+	// controlled touch changes only its physical velocity; no location is set.
+	ControlledBall->DribbleTouch(
+		Forward,
+		FMath::Max(0.0f, SoftTouchSpeed),
+		0.0f
+	);
+	LogHumanPossessionDebugEvent(
+		TEXT("TOUCH_APPLIED"),
+		ReceptionReason,
+		Forward
 	);
 
-	bIsAutoPassCollectCarrying = true;
+	CurrentDribbleDirection = Forward;
+	DesiredDribbleDirection = Forward;
+	bHasDesiredDribbleDirection = true;
 
-	AutoPassCollectCarryStartTime = GetWorld()->GetTimeSeconds();
+	LastDribbleTouchBallLocation = ControlledBall->GetActorLocation();
+	LastDribbleTouchTime = GetWorld()->GetTimeSeconds();
 
-	AutoPassCollectCarryEndTime =
-		AutoPassCollectCarryStartTime + AutoPassCollectCarryDuration;
+	// Prevent the normal dribble loop from adding another touch next frame.
+	bCanDribbleTouch = false;
 }
 
-void AThirdPersonCppCharacter::UpdateAutoPassCollectCarry()
+void AThirdPersonCppCharacter::UpdateControlledReceptionCarry()
 {
-	if (!bIsAutoPassCollectCarrying)
+	if (!bIsControlledReceptionCarrying)
 	{
 		return;
 	}
 
 	if (GetWorld() == nullptr || GetCharacterMovement() == nullptr)
 	{
-		bIsAutoPassCollectCarrying = false;
+		ClearControlledReceptionCarryState();
 		return;
 	}
 
 	const float CurrentTime = GetWorld()->GetTimeSeconds();
 
-	if (CurrentTime >= AutoPassCollectCarryEndTime)
+	if (
+		CurrentTime >= ControlledReceptionCarryEndTime ||
+		ControlledReceptionCarryDuration <= KINDA_SMALL_NUMBER
+	)
 	{
-		bIsAutoPassCollectCarrying = false;
-		AutoPassCollectCarryStartTime = 0.0f;
-		AutoPassCollectCarryEndTime = 0.0f;
-		AutoPassCollectCarryStartSpeed = 0.0f;
-		AutoPassCollectCarryDirection = FVector::ZeroVector;
+		ClearControlledReceptionCarryState();
 		return;
 	}
 
 	const float Alpha = FMath::Clamp(
-		(CurrentTime - AutoPassCollectCarryStartTime) / AutoPassCollectCarryDuration,
+		(CurrentTime - ControlledReceptionCarryStartTime) /
+			ControlledReceptionCarryDuration,
 		0.0f,
 		1.0f
 	);
 
-	const float SmoothAlpha = FMath::InterpEaseOut(0.0f, 1.0f, Alpha, 2.0f);
+	const float SmoothAlpha = FMath::InterpEaseOut(
+		0.0f,
+		1.0f,
+		Alpha,
+		2.0f
+	);
 
 	const float CurrentCarrySpeed = FMath::Lerp(
-		AutoPassCollectCarryStartSpeed,
+		ControlledReceptionCarryStartSpeed,
 		0.0f,
 		SmoothAlpha
 	);
 
-	FVector NewVelocity = AutoPassCollectCarryDirection * CurrentCarrySpeed;
+	FVector NewVelocity =
+		ControlledReceptionCarryDirection * CurrentCarrySpeed;
 	NewVelocity.Z = GetCharacterMovement()->Velocity.Z;
 
 	GetCharacterMovement()->Velocity = NewVelocity;
+}
+
+void AThirdPersonCppCharacter::ClearControlledReceptionCarryState()
+{
+	bIsControlledReceptionCarrying = false;
+	ControlledReceptionCarryDuration = 0.0f;
+	ControlledReceptionCarryStartTime = 0.0f;
+	ControlledReceptionCarryEndTime = 0.0f;
+	ControlledReceptionCarryStartSpeed = 0.0f;
+	ControlledReceptionCarryDirection = FVector::ZeroVector;
 }
 
 void AThirdPersonCppCharacter::ClearHumanDribbleRepositionState()
@@ -3870,7 +3966,7 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 	{
 		ClearHumanDribbleRepositionState();
 
-		if (bIsAutoPassCollectCarrying)
+		if (bIsControlledReceptionCarrying)
 		{
 			return;
 		}
@@ -6107,6 +6203,7 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 
 		if (IsValid(OpponentPossessingAI))
 		{
+			bInitialClickControlledReceptionPending = false;
 			StartHumanStealAttempt(OpponentPossessingAI);
 			return;
 		}
@@ -6136,6 +6233,7 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 
 		ActivateHumanBallClaim();
 		EnterChasingBall();
+		bInitialClickControlledReceptionPending = true;
 
 		/* First click asks for a controlled reception: chest, then soft head. */
 		if (!TryStartHumanAerialApproach(
@@ -6428,6 +6526,10 @@ void AThirdPersonCppCharacter::StoreKickTarget(ESoccerPendingKickMode KickMode)
 
 		return;
 	}
+
+	// A valid follow-up click replaces the first-click reception with the
+	// requested kick/pass action.
+	bInitialClickControlledReceptionPending = false;
 
 	// StoreKickTarget is reached only from the left/right click handlers. Once
 	// the field target is valid, the human owns this recovery attempt until the

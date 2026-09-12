@@ -250,8 +250,15 @@ protected:
 	void UpdateAutoPassFollowTargetState();
 	void CollectAutoPassBallWithoutCollision();
 	void RedirectAutoPassBallTowardTargetIfNeeded(float DistanceToBall);
-void StartAutoPassCollectCarry();
-	void UpdateAutoPassCollectCarry();
+	void StartControlledReceptionCarry(
+		float CarryDuration,
+		float CarryStartSpeedMultiplier,
+		float CarryMinSpeed,
+		float SoftTouchSpeed,
+		const TCHAR* ReceptionReason
+	);
+	void UpdateControlledReceptionCarry();
+	void ClearControlledReceptionCarryState();
 
 	bool HasAutoPassBallReachedTarget(
 		const FVector& PreviousBallLocation,
@@ -573,18 +580,31 @@ private:
 
 	float LastKickTime = -1000.0f;
 
+	UPROPERTY(EditAnywhere, Category = "Soccer|Control|Initial Reception", meta = (ClampMin = "0.0"))
+		float InitialReceptionSoftTouchSpeed = 120.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Control|Initial Reception", meta = (ClampMin = "0.0"))
+		float InitialReceptionCarryDuration = 0.35f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Control|Initial Reception", meta = (ClampMin = "0.0"))
+		float InitialReceptionCarryStartSpeedMultiplier = 0.65f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Control|Initial Reception", meta = (ClampMin = "0.0"))
+		float InitialReceptionCarryMinSpeed = 180.0f;
+
+	bool bInitialClickControlledReceptionPending = false;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|Auto Pass")
 		float AutoPassTargetArrivalRadius = 120.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Soccer|Auto Pass")
-		float AutoPassCollectDistance = 130.0f;
-
+	// Target arrival or a loose-ball slowdown opens the terminal recovery phase.
+	// Possession still requires the post-kick delay plus real foot contact.
 	UPROPERTY(EditAnywhere, Category = "Soccer|Auto Pass")
 		float AutoPassLooseBallCollectSpeed = 120.0f;
 
 	bool bIsAutoPassFollowActive = false;
 
-	bool bAutoPassCanCollect = false;
+	bool bAutoPassRedirectFinished = false;
 
 	FVector AutoPassTargetLocation = FVector::ZeroVector;
 
@@ -622,15 +642,17 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|Auto Pass")
 		float AutoPassCollectCarryMinSpeed = 180.0f;
 
-	bool bIsAutoPassCollectCarrying = false;
+	bool bIsControlledReceptionCarrying = false;
 
-	float AutoPassCollectCarryEndTime = 0.0f;
+	float ControlledReceptionCarryDuration = 0.0f;
 
-	float AutoPassCollectCarryStartTime = 0.0f;
+	float ControlledReceptionCarryEndTime = 0.0f;
 
-	float AutoPassCollectCarryStartSpeed = 0.0f;
+	float ControlledReceptionCarryStartTime = 0.0f;
 
-	FVector AutoPassCollectCarryDirection = FVector::ZeroVector;
+	float ControlledReceptionCarryStartSpeed = 0.0f;
+
+	FVector ControlledReceptionCarryDirection = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Control")
 		float PossessedBallForwardOffset = 60.0f; ////////////

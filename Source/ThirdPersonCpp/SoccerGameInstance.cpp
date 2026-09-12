@@ -123,6 +123,11 @@ bool USoccerGameInstance::RefreshPlayerProfileRegistry()
     FAssetRegistryModule& AssetRegistryModule =
         FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 
+    // Selected Viewport reuses the editor's already-populated registry, while
+    // Standalone starts in a separate process. Complete discovery before the
+    // class queries so both modes resolve the same runtime Data Assets.
+    AssetRegistryModule.Get().SearchAllAssets(true);
+
     TArray<FAssetData> CatalogAssets;
     AssetRegistryModule.Get().GetAssetsByClass(
         USoccerSquadCatalog::StaticClass()->GetFName(),
