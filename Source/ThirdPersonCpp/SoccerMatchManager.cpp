@@ -533,13 +533,24 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 void ASoccerMatchManager::UpdateGroundBodyContests(float DeltaTime)
 {
 	UWorld* World = GetWorld();
+	const bool bOpenPlayGroundContacts =
+		MatchPlayState == ESoccerMatchPlayState::Playing &&
+		!IsRestartContextActive();
+	const bool bRestartWaitingGroundContacts =
+		IsRestartContextActive() &&
+		ActiveMatchState &&
+		(
+			ActiveMatchState->GetStateId() ==
+				ESoccerMatchStateId::BallOutOfPlayDelay ||
+			ActiveMatchState->GetPhase() == ESoccerStatePhase::Preparation ||
+			ActiveMatchState->GetPhase() == ESoccerStatePhase::Execution
+		);
 	const bool bCanResolveGroundContacts =
 		bEnableGroundBodyContests &&
 		World != nullptr &&
 		GetNetMode() != NM_Client &&
 		IsMatchPeriodGameplayActive() &&
-		MatchPlayState == ESoccerMatchPlayState::Playing &&
-		!IsRestartContextActive() &&
+		(bOpenPlayGroundContacts || bRestartWaitingGroundContacts) &&
 		!UGameplayStatics::IsGamePaused(World);
 
 	if (!bCanResolveGroundContacts)
@@ -547,6 +558,61 @@ void ASoccerMatchManager::UpdateGroundBodyContests(float DeltaTime)
 		GroundBodyContestUpdateAccumulator = 0.0f;
 		return;
 	}
+
+	// Restart waiting still allows ordinary opponents to compete for position.
+	// The active taker is excluded so contact cannot delay or invalidate the
+	// restart itself. A penalty goalkeeper is likewise an official participant
+	// whose exact legal position must remain authoritative.
+	const auto IsProtectedRestartParticipant =
+		[this, bRestartWaitingGroundContacts](ASoccerCharacterBase* Character)
+		{
+			if (
+				!bRestartWaitingGroundContacts ||
+				!IsValid(Character)
+			)
+			{
+				return false;
+			}
+
+			ASoccerAICharacter* AICharacter =
+				Cast<ASoccerAICharacter>(Character);
+			AThirdPersonCppCharacter* HumanCharacter =
+				Cast<AThirdPersonCppCharacter>(Character);
+
+			switch (ActiveRestartType)
+			{
+			case ESoccerRestartType::Kickoff:
+				return
+					IsKickoffTaker(AICharacter) ||
+					IsHumanFootRestartTaker(HumanCharacter);
+
+			case ESoccerRestartType::OffsideFreeKick:
+			case ESoccerRestartType::DirectFreeKick:
+				return
+					IsOffsideRestartTaker(AICharacter) ||
+					IsHumanFreeKickTaker(HumanCharacter);
+
+			case ESoccerRestartType::ThrowIn:
+				return
+					IsThrowInTaker(AICharacter) ||
+					IsHumanThrowInTaker(HumanCharacter);
+
+			case ESoccerRestartType::CornerKick:
+			case ESoccerRestartType::GoalKick:
+				return
+					IsGoalLineRestartTaker(AICharacter) ||
+					IsHumanFootRestartTaker(HumanCharacter);
+
+			case ESoccerRestartType::PenaltyKick:
+				return
+					IsPenaltyKickTaker(Character) ||
+					IsPenaltyKickDefendingGoalkeeper(AICharacter);
+
+			case ESoccerRestartType::None:
+			default:
+				return false;
+			}
+		};
 
 	GroundBodyContestUpdateAccumulator += FMath::Max(0.0f, DeltaTime);
 	const float SafeUpdateInterval = FMath::Max(
@@ -573,6 +639,14 @@ void ASoccerMatchManager::UpdateGroundBodyContests(float DeltaTime)
 		ASoccerCharacterBase* Candidate = *It;
 		if (!IsValid(Candidate) || !Candidate->CanParticipateInGroundBodyContest())
 		{
+			continue;
+		}
+
+		if (IsProtectedRestartParticipant(Candidate))
+		{
+			// Remove any short response tail left from the frame in which this
+			// character became the designated restart participant.
+			Candidate->ResetGroundBodyContactResponse();
 			continue;
 		}
 
