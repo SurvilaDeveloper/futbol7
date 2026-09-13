@@ -34,6 +34,7 @@ struct FSoccerReplayCharacterSample
     bool bPossessingBall = false;
     bool bChasingBall = false;
     bool bKicking = false;
+    bool bBracingPhysicalContact = false;
     bool bForceDribbleTurnLocomotion = false;
     float ForcedDribbleTurnLocomotionSpeed = 0.0f;
 

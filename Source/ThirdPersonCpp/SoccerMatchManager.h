@@ -763,6 +763,102 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	// Ground contacts are resolved centrally so each opposing pair is evaluated
+	// exactly once. Strength supplies force/resistance, WeightKg supplies moderate
+	// momentum/inertia, Balance supplies stability, and the response is swept.
+	void UpdateGroundBodyContests(float DeltaTime);
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground")
+	bool bEnableGroundBodyContests = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.01", ClampMax = "0.20"))
+	float GroundBodyContestUpdateInterval = 0.04f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.0", ClampMax = "40.0"))
+	float GroundBodyContestContactExtraRadius = 6.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.0", ClampMax = "200.0"))
+	float GroundBodyContestMaximumVerticalSeparation = 70.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float GroundBodyContestMomentumDriveWeight = 0.65f;
+
+	// WeightKg contributes moderately to running momentum and inversely to the
+	// acceleration suffered on impact. Strength remains the primary attribute.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground|Weight", meta = (ClampMin = "40.0", ClampMax = "120.0"))
+	float GroundBodyContestReferenceWeightKg = 75.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground|Weight", meta = (ClampMin = "30.0", ClampMax = "100.0"))
+	float GroundBodyContestMinimumWeightKg = 45.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground|Weight", meta = (ClampMin = "80.0", ClampMax = "180.0"))
+	float GroundBodyContestMaximumWeightKg = 115.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground|Weight", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float GroundBodyContestWeightMomentumInfluence = 0.25f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground|Weight", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float GroundBodyContestWeightInertiaInfluence = 0.35f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float GroundBodyContestMinimumDrive = 0.08f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float GroundBodyContestNetDriveDeadZone = 0.03f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.0", ClampMax = "3000.0"))
+	float GroundBodyContestPushAcceleration = 720.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.0", ClampMax = "600.0"))
+	float GroundBodyContestMaximumPushSpeed = 165.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.0", ClampMax = "300.0"))
+	float GroundBodyContestMaximumTranslationSpeed = 125.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.04", ClampMax = "0.50"))
+	float GroundBodyContestPersistentPushHoldTime = 0.16f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float GroundBodyContestOpposingVelocitySuppression = 1.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+	float GroundBodyBalanceReactionMultiplierAtZero = 1.08f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+	float GroundBodyBalanceReactionMultiplierAtHundred = 0.92f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+	float GroundBodyStrengthReactionMultiplierAtZero = 1.15f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Ground", meta = (ClampMin = "0.50", ClampMax = "1.50"))
+	float GroundBodyStrengthReactionMultiplierAtHundred = 0.70f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Brace", meta = (ClampMin = "-1.0", ClampMax = "0.0"))
+	float GroundBodyBraceRearDotThreshold = -0.20f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Brace", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float GroundBodyBraceMaximumOwnMovementAlpha = 0.24f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Brace", meta = (ClampMin = "0.0", ClampMax = "0.50"))
+	float GroundBodyRearSurpriseReactionDelay = 0.15f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Brace", meta = (ClampMin = "0.10", ClampMax = "2.0"))
+	float GroundBodyRearAwarenessHoldTime = 0.60f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Brace", meta = (ClampMin = "1.0", ClampMax = "3.0"))
+	float GroundBodyRearSurpriseResponseMultiplier = 1.35f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Brace", meta = (ClampMin = "0.10", ClampMax = "1.0"))
+	float GroundBodyBraceIncomingReactionScale = 0.68f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Brace", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float GroundBodyBraceHoldTime = 0.22f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Physical Contest|Debug")
+	bool bDrawGroundBodyContestDebug = false;
+
+	float GroundBodyContestUpdateAccumulator = 0.0f;
+
 	/** Shared visual catalog used by human and AI player profiles in this match. */
 	UPROPERTY(EditAnywhere, Category = "Soccer|Player Appearance")
 	USoccerPlayerAppearanceCatalog* PlayerAppearanceCatalog = nullptr;

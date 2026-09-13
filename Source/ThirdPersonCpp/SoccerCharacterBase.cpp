@@ -341,6 +341,8 @@ void ASoccerCharacterBase::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	UpdateGroundBodyContestPush(DeltaTime);
+	UpdateGroundBodyBraceState();
 	UpdateSoccerAnimationState();
 	UpdateGroundInterceptionPredictionDebug(DeltaTime);
 	UpdateTackle();
@@ -2463,6 +2465,7 @@ void ASoccerCharacterBase::ResetRuntimeStateForIncomingSubstitute()
 	bSoccerIsPossessingBall = false;
 	bSoccerIsChasingBall = false;
 	bSoccerIsKicking = false;
+	ResetGroundBodyContactResponse();
 	SoccerEnergyPercent = 1.0f;
 	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
 	{
@@ -3368,6 +3371,497 @@ float ASoccerCharacterBase::GetPlayerProfileStrengthTackleFallInertiaMultiplier(
 		StrengthTackleFallInertiaMultiplierAtHundred,
 		GetPlayerProfileStrengthAlpha()
 	);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileWeightKg(float DefaultWeightKg) const
+{
+	return HasPlayerProfile()
+		? FMath::Max(1.0f, PlayerProfile->Identity.WeightKg)
+		: FMath::Max(1.0f, DefaultWeightKg);
+}
+
+float ASoccerCharacterBase::GetPlayerProfileBalanceBodyReactionMultiplier(
+	float MultiplierAtZero,
+	float MultiplierAtHundred
+) const
+{
+	if (!HasPlayerProfile())
+	{
+		return 1.0f;
+	}
+
+	const float BalanceAlpha = FMath::Clamp(
+		PlayerProfile->Attributes.Physical.Balance,
+		0,
+		100
+	) / 100.0f;
+
+	return FMath::Lerp(
+		MultiplierAtZero,
+		MultiplierAtHundred,
+		BalanceAlpha
+	);
+}
+
+bool ASoccerCharacterBase::CanParticipateInGroundBodyContest() const
+{
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+
+	if (
+		Movement == nullptr ||
+		Capsule == nullptr ||
+		!GetActorEnableCollision() ||
+		!IsActorTickEnabled() ||
+		IsHidden() ||
+		Capsule->GetCollisionEnabled() == ECollisionEnabled::NoCollision ||
+		!Movement->IsMovingOnGround()
+	)
+	{
+		return false;
+	}
+
+	if (
+		IsTackleActive() ||
+		IsTackleFallReactionActive() ||
+		IsTackleEvasionActive() ||
+		IsAerialActionQueuedOrPlaying()
+	)
+	{
+		return false;
+	}
+
+	const USkeletalMeshComponent* CharacterMesh = GetMesh();
+	const UAnimInstance* AnimInstance =
+		CharacterMesh != nullptr
+		? CharacterMesh->GetAnimInstance()
+		: nullptr;
+
+	return AnimInstance == nullptr || !AnimInstance->IsAnyMontagePlaying();
+}
+
+float ASoccerCharacterBase::GetGroundBodyContestDriveToward(
+	const FVector& WorldDirection,
+	float MomentumDriveWeight
+) const
+{
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	FVector SafeDirection = WorldDirection;
+	SafeDirection.Z = 0.0f;
+	SafeDirection = SafeDirection.GetSafeNormal();
+
+	if (Movement == nullptr || SafeDirection.IsNearlyZero())
+	{
+		return 0.0f;
+	}
+
+	FVector Acceleration = Movement->GetCurrentAcceleration();
+	Acceleration.Z = 0.0f;
+
+	const float AccelerationMagnitude = Acceleration.Size();
+	const float AccelerationAlpha = FMath::Clamp(
+		AccelerationMagnitude /
+			FMath::Max(1.0f, Movement->GetMaxAcceleration()),
+		0.0f,
+		1.0f
+	);
+	const float DirectionalAccelerationAlpha =
+		AccelerationMagnitude > KINDA_SMALL_NUMBER
+		? FMath::Max(
+			0.0f,
+			FVector::DotProduct(
+				Acceleration / AccelerationMagnitude,
+				SafeDirection
+			)
+		) * AccelerationAlpha
+		: 0.0f;
+
+	FVector HorizontalVelocity = Movement->Velocity;
+	HorizontalVelocity.Z = 0.0f;
+	const float DirectionalSpeed = FMath::Max(
+		0.0f,
+		FVector::DotProduct(HorizontalVelocity, SafeDirection)
+	);
+	const float DirectionalMomentumAlpha = FMath::Clamp(
+		DirectionalSpeed / FMath::Max(1.0f, Movement->GetMaxSpeed()),
+		0.0f,
+		1.0f
+	) * FMath::Clamp(MomentumDriveWeight, 0.0f, 1.0f);
+
+	return FMath::Clamp(
+		FMath::Max(
+			DirectionalAccelerationAlpha,
+			DirectionalMomentumAlpha
+		),
+		0.0f,
+		1.0f
+	);
+}
+
+float ASoccerCharacterBase::GetGroundBodyContestOwnMovementAlpha() const
+{
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (Movement == nullptr)
+	{
+		return 0.0f;
+	}
+
+	FVector Acceleration = Movement->GetCurrentAcceleration();
+	Acceleration.Z = 0.0f;
+	FVector HorizontalVelocity = Movement->Velocity;
+	HorizontalVelocity.Z = 0.0f;
+	// A displacement imposed by the contest is not the player's own locomotion.
+	// Removing it here lets an idle character adopt the in-place brace even while
+	// the opponent is visibly moving the capsule.
+	HorizontalVelocity -= GroundBodyContestPersistentPushVelocity;
+	HorizontalVelocity.Z = 0.0f;
+
+	const float AccelerationAlpha = FMath::Clamp(
+		Acceleration.Size() /
+			FMath::Max(1.0f, Movement->GetMaxAcceleration()),
+		0.0f,
+		1.0f
+	);
+	const float SpeedAlpha = FMath::Clamp(
+		HorizontalVelocity.Size() /
+			FMath::Max(1.0f, Movement->GetMaxSpeed()),
+		0.0f,
+		1.0f
+	);
+
+	return FMath::Max(AccelerationAlpha, SpeedAlpha);
+}
+
+bool ASoccerCharacterBase::RegisterGroundBodyRearPressure(
+	float ReactionDelay,
+	float BraceHoldTime,
+	float AwarenessHoldTime,
+	float MaximumOwnMovementAlpha
+)
+{
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return false;
+	}
+
+	const float CurrentWorldTime = World->GetTimeSeconds();
+	const float SafeReactionDelay = FMath::Max(0.0f, ReactionDelay);
+	const float SafeBraceHoldTime = FMath::Max(0.0f, BraceHoldTime);
+	const float SafeAwarenessHoldTime = FMath::Max(
+		SafeBraceHoldTime,
+		AwarenessHoldTime
+	);
+	const bool bWasSurprised =
+		CurrentWorldTime > GroundBodyRearAwarenessEndWorldTime;
+
+	GroundBodyBraceMaximumOwnMovementAlpha = FMath::Clamp(
+		MaximumOwnMovementAlpha,
+		0.0f,
+		1.0f
+	);
+
+	if (bWasSurprised)
+	{
+		// The first rear impact lands before the character has time to adopt the
+		// protective stance. The animation begins only after this reaction delay.
+		bSoccerIsBracingPhysicalContact = false;
+		GroundBodyBraceStartWorldTime =
+			CurrentWorldTime + SafeReactionDelay;
+	}
+	else if (CurrentWorldTime > GroundBodyBraceEndWorldTime)
+	{
+		// The character still remembers the pressure source, so a quick renewed
+		// contact does not count as another surprise and can be braced immediately.
+		bSoccerIsBracingPhysicalContact = false;
+		GroundBodyBraceStartWorldTime = CurrentWorldTime;
+	}
+
+	const float HoldStartDelay = bWasSurprised ? SafeReactionDelay : 0.0f;
+	GroundBodyBraceEndWorldTime = FMath::Max(
+		GroundBodyBraceEndWorldTime,
+		CurrentWorldTime + HoldStartDelay + SafeBraceHoldTime
+	);
+	GroundBodyRearAwarenessEndWorldTime = FMath::Max(
+		GroundBodyRearAwarenessEndWorldTime,
+		CurrentWorldTime + SafeAwarenessHoldTime
+	);
+
+	return bWasSurprised;
+}
+
+void ASoccerCharacterBase::ApplyGroundBodyContestPush(
+	const FVector& WorldDirection,
+	float SpeedChange,
+	float MaximumPushSpeed,
+	float PersistentTranslationSpeed,
+	float MaximumPersistentTranslationSpeed,
+	float PersistentHoldTime,
+	float OpposingVelocitySuppression
+)
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	UWorld* World = GetWorld();
+	FVector SafeDirection = WorldDirection;
+	SafeDirection.Z = 0.0f;
+	SafeDirection = SafeDirection.GetSafeNormal();
+
+	if (
+		Movement == nullptr ||
+		World == nullptr ||
+		SafeDirection.IsNearlyZero()
+	)
+	{
+		return;
+	}
+
+	if (
+		SpeedChange > KINDA_SMALL_NUMBER &&
+		MaximumPushSpeed > KINDA_SMALL_NUMBER
+	)
+	{
+		FVector HorizontalVelocity = Movement->Velocity;
+		HorizontalVelocity.Z = 0.0f;
+		const float CurrentPushSpeed = FVector::DotProduct(
+			HorizontalVelocity,
+			SafeDirection
+		);
+		const float AvailableSpeedChange =
+			FMath::Max(0.0f, MaximumPushSpeed - CurrentPushSpeed);
+		const float AppliedSpeedChange = FMath::Min(
+			FMath::Max(0.0f, SpeedChange),
+			AvailableSpeedChange
+		);
+
+		if (AppliedSpeedChange > KINDA_SMALL_NUMBER)
+		{
+			// This remains a real CharacterMovement impulse. WeightKg is resolved by
+			// the match contest formula instead of changing engine mass globally.
+			Movement->AddImpulse(
+				SafeDirection * AppliedSpeedChange,
+				true
+			);
+		}
+	}
+
+	const float SafeMaximumPersistentSpeed = FMath::Max(
+		0.0f,
+		MaximumPersistentTranslationSpeed
+	);
+	const float SafePersistentSpeed = FMath::Min(
+		FMath::Max(0.0f, PersistentTranslationSpeed),
+		SafeMaximumPersistentSpeed
+	);
+	const float SafePersistentHoldTime = FMath::Max(
+		0.0f,
+		PersistentHoldTime
+	);
+
+	if (
+		SafePersistentSpeed <= KINDA_SMALL_NUMBER ||
+		SafeMaximumPersistentSpeed <= KINDA_SMALL_NUMBER ||
+		SafePersistentHoldTime <= KINDA_SMALL_NUMBER
+	)
+	{
+		return;
+	}
+
+	const float CurrentWorldTime = World->GetTimeSeconds();
+	const FVector RequestedPushVelocity =
+		SafeDirection * SafePersistentSpeed;
+	const bool bCombiningSameContactUpdate = FMath::IsNearlyEqual(
+		GroundBodyContestPersistentPushLastRefreshWorldTime,
+		CurrentWorldTime,
+		KINDA_SMALL_NUMBER
+	);
+
+	if (bCombiningSameContactUpdate)
+	{
+		GroundBodyContestPersistentPushMaximumSpeed = FMath::Max(
+			GroundBodyContestPersistentPushMaximumSpeed,
+			SafeMaximumPersistentSpeed
+		);
+		GroundBodyContestPersistentPushVelocity += RequestedPushVelocity;
+	}
+	else
+	{
+		GroundBodyContestPersistentPushMaximumSpeed =
+			SafeMaximumPersistentSpeed;
+		GroundBodyContestPersistentPushVelocity = RequestedPushVelocity;
+	}
+
+	const float CombinedPersistentPushSpeed =
+		GroundBodyContestPersistentPushVelocity.Size2D();
+	if (
+		CombinedPersistentPushSpeed >
+			GroundBodyContestPersistentPushMaximumSpeed &&
+		CombinedPersistentPushSpeed > KINDA_SMALL_NUMBER
+	)
+	{
+		GroundBodyContestPersistentPushVelocity *=
+			GroundBodyContestPersistentPushMaximumSpeed /
+			CombinedPersistentPushSpeed;
+	}
+	GroundBodyContestPersistentPushLastRefreshWorldTime = CurrentWorldTime;
+	GroundBodyContestPersistentPushEndWorldTime =
+		CurrentWorldTime + SafePersistentHoldTime;
+	GroundBodyContestPersistentPushHoldDuration = SafePersistentHoldTime;
+	GroundBodyContestOpposingVelocitySuppression = FMath::Clamp(
+		OpposingVelocitySuppression,
+		0.0f,
+		1.0f
+	);
+}
+
+void ASoccerCharacterBase::UpdateGroundBodyContestPush(float DeltaTime)
+{
+	if (GroundBodyContestPersistentPushVelocity.IsNearlyZero())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (
+		World == nullptr ||
+		Movement == nullptr ||
+		!CanParticipateInGroundBodyContest()
+	)
+	{
+		ResetGroundBodyContactResponse();
+		return;
+	}
+
+	const float CurrentWorldTime = World->GetTimeSeconds();
+	const float RemainingHoldTime =
+		GroundBodyContestPersistentPushEndWorldTime - CurrentWorldTime;
+	if (RemainingHoldTime <= 0.0f)
+	{
+		GroundBodyContestPersistentPushVelocity = FVector::ZeroVector;
+		GroundBodyContestPersistentPushMaximumSpeed = 0.0f;
+		GroundBodyContestPersistentPushLastRefreshWorldTime = -1000.0f;
+		GroundBodyContestPersistentPushEndWorldTime = -1000.0f;
+		GroundBodyContestPersistentPushHoldDuration = 0.0f;
+		GroundBodyContestOpposingVelocitySuppression = 0.0f;
+		return;
+	}
+
+	// Hold full response between 40 ms contest samples, then fade through the
+	// second half of the tail if physical contact has stopped.
+	const float FadeDuration = FMath::Max(
+		KINDA_SMALL_NUMBER,
+		GroundBodyContestPersistentPushHoldDuration * 0.5f
+	);
+	const float PersistenceAlpha = FMath::Clamp(
+		RemainingHoldTime / FadeDuration,
+		0.0f,
+		1.0f
+	);
+	const FVector ActivePushVelocity =
+		GroundBodyContestPersistentPushVelocity * PersistenceAlpha;
+	FVector PushDirection = ActivePushVelocity;
+	PushDirection.Z = 0.0f;
+	PushDirection = PushDirection.GetSafeNormal();
+
+	if (PushDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	// Path following may request movement back into the stronger opponent on
+	// the next frame. Remove only that opposing component while contact response
+	// is active; unrelated movement and global braking remain untouched.
+	FVector HorizontalVelocity = Movement->Velocity;
+	HorizontalVelocity.Z = 0.0f;
+	const float VelocityAlongPush = FVector::DotProduct(
+		HorizontalVelocity,
+		PushDirection
+	);
+	if (VelocityAlongPush < 0.0f)
+	{
+		Movement->Velocity -=
+			PushDirection *
+			VelocityAlongPush *
+			GroundBodyContestOpposingVelocitySuppression *
+			PersistenceAlpha;
+	}
+
+	const float SafeDeltaTime = FMath::Clamp(DeltaTime, 0.0f, 0.05f);
+	if (SafeDeltaTime <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	// Character capsules are kinematic. A short persistent swept translation
+	// makes the gained ground visible without teleporting through obstacles.
+	FHitResult MovementHit;
+	AddActorWorldOffset(
+		ActivePushVelocity * SafeDeltaTime,
+		true,
+		&MovementHit,
+		ETeleportType::None
+	);
+}
+
+void ASoccerCharacterBase::UpdateGroundBodyBraceState()
+{
+	const bool bHasRearContactState =
+		bSoccerIsBracingPhysicalContact ||
+		GroundBodyBraceStartWorldTime > -999.0f ||
+		GroundBodyBraceEndWorldTime > -999.0f ||
+		GroundBodyRearAwarenessEndWorldTime > -999.0f;
+	if (!bHasRearContactState)
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	if (World == nullptr || !CanParticipateInGroundBodyContest())
+	{
+		bSoccerIsBracingPhysicalContact = false;
+		GroundBodyBraceStartWorldTime = -1000.0f;
+		GroundBodyBraceEndWorldTime = -1000.0f;
+		GroundBodyRearAwarenessEndWorldTime = -1000.0f;
+		return;
+	}
+
+	const float CurrentWorldTime = World->GetTimeSeconds();
+	if (CurrentWorldTime > GroundBodyRearAwarenessEndWorldTime)
+	{
+		GroundBodyRearAwarenessEndWorldTime = -1000.0f;
+	}
+
+	if (CurrentWorldTime > GroundBodyBraceEndWorldTime)
+	{
+		bSoccerIsBracingPhysicalContact = false;
+		GroundBodyBraceStartWorldTime = -1000.0f;
+		GroundBodyBraceEndWorldTime = -1000.0f;
+		return;
+	}
+
+	const bool bReactionFinished =
+		CurrentWorldTime >= GroundBodyBraceStartWorldTime;
+	const bool bCanUseInPlaceBrace =
+		GetGroundBodyContestOwnMovementAlpha() <=
+			GroundBodyBraceMaximumOwnMovementAlpha;
+	bSoccerIsBracingPhysicalContact =
+		bReactionFinished && bCanUseInPlaceBrace;
+}
+
+void ASoccerCharacterBase::ResetGroundBodyContactResponse()
+{
+	bSoccerIsBracingPhysicalContact = false;
+	GroundBodyBraceStartWorldTime = -1000.0f;
+	GroundBodyBraceEndWorldTime = -1000.0f;
+	GroundBodyRearAwarenessEndWorldTime = -1000.0f;
+	GroundBodyBraceMaximumOwnMovementAlpha = 0.24f;
+
+	GroundBodyContestPersistentPushVelocity = FVector::ZeroVector;
+	GroundBodyContestPersistentPushMaximumSpeed = 0.0f;
+	GroundBodyContestPersistentPushLastRefreshWorldTime = -1000.0f;
+	GroundBodyContestPersistentPushEndWorldTime = -1000.0f;
+	GroundBodyContestPersistentPushHoldDuration = 0.0f;
+	GroundBodyContestOpposingVelocitySuppression = 0.0f;
 }
 
 float ASoccerCharacterBase::GetPlayerProfileAerialAbilityContestScoreAdjustment() const
@@ -4469,6 +4963,11 @@ bool ASoccerCharacterBase::GetSoccerIsKicking() const
 	return bSoccerIsKicking;
 }
 
+bool ASoccerCharacterBase::GetSoccerIsBracingPhysicalContact() const
+{
+	return bSoccerIsBracingPhysicalContact;
+}
+
 float ASoccerCharacterBase::GetSoccerEnergyPercent() const
 {
 	return SoccerEnergyPercent;
@@ -4488,6 +4987,7 @@ void ASoccerCharacterBase::ApplyInstantReplayVisualState(
 	bool bInPossessingBall,
 	bool bInChasingBall,
 	bool bInKicking,
+	bool bInBracingPhysicalContact,
 	bool bInForceDribbleTurnLocomotion,
 	float InForcedDribbleTurnLocomotionSpeed
 )
@@ -4495,6 +4995,7 @@ void ASoccerCharacterBase::ApplyInstantReplayVisualState(
 	bSoccerIsPossessingBall = bInPossessingBall;
 	bSoccerIsChasingBall = bInChasingBall;
 	bSoccerIsKicking = bInKicking;
+	bSoccerIsBracingPhysicalContact = bInBracingPhysicalContact;
 	bSoccerShouldForceDribbleTurnLocomotion =
 		bInForceDribbleTurnLocomotion;
 	SoccerForcedDribbleTurnLocomotionSpeed =

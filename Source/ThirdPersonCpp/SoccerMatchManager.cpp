@@ -516,6 +516,8 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 		return;
 	}
 
+	UpdateGroundBodyContests(DeltaTime);
+
 	if (IsRestartContextActive())
 	{
 		UpdateActiveRestartRestrictionSystem(DeltaTime);
@@ -526,6 +528,449 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 	}
 
 	UpdateActiveMatchState(DeltaTime);
+}
+
+void ASoccerMatchManager::UpdateGroundBodyContests(float DeltaTime)
+{
+	UWorld* World = GetWorld();
+	const bool bCanResolveGroundContacts =
+		bEnableGroundBodyContests &&
+		World != nullptr &&
+		GetNetMode() != NM_Client &&
+		IsMatchPeriodGameplayActive() &&
+		MatchPlayState == ESoccerMatchPlayState::Playing &&
+		!IsRestartContextActive() &&
+		!UGameplayStatics::IsGamePaused(World);
+
+	if (!bCanResolveGroundContacts)
+	{
+		GroundBodyContestUpdateAccumulator = 0.0f;
+		return;
+	}
+
+	GroundBodyContestUpdateAccumulator += FMath::Max(0.0f, DeltaTime);
+	const float SafeUpdateInterval = FMath::Max(
+		0.01f,
+		GroundBodyContestUpdateInterval
+	);
+
+	if (GroundBodyContestUpdateAccumulator < SafeUpdateInterval)
+	{
+		return;
+	}
+
+	// A hitch must not turn one contact update into an explosive shove.
+	const float ContactStepSeconds = FMath::Clamp(
+		GroundBodyContestUpdateAccumulator,
+		SafeUpdateInterval,
+		0.10f
+	);
+	GroundBodyContestUpdateAccumulator = 0.0f;
+
+	TArray<ASoccerCharacterBase*> Contestants;
+	for (TActorIterator<ASoccerCharacterBase> It(World); It; ++It)
+	{
+		ASoccerCharacterBase* Candidate = *It;
+		if (!IsValid(Candidate) || !Candidate->CanParticipateInGroundBodyContest())
+		{
+			continue;
+		}
+
+		// A goalkeeper holding the ball is protected by its dedicated possession
+		// rules and must not be displaced by the ordinary shoulder system.
+		const ASoccerAICharacter* CandidateAI =
+			Cast<ASoccerAICharacter>(Candidate);
+		if (IsValid(CandidateAI) && CandidateAI->IsGoalkeeperHoldingBall())
+		{
+			continue;
+		}
+
+		Contestants.Add(Candidate);
+	}
+
+	const float SafeContactExtraRadius = FMath::Max(
+		0.0f,
+		GroundBodyContestContactExtraRadius
+	);
+	const float SafeMaximumVerticalSeparation = FMath::Max(
+		0.0f,
+		GroundBodyContestMaximumVerticalSeparation
+	);
+	const float SafeMinimumDrive = FMath::Clamp(
+		GroundBodyContestMinimumDrive,
+		0.0f,
+		1.0f
+	);
+	const float SafeMinimumWeightKg = FMath::Max(
+		1.0f,
+		GroundBodyContestMinimumWeightKg
+	);
+	const float SafeMaximumWeightKg = FMath::Max(
+		SafeMinimumWeightKg,
+		GroundBodyContestMaximumWeightKg
+	);
+	const float SafeReferenceWeightKg = FMath::Clamp(
+		GroundBodyContestReferenceWeightKg,
+		SafeMinimumWeightKg,
+		SafeMaximumWeightKg
+	);
+	const float SafeWeightMomentumInfluence = FMath::Clamp(
+		GroundBodyContestWeightMomentumInfluence,
+		0.0f,
+		1.0f
+	);
+	const float SafeWeightInertiaInfluence = FMath::Clamp(
+		GroundBodyContestWeightInertiaInfluence,
+		0.0f,
+		1.0f
+	);
+	const float SafeNetDeadZone = FMath::Clamp(
+		GroundBodyContestNetDriveDeadZone,
+		0.0f,
+		0.95f
+	);
+	const float SafeBraceRearDot = FMath::Clamp(
+		GroundBodyBraceRearDotThreshold,
+		-1.0f,
+		0.0f
+	);
+	const float SafeBraceMaximumOwnMovement = FMath::Clamp(
+		GroundBodyBraceMaximumOwnMovementAlpha,
+		0.0f,
+		1.0f
+	);
+	const float SafeBraceReactionScale = FMath::Clamp(
+		GroundBodyBraceIncomingReactionScale,
+		0.10f,
+		1.0f
+	);
+	const float SafeRearSurpriseReactionDelay = FMath::Max(
+		0.0f,
+		GroundBodyRearSurpriseReactionDelay
+	);
+	const float SafeBraceHoldTime = FMath::Max(
+		0.0f,
+		GroundBodyBraceHoldTime
+	);
+	const float SafeRearAwarenessHoldTime = FMath::Max(
+		SafeBraceHoldTime,
+		GroundBodyRearAwarenessHoldTime
+	);
+	const float SafeRearSurpriseResponseMultiplier = FMath::Max(
+		1.0f,
+		GroundBodyRearSurpriseResponseMultiplier
+	);
+	const float SafePersistentPushHoldTime = FMath::Max(
+		SafeUpdateInterval,
+		GroundBodyContestPersistentPushHoldTime
+	);
+	const float SafeOpposingVelocitySuppression = FMath::Clamp(
+		GroundBodyContestOpposingVelocitySuppression,
+		0.0f,
+		1.0f
+	);
+	const float SafeMaximumTranslationSpeed = FMath::Max(
+		0.0f,
+		GroundBodyContestMaximumTranslationSpeed
+	);
+
+	for (int32 FirstIndex = 0; FirstIndex < Contestants.Num(); ++FirstIndex)
+	{
+		ASoccerCharacterBase* FirstCharacter = Contestants[FirstIndex];
+		const UCapsuleComponent* FirstCapsule =
+			FirstCharacter->GetCapsuleComponent();
+		if (FirstCapsule == nullptr)
+		{
+			continue;
+		}
+
+		for (
+			int32 SecondIndex = FirstIndex + 1;
+			SecondIndex < Contestants.Num();
+			++SecondIndex
+		)
+		{
+			ASoccerCharacterBase* SecondCharacter = Contestants[SecondIndex];
+			if (
+				!IsValid(SecondCharacter) ||
+				FirstCharacter->GetTeam() == SecondCharacter->GetTeam()
+			)
+			{
+				continue;
+			}
+
+			const UCapsuleComponent* SecondCapsule =
+				SecondCharacter->GetCapsuleComponent();
+			if (SecondCapsule == nullptr)
+			{
+				continue;
+			}
+
+			const FVector FirstLocation = FirstCharacter->GetActorLocation();
+			const FVector SecondLocation = SecondCharacter->GetActorLocation();
+			if (
+				FMath::Abs(SecondLocation.Z - FirstLocation.Z) >
+				SafeMaximumVerticalSeparation
+			)
+			{
+				continue;
+			}
+
+			FVector FirstToSecond = SecondLocation - FirstLocation;
+			FirstToSecond.Z = 0.0f;
+			const float ContactDistance =
+				FirstCapsule->GetScaledCapsuleRadius() +
+				SecondCapsule->GetScaledCapsuleRadius() +
+				SafeContactExtraRadius;
+
+			if (FirstToSecond.SizeSquared() > FMath::Square(ContactDistance))
+			{
+				continue;
+			}
+
+			if (FirstToSecond.IsNearlyZero())
+			{
+				FirstToSecond =
+					FirstCharacter->GetUniqueID() < SecondCharacter->GetUniqueID()
+					? FirstCharacter->GetActorRightVector()
+					: -FirstCharacter->GetActorRightVector();
+				FirstToSecond.Z = 0.0f;
+			}
+
+			const FVector FirstToSecondDirection =
+				FirstToSecond.GetSafeNormal();
+			if (FirstToSecondDirection.IsNearlyZero())
+			{
+				continue;
+			}
+
+			float FirstDrive = FirstCharacter->GetGroundBodyContestDriveToward(
+				FirstToSecondDirection,
+				GroundBodyContestMomentumDriveWeight
+			);
+			float SecondDrive = SecondCharacter->GetGroundBodyContestDriveToward(
+				-FirstToSecondDirection,
+				GroundBodyContestMomentumDriveWeight
+			);
+
+			FirstDrive = FirstDrive >= SafeMinimumDrive ? FirstDrive : 0.0f;
+			SecondDrive = SecondDrive >= SafeMinimumDrive ? SecondDrive : 0.0f;
+			if (FirstDrive <= 0.0f && SecondDrive <= 0.0f)
+			{
+				continue;
+			}
+
+			const float FirstWeightKg = FMath::Clamp(
+				FirstCharacter->GetPlayerProfileWeightKg(
+					SafeReferenceWeightKg
+				),
+				SafeMinimumWeightKg,
+				SafeMaximumWeightKg
+			);
+			const float SecondWeightKg = FMath::Clamp(
+				SecondCharacter->GetPlayerProfileWeightKg(
+					SafeReferenceWeightKg
+				),
+				SafeMinimumWeightKg,
+				SafeMaximumWeightKg
+			);
+			const float FirstWeightMomentumMultiplier = FMath::Clamp(
+				FMath::Lerp(
+					1.0f,
+					FirstWeightKg / SafeReferenceWeightKg,
+					SafeWeightMomentumInfluence
+				),
+				0.75f,
+				1.25f
+			);
+			const float SecondWeightMomentumMultiplier = FMath::Clamp(
+				FMath::Lerp(
+					1.0f,
+					SecondWeightKg / SafeReferenceWeightKg,
+					SafeWeightMomentumInfluence
+				),
+				0.75f,
+				1.25f
+			);
+
+			FVector FirstForward = FirstCharacter->GetActorForwardVector();
+			FirstForward.Z = 0.0f;
+			FirstForward = FirstForward.GetSafeNormal();
+			FVector SecondForward = SecondCharacter->GetActorForwardVector();
+			SecondForward.Z = 0.0f;
+			SecondForward = SecondForward.GetSafeNormal();
+
+			const bool bFirstReceivesRearPressure =
+				SecondDrive > 0.0f &&
+				!FirstForward.IsNearlyZero() &&
+				FVector::DotProduct(
+					FirstForward,
+					FirstToSecondDirection
+				) <= SafeBraceRearDot;
+
+			const bool bSecondReceivesRearPressure =
+				FirstDrive > 0.0f &&
+				!SecondForward.IsNearlyZero() &&
+				FVector::DotProduct(
+					SecondForward,
+					-FirstToSecondDirection
+				) <= SafeBraceRearDot;
+
+			bool bFirstWasSurprisedByRearPressure = false;
+			bool bSecondWasSurprisedByRearPressure = false;
+			if (bFirstReceivesRearPressure)
+			{
+				bFirstWasSurprisedByRearPressure =
+					FirstCharacter->RegisterGroundBodyRearPressure(
+						SafeRearSurpriseReactionDelay,
+						SafeBraceHoldTime,
+						SafeRearAwarenessHoldTime,
+						SafeBraceMaximumOwnMovement
+					);
+			}
+			if (bSecondReceivesRearPressure)
+			{
+				bSecondWasSurprisedByRearPressure =
+					SecondCharacter->RegisterGroundBodyRearPressure(
+						SafeRearSurpriseReactionDelay,
+						SafeBraceHoldTime,
+						SafeRearAwarenessHoldTime,
+						SafeBraceMaximumOwnMovement
+					);
+			}
+
+			// Both players contribute opposing drive along the contact normal.
+			// Strength remains primary; WeightKg adds only a moderate momentum term.
+			const float EffectOnSecond =
+				FirstDrive *
+				FirstCharacter->GetPlayerProfileStrengthBodyForceMultiplier() *
+				FirstWeightMomentumMultiplier *
+				SecondCharacter->GetPlayerProfileStrengthBodyResistanceMultiplier();
+			const float EffectOnFirst =
+				SecondDrive *
+				SecondCharacter->GetPlayerProfileStrengthBodyForceMultiplier() *
+				SecondWeightMomentumMultiplier *
+				FirstCharacter->GetPlayerProfileStrengthBodyResistanceMultiplier();
+			const float NetDriveTowardSecond = EffectOnSecond - EffectOnFirst;
+
+			if (FMath::Abs(NetDriveTowardSecond) <= SafeNetDeadZone)
+			{
+				continue;
+			}
+
+			float PushAlpha = FMath::Clamp(
+				(FMath::Abs(NetDriveTowardSecond) - SafeNetDeadZone) /
+					FMath::Max(0.05f, 1.0f - SafeNetDeadZone),
+				0.0f,
+				1.0f
+			);
+
+			ASoccerCharacterBase* DisplacedCharacter =
+				NetDriveTowardSecond > 0.0f
+				? SecondCharacter
+				: FirstCharacter;
+			const FVector DisplacementDirection =
+				NetDriveTowardSecond > 0.0f
+				? FirstToSecondDirection
+				: -FirstToSecondDirection;
+			const bool bDisplacedReceivesRearPressure =
+				DisplacedCharacter == FirstCharacter
+					? bFirstReceivesRearPressure
+					: bSecondReceivesRearPressure;
+			const bool bDisplacedWasSurprisedByRearPressure =
+				DisplacedCharacter == FirstCharacter
+					? bFirstWasSurprisedByRearPressure
+					: bSecondWasSurprisedByRearPressure;
+			const bool bDisplacedIsBracingRearPressure =
+				bDisplacedReceivesRearPressure &&
+				DisplacedCharacter->GetSoccerIsBracingPhysicalContact();
+
+			const float DisplacedStrengthReaction = FMath::Lerp(
+				GroundBodyStrengthReactionMultiplierAtZero,
+				GroundBodyStrengthReactionMultiplierAtHundred,
+				DisplacedCharacter->GetPlayerProfileStrengthAlpha()
+			);
+			const float DisplacedBalanceReaction =
+				DisplacedCharacter->GetPlayerProfileBalanceBodyReactionMultiplier(
+					GroundBodyBalanceReactionMultiplierAtZero,
+					GroundBodyBalanceReactionMultiplierAtHundred
+				);
+			const float DisplacedWeightKg =
+				DisplacedCharacter == FirstCharacter
+					? FirstWeightKg
+					: SecondWeightKg;
+			const float DisplacedWeightReaction = FMath::Clamp(
+				FMath::Lerp(
+					1.0f,
+					SafeReferenceWeightKg / DisplacedWeightKg,
+					SafeWeightInertiaInfluence
+				),
+				0.65f,
+				1.45f
+			);
+
+			// Balance, Strength resistance and body mass determine acceleration of
+			// the loser, but never reverse the already resolved winner direction.
+			PushAlpha *=
+				FMath::Max(0.0f, DisplacedStrengthReaction) *
+				FMath::Max(0.0f, DisplacedBalanceReaction) *
+				FMath::Max(0.0f, DisplacedWeightReaction);
+			if (bDisplacedIsBracingRearPressure)
+			{
+				PushAlpha *= SafeBraceReactionScale;
+			}
+			PushAlpha = FMath::Clamp(PushAlpha, 0.0f, 1.0f);
+			const float RearSurpriseResponseMultiplier =
+				bDisplacedWasSurprisedByRearPressure
+					? SafeRearSurpriseResponseMultiplier
+					: 1.0f;
+
+			const float SpeedChange =
+				FMath::Max(0.0f, GroundBodyContestPushAcceleration) *
+				ContactStepSeconds *
+				PushAlpha *
+				RearSurpriseResponseMultiplier;
+			const float PersistentTranslationSpeed =
+				SafeMaximumTranslationSpeed *
+				PushAlpha *
+				RearSurpriseResponseMultiplier;
+			const float MaximumPersistentTranslationSpeed =
+				SafeMaximumTranslationSpeed *
+				RearSurpriseResponseMultiplier;
+
+			DisplacedCharacter->ApplyGroundBodyContestPush(
+				DisplacementDirection,
+				SpeedChange,
+				FMath::Max(0.0f, GroundBodyContestMaximumPushSpeed),
+				PersistentTranslationSpeed,
+				MaximumPersistentTranslationSpeed,
+				SafePersistentPushHoldTime,
+				SafeOpposingVelocitySuppression
+			);
+
+			if (bDrawGroundBodyContestDebug)
+			{
+				const FVector DebugStart =
+					DisplacedCharacter->GetActorLocation() +
+					FVector(0.0f, 0.0f, 105.0f);
+				DrawDebugDirectionalArrow(
+					World,
+					DebugStart,
+					DebugStart + DisplacementDirection * 120.0f,
+					22.0f,
+					bDisplacedWasSurprisedByRearPressure
+						? FColor::Yellow
+						: bDisplacedIsBracingRearPressure
+							? FColor::Cyan
+							: FColor::Orange,
+					false,
+					SafeUpdateInterval * 1.5f,
+					0,
+					3.0f
+				);
+			}
+		}
+	}
 }
 
 void ASoccerMatchManager::InitializeMatchClock()

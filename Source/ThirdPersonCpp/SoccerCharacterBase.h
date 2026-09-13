@@ -18,11 +18,14 @@ class UCurveFloat;
 class USoccerPlayerProfile;
 class USkeletalMesh;
 class USkeletalMeshComponent;
+class ASoccerMatchManager;
 
 UCLASS(Blueprintable)
 class THIRDPERSONCPP_API ASoccerCharacterBase : public ACharacter
 {
 	GENERATED_BODY()
+
+	friend class ASoccerMatchManager;
 
 public:
 	ASoccerCharacterBase();
@@ -135,6 +138,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Animation", meta = (DisplayName = "Is Kicking"))
 		bool GetSoccerIsKicking() const;
 
+	UFUNCTION(BlueprintPure, Category = "Soccer|Animation", meta = (DisplayName = "Is Bracing Physical Contact"))
+		bool GetSoccerIsBracingPhysicalContact() const;
+
 	UFUNCTION(BlueprintPure, Category = "Soccer|Animation", meta = (DisplayName = "Get Player Energy Percent"))
 		float GetSoccerEnergyPercent() const;
 
@@ -153,6 +159,7 @@ public:
 		bool bInPossessingBall,
 		bool bInChasingBall,
 		bool bInKicking,
+		bool bInBracingPhysicalContact,
 		bool bInForceDribbleTurnLocomotion,
 		float InForcedDribbleTurnLocomotionSpeed
 	);
@@ -465,13 +472,42 @@ protected:
 	// geometry remains unchanged, so clean ball-first challenges become easier.
 	float GetPlayerProfileTackleBallContactRadiusMultiplier() const;
 
-	// Stage 8F. Strength only modifies real contact consequences that already exist
-	// (aerial body contests and tackle-fall displacement). AerialAbility modifies
+	// Stage 8F. Strength modifies real contact consequences: ground and aerial
+	// body contests plus tackle-fall displacement. AerialAbility modifies
 	// timing/contact quality and heading execution without granting automatic wins.
 	float GetPlayerProfileStrengthAerialContestScoreAdjustment() const;
 	float GetPlayerProfileStrengthBodyForceMultiplier() const;
 	float GetPlayerProfileStrengthBodyResistanceMultiplier() const;
 	float GetPlayerProfileStrengthTackleFallInertiaMultiplier() const;
+	float GetPlayerProfileWeightKg(float DefaultWeightKg) const;
+	float GetPlayerProfileBalanceBodyReactionMultiplier(
+		float MultiplierAtZero,
+		float MultiplierAtHundred
+	) const;
+	bool CanParticipateInGroundBodyContest() const;
+	float GetGroundBodyContestDriveToward(
+		const FVector& WorldDirection,
+		float MomentumDriveWeight
+	) const;
+	float GetGroundBodyContestOwnMovementAlpha() const;
+	bool RegisterGroundBodyRearPressure(
+		float ReactionDelay,
+		float BraceHoldTime,
+		float AwarenessHoldTime,
+		float MaximumOwnMovementAlpha
+	);
+	void ApplyGroundBodyContestPush(
+		const FVector& WorldDirection,
+		float SpeedChange,
+		float MaximumPushSpeed,
+		float PersistentTranslationSpeed,
+		float MaximumPersistentTranslationSpeed,
+		float PersistentHoldTime,
+		float OpposingVelocitySuppression
+	);
+	void UpdateGroundBodyBraceState();
+	void UpdateGroundBodyContestPush(float DeltaTime);
+	void ResetGroundBodyContactResponse();
 	float GetPlayerProfileAerialAbilityContestScoreAdjustment() const;
 	float GetPlayerProfileAerialHeadContactRadiusMultiplier() const;
 	float GetPlayerProfileAerialContactQualityMultiplier(
@@ -1525,8 +1561,9 @@ private:
 		float TackleBallContactRadiusMultiplierAtHundred = 1.18f;
 
 	// Stage 8F: Strength changes the outcome of real body contact rather than a
-	// hidden success roll. AerialAbility changes contact quality/reach and heading
-	// execution. Characters without PlayerProfile bypass all these adjustments.
+	// hidden success roll. This includes ground and aerial contests. AerialAbility
+	// changes contact quality/reach and heading execution. Characters without
+	// PlayerProfile bypass all these adjustments.
 	UPROPERTY(EditDefaultsOnly, Category = "Soccer|Player Profile|Physical Contest Tuning", meta = (ClampMin = "-0.25", ClampMax = "0.25"))
 		float StrengthAerialContestScoreAdjustmentAtZero = -0.04f;
 
@@ -1643,6 +1680,29 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Soccer|Animation", meta = (AllowPrivateAccess = "true"))
 		bool bSoccerIsKicking = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Soccer|Animation", meta = (AllowPrivateAccess = "true"))
+		bool bSoccerIsBracingPhysicalContact = false;
+
+	float GroundBodyBraceStartWorldTime = -1000.0f;
+
+	float GroundBodyBraceEndWorldTime = -1000.0f;
+
+	float GroundBodyRearAwarenessEndWorldTime = -1000.0f;
+
+	float GroundBodyBraceMaximumOwnMovementAlpha = 0.24f;
+
+	FVector GroundBodyContestPersistentPushVelocity = FVector::ZeroVector;
+
+	float GroundBodyContestPersistentPushMaximumSpeed = 0.0f;
+
+	float GroundBodyContestPersistentPushLastRefreshWorldTime = -1000.0f;
+
+	float GroundBodyContestPersistentPushEndWorldTime = -1000.0f;
+
+	float GroundBodyContestPersistentPushHoldDuration = 0.0f;
+
+	float GroundBodyContestOpposingVelocitySuppression = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Soccer|Animation", meta = (AllowPrivateAccess = "true"))
 		float SoccerEnergyPercent = 1.0f;

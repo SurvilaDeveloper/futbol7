@@ -587,6 +587,8 @@ void ASoccerInstantReplayManager::CaptureCurrentWorldFrame(
         Sample.bPossessingBall = Character->GetSoccerIsPossessingBall();
         Sample.bChasingBall = Character->GetSoccerIsChasingBall();
         Sample.bKicking = Character->GetSoccerIsKicking();
+        Sample.bBracingPhysicalContact =
+            Character->GetSoccerIsBracingPhysicalContact();
         Sample.bForceDribbleTurnLocomotion =
             Character->GetSoccerShouldForceDribbleTurnLocomotion();
         Sample.ForcedDribbleTurnLocomotionSpeed =
@@ -1232,6 +1234,7 @@ void ASoccerInstantReplayManager::ApplyCharacterPlaybackSample(
         VisualSample.bPossessingBall,
         VisualSample.bChasingBall,
         VisualSample.bKicking,
+        VisualSample.bBracingPhysicalContact,
         VisualSample.bForceDribbleTurnLocomotion,
         VisualSample.ForcedDribbleTurnLocomotionSpeed
     );
