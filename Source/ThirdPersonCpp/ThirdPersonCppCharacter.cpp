@@ -6527,6 +6527,16 @@ void AThirdPersonCppCharacter::StoreKickTarget(ESoccerPendingKickMode KickMode)
 		return;
 	}
 
+	// A valid set-piece target is the human equivalent of the AI committing its
+	// receiver. Freeze only the bots' live plans; the human remains fully manual.
+	if (
+		IsValid(MatchManager) &&
+		MatchManager->CanHumanFootRestartTakerExecuteNow(this)
+	)
+	{
+		MatchManager->CommitActiveRestartLivePositioningForHumanAction();
+	}
+
 	// A valid follow-up click replaces the first-click reception with the
 	// requested kick/pass action.
 	bInitialClickControlledReceptionPending = false;

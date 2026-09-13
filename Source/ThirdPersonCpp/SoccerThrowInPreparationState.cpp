@@ -98,6 +98,10 @@ void FSoccerThrowInPreparationState::Tick(ASoccerMatchManager& Manager, float De
 
         if (Manager.UpdateHumanThrowInTakerClaimDuringPreparation())
         {
+            // Changing the taker also changes whether the configured AI is an
+            // off-ball option. Rebuild from the fixed legal setup before a new
+            // live-positioning window is allowed to start.
+            Manager.ResetActiveRestartLivePositioning();
             Manager.RecalculateThrowInGeometry();
             Manager.CaptureActiveRestartAITargetLocations(
                 Manager.AreActiveRestartOpponentsLegal()
@@ -105,12 +109,37 @@ void FSoccerThrowInPreparationState::Tick(ASoccerMatchManager& Manager, float De
             return;
         }
 
-        if (!Manager.UpdateActiveRestartReadiness(
-            Manager.ThrowInSetupStartTime,
-            Manager.ThrowInMinSetupTime
-        ))
+        // First complete the existing fixed/legal placement. Dynamic off-ball
+        // targets begin only afterward, so their movement cannot keep resetting
+        // UpdateActiveRestartReadiness() and block the throw forever.
+        if (!Manager.IsActiveRestartLivePositioningActive())
+        {
+            if (!Manager.UpdateActiveRestartReadiness(
+                Manager.ThrowInSetupStartTime,
+                Manager.ThrowInMinSetupTime
+            ))
+            {
+                return;
+            }
+
+            Manager.BeginActiveRestartLivePositioning();
+        }
+
+        // A human thrower receives the ball as soon as the legal setup is ready
+        // and the off-ball contest continues until their manual click. An AI
+        // thrower observes it for a short, deterministic bounded interval.
+        if (
+            !Manager.bThrowInHumanTakerClaimed &&
+            !Manager.IsActiveRestartAILivePositioningWaitComplete()
+        )
         {
             return;
+        }
+
+        if (!Manager.bThrowInHumanTakerClaimed)
+        {
+            Manager.CommitBestActiveRestartLiveReceiver();
+            Manager.LockActiveRestartLivePositioning();
         }
 
         Manager.RecalculateThrowInGeometry();
@@ -120,6 +149,7 @@ void FSoccerThrowInPreparationState::Tick(ASoccerMatchManager& Manager, float De
             if (!IsValid(Manager.ThrowInHumanTaker))
             {
                 Manager.bThrowInHumanTakerClaimed = false;
+                Manager.ResetActiveRestartLivePositioning();
                 Manager.CaptureActiveRestartAITargetLocations(
                     Manager.AreActiveRestartOpponentsLegal()
                 );

@@ -137,6 +137,7 @@ void FSoccerCornerExecutionState::Tick(
 		}
 
 		Manager.ReleaseNonFreeKickHumanTakerClaim();
+		Manager.ResetActiveRestartLivePositioning();
 		Manager.RecalculateGoalLineRestartGeometry();
 		Manager.MatchPlayState = ESoccerMatchPlayState::GoalLineRestartSetup;
 		Manager.CaptureActiveRestartAITargetLocations(

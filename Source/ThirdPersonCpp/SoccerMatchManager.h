@@ -36,6 +36,23 @@ class USoccerClubProfile;
 class USoccerSquadCatalog;
 class USoccerCoachProfile;
 
+// Stable off-ball decision retained during a live restart wait. The committed
+// target is intentionally independent from frame-to-frame opponent movement;
+// defenders may react to it, while attackers reconsider it only on their own
+// scheduled decision and with hysteresis.
+struct FRestartLivePositioningPlan
+{
+	FVector BaseTargetLocation = FVector::ZeroVector;
+	FVector CommittedTargetLocation = FVector::ZeroVector;
+	float LastEvaluatedScore = -BIG_NUMBER;
+	float NextDecisionWorldTime = -1000.0f;
+	int32 DecisionIndex = 0;
+	int32 RepositionCount = 0;
+
+	TWeakObjectPtr<ASoccerCharacterBase> MarkedAttacker;
+	float MarkCommitUntilWorldTime = -1000.0f;
+};
+
 enum class ESoccerRestartRestrictionShape : uint8
 {
 	None,
@@ -691,6 +708,15 @@ public:
 	) const;
 
 	bool IsThrowInRestartActive() const;
+
+	// The human is never moved by this system. This query only exposes whether
+	// AI off-ball targets may use the human as a receiver/coverage observation.
+	bool IsActiveRestartLivePositioningActive() const;
+	bool HasActiveRestartLivePositioningPlan(
+		const ASoccerAICharacter* SoccerAICharacter
+	) const;
+	float GetActiveRestartLivePositioningMoveAcceptanceRadius() const;
+	void CommitActiveRestartLivePositioningForHumanAction();
 
 	// During the out-of-play continuation the ball remains physically outside,
 	// but the AI may already move to the fixed throw-in tactical targets.
@@ -1480,6 +1506,48 @@ bool IsPenaltyMatchStateActive() const;
 	);
 
 	void ResetActiveRestartReadyHold();
+
+	// Live restart positioning starts only after the fixed legal setup is ready.
+	// Throw-ins and corners share the stable plan runtime while preserving their
+	// own candidate geometry, defensive reference and execution flow.
+	void BeginActiveRestartLivePositioning();
+	void ResetActiveRestartLivePositioning();
+	void UpdateActiveRestartLivePositioning(float DeltaTime);
+	void LockActiveRestartLivePositioning();
+	bool IsActiveRestartAILivePositioningWaitComplete() const;
+	void InitializeActiveRestartLivePositioningPlans(float CurrentWorldTime);
+	void UpdateActiveRestartLiveAttackingPlans(
+		float CurrentWorldTime,
+		bool bForceDecision
+	);
+	void UpdateActiveRestartLiveDefensivePlans(
+		float CurrentWorldTime,
+		bool bForceDecision
+	);
+	float ScoreActiveRestartLiveAttackingCandidate(
+		const ASoccerAICharacter* SoccerAICharacter,
+		const FVector& CandidateLocation,
+		const FVector& BaseLocation,
+		int32 DecisionIndex,
+		int32 CandidateIndex
+	) const;
+	FVector SanitizeActiveRestartLivePositioningTarget(
+		const ASoccerAICharacter* SoccerAICharacter,
+		const FVector& RequestedLocation
+	) const;
+	FVector GetActiveRestartLiveThreatLocation(
+		const ASoccerCharacterBase* AttackingCharacter
+	) const;
+	bool IsActiveRestartLiveTaker(
+		const ASoccerCharacterBase* Character
+	) const;
+	int32 BuildActiveRestartLivePositioningSeed(
+		const ASoccerCharacterBase* SubjectCharacter,
+		int32 DecisionIndex,
+		int32 Salt
+	) const;
+	void CommitBestActiveRestartLiveReceiver();
+	void DrawActiveRestartLivePositioningDebug() const;
 
 	bool UpdateNonFreeKickHumanTakerClaimDuringPreparation(
 		ESoccerRestartType ExpectedRestartType
@@ -2660,6 +2728,139 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Receiver Selection")
 		float RestartReceiverMinimumCandidateScore = 420.0f;
 
+	// ============================================================
+	// LIVE RESTART POSITIONING - THROW IN AND CORNER KICK
+	// ============================================================
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning")
+		bool bEnableRestartLivePositioning = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Throw In")
+		bool bEnableThrowInLivePositioning = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Corner Kick")
+		bool bEnableCornerKickLivePositioning = true;
+
+	// AI takers observe the off-ball contest for a short bounded window. Human
+	// takers keep the window open until their manual target selection.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.0", ClampMax = "6.0"))
+		float RestartLiveAIWaitMinTime = 1.80f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.0", ClampMax = "6.0"))
+		float RestartLiveAIWaitMaxTime = 2.60f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.10", ClampMax = "6.0"))
+		float RestartLiveAttackDecisionMinInterval = 0.75f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.10", ClampMax = "6.0"))
+		float RestartLiveAttackDecisionMaxInterval = 1.10f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.05", ClampMax = "3.0"))
+		float RestartLiveDefenseDecisionMinInterval = 0.35f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.05", ClampMax = "3.0"))
+		float RestartLiveDefenseDecisionMaxInterval = 0.65f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.10", ClampMax = "5.0"))
+		float RestartLiveDefenderMarkMinHoldTime = 1.00f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.10", ClampMax = "5.0"))
+		float RestartLiveDefenderMarkMaxHoldTime = 1.80f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0", ClampMax = "8"))
+		int32 RestartLiveMaximumAttackingRepositions = 2;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "20.0", ClampMax = "800.0"))
+		float RestartLiveThrowInInwardSearchStep = 190.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "20.0", ClampMax = "1000.0"))
+		float RestartLiveThrowInAlongLineSearchStep = 260.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Corner Kick|Attack", meta = (ClampMin = "20.0", ClampMax = "800.0"))
+		float RestartLiveCornerDepthSearchStep = 220.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Corner Kick|Attack", meta = (ClampMin = "20.0", ClampMax = "1000.0"))
+		float RestartLiveCornerWidthSearchStep = 270.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Corner Kick|Attack", meta = (ClampMin = "100.0", ClampMax = "2000.0"))
+		float RestartLiveCornerIdealGoalDistance = 700.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Corner Kick|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveCornerGoalDistancePenaltyWeight = 0.18f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveAttackMinimumScoreImprovement = 85.0f;
+
+	// At the start of the live window, a viable non-zero candidate receives a
+	// small one-time incentive to make an actual supporting run. It does not
+	// override pressure, pass safety or field bounds, and is never applied again.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveAttackInitialOfferMovementBonus = 175.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0", ClampMax = "150.0"))
+		float RestartLiveAttackDecisionScoreJitter = 25.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveAttackBaseDistancePenalty = 0.25f;
+
+	// Kept under its original name for Blueprint/default compatibility. It now
+	// rewards the opponent's arrival time; own travel has a separate penalty.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveAttackArrivalMarginWeight = 190.0f;
+
+	// Moving a short distance costs much less than remaining in a destination
+	// that an opponent can reach immediately. Keeping these as independent
+	// weights prevents the already-reached target from winning automatically.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveAttackOwnTravelTimePenaltyWeight = 45.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveAttackBlockedLanePenalty = 280.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "20.0"))
+		float RestartLiveAttackTeammateAvoidRadius = 220.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "20.0"))
+		float RestartLiveAttackReservationRadius = 180.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveAttackCrowdingPenalty = 360.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveAttackMinimumRelocationDistance = 100.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Defense", meta = (ClampMin = "20.0", ClampMax = "500.0"))
+		float RestartLiveDefenderMarkingDistance = 110.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Corner Kick|Defense", meta = (ClampMin = "20.0", ClampMax = "500.0"))
+		float RestartLiveCornerDefenderGoalSideDistance = 105.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Defense", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float RestartLiveDefensiveShapeRetention = 0.18f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Defense", meta = (ClampMin = "0.0"))
+		float RestartLiveDefenderMarkRetentionBonus = 120.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Human", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float RestartLiveHumanMotionLookAheadTime = 0.25f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Human", meta = (ClampMin = "20.0", ClampMax = "600.0"))
+		float RestartLiveHumanCoverageRadius = 200.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Human", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+		float RestartLiveHumanCoverageCredit = 0.75f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning", meta = (ClampMin = "0.0", ClampMax = "500.0"))
+		float RestartLiveFieldInset = 150.0f;
+
+	// Independent from the controller's global Move Acceptance Radius. Dynamic
+	// offers are short movements, so stopping 80 cm early can hide most of them.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning", meta = (ClampMin = "5.0", ClampMax = "150.0"))
+		float RestartLiveMoveAcceptanceRadius = 35.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Debug")
+		bool bDrawRestartLivePositioningDebug = false;
+
 	bool bRestartContextActive = false;
 	ESoccerRestartType ActiveRestartType = ESoccerRestartType::None;
 	ESoccerTeam ActiveRestartTeam = ESoccerTeam::PlayerTeam;
@@ -2673,6 +2874,18 @@ bool IsPenaltyMatchStateActive() const;
 	TMap<ASoccerAICharacter*, FVector>
 		ActiveRestartEmergencyTargetLocations;
 	TSet<ASoccerAICharacter*> ActiveRestartEmergencyAssistedBots;
+
+	bool bActiveRestartLivePositioning = false;
+	bool bActiveRestartLivePositioningLocked = false;
+	float ActiveRestartLivePositioningStartTime = -1000.0f;
+	float ActiveRestartLivePositioningAIWaitEndTime = -1000.0f;
+	float ActiveRestartLiveNextDefensiveDecisionTime = -1000.0f;
+	int32 ActiveRestartLivePositioningSequence = 0;
+	int32 ActiveRestartLiveDefensiveDecisionIndex = 0;
+	TMap<const ASoccerAICharacter*, FRestartLivePositioningPlan>
+		ActiveRestartLiveAttackingPlans;
+	TMap<const ASoccerAICharacter*, FRestartLivePositioningPlan>
+		ActiveRestartLiveDefensivePlans;
 
 	// Shared human-taker runtime for kickoff, goal kick and corner. The bot
 	// selected during Configuration remains the fallback and is never destroyed.

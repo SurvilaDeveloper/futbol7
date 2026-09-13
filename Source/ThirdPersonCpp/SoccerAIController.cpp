@@ -619,6 +619,10 @@ void ASoccerAIController::Tick(float DeltaTime)
 			MatchManager->GetActiveRestartMoveLocation(
 				SoccerCharacter
 			);
+		const bool bLivePositioningParticipant =
+			MatchManager->HasActiveRestartLivePositioningPlan(
+				SoccerCharacter
+			);
 
 		if (!bTakerMovementLocked && !RestartMoveLocation.IsNearlyZero())
 		{
@@ -637,7 +641,10 @@ void ASoccerAIController::Tick(float DeltaTime)
 			const float RestartAcceptanceRadius =
 				bGoalKickTaker && !bGoalKickFinalRun
 				? MatchManager->GetGoalKickRunUpMoveAcceptanceRadius()
-				: MoveAcceptanceRadius;
+				: bLivePositioningParticipant
+					? MatchManager->
+						GetActiveRestartLivePositioningMoveAcceptanceRadius()
+					: MoveAcceptanceRadius;
 
 			MoveToLocationWithAIMovement(
 				bGoalKickFinalRun
@@ -720,10 +727,15 @@ void ASoccerAIController::Tick(float DeltaTime)
 
 		const FVector ThrowInMoveLocation =
 			MatchManager->GetActiveRestartMoveLocation(SoccerCharacter);
+		const bool bThrowInLiveOffBallPositioning =
+			MatchManager->HasActiveRestartLivePositioningPlan(
+				SoccerCharacter
+			);
 		const bool bThrowInTacticalPositioning =
 			MatchManager->GetMatchPlayState() ==
 				ESoccerMatchPlayState::ThrowInSetup ||
-			MatchManager->IsThrowInDelayPositioningActive();
+			MatchManager->IsThrowInDelayPositioningActive() ||
+			bThrowInLiveOffBallPositioning;
 
 		if (
 			bThrowInTacticalPositioning &&
@@ -733,7 +745,10 @@ void ASoccerAIController::Tick(float DeltaTime)
 			const float ThrowInAcceptanceRadius =
 				MatchManager->IsThrowInTaker(SoccerCharacter)
 				? MatchManager->GetThrowInPickupMoveAcceptanceRadius()
-				: MoveAcceptanceRadius;
+				: bThrowInLiveOffBallPositioning
+					? MatchManager->
+						GetActiveRestartLivePositioningMoveAcceptanceRadius()
+					: MoveAcceptanceRadius;
 
 			MoveToLocationWithAIMovement(
 				ESoccerAIOrder::ReturnHome,

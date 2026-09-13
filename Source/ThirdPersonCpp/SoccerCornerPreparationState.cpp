@@ -97,6 +97,7 @@ void FSoccerCornerPreparationState::Tick(ASoccerMatchManager& Manager, float Del
         ESoccerRestartType::CornerKick
     ))
     {
+        Manager.ResetActiveRestartLivePositioning();
         if (IsValid(Manager.GoalLineRestart.GetTaker()))
         {
             Manager.GoalLineRestart.GetTaker()->ClearScriptedLocomotionVelocity();
@@ -111,16 +112,23 @@ void FSoccerCornerPreparationState::Tick(ASoccerMatchManager& Manager, float Del
 
     if (Manager.MatchPlayState == ESoccerMatchPlayState::GoalLineRestartSetup)
     {
-        if (!Manager.UpdateActiveRestartReadiness(
-            Manager.GoalLineRestart.GetSetupStartTime(),
-            Manager.GoalLineRestartMinSetupTime
-        ))
+        // As in the validated throw-in flow, first finish the fixed legal setup.
+        // Dynamic offers and marking begin only after everybody is settled, so
+        // their movement cannot keep resetting the common readiness hold.
+        if (!Manager.IsActiveRestartLivePositioningActive())
         {
-            return;
-        }
+            if (!Manager.UpdateActiveRestartReadiness(
+                Manager.GoalLineRestart.GetSetupStartTime(),
+                Manager.GoalLineRestartMinSetupTime
+            ))
+            {
+                return;
+            }
 
-        Manager.RecalculateGoalLineRestartGeometry();
-        Manager.GoalLineRestart.SetCornerFinalRunActive(false);
+            Manager.RecalculateGoalLineRestartGeometry();
+            Manager.GoalLineRestart.SetCornerFinalRunActive(false);
+            Manager.BeginActiveRestartLivePositioning();
+        }
 
         if (Manager.IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::CornerKick))
         {
@@ -164,6 +172,20 @@ void FSoccerCornerPreparationState::Tick(ASoccerMatchManager& Manager, float Del
         Manager.CancelGoalLineRestart();
         Manager.RequestMatchStateTransition(ESoccerMatchStateTransition::Playing);
         return;
+    }
+
+    // The AI taker may already walk toward the exterior run-up point while the
+    // off-ball contest develops. When the bounded decision window ends, freeze
+    // the receiver and all destinations, then recompute the exact run direction.
+    if (
+        Manager.IsActiveRestartLivePositioningActive() &&
+        Manager.IsActiveRestartAILivePositioningWaitComplete() &&
+        !Manager.bActiveRestartLivePositioningLocked
+    )
+    {
+        Manager.CommitBestActiveRestartLiveReceiver();
+        Manager.LockActiveRestartLivePositioning();
+        Manager.RecalculateGoalLineRestartGeometry();
     }
 
     const FVector CurrentLocation =
@@ -220,6 +242,11 @@ void FSoccerCornerPreparationState::Tick(ASoccerMatchManager& Manager, float Del
     Manager.GoalLineRestart.GetTaker()->SetActorRotation(
         Manager.GoalLineRestart.GetKickDirection().Rotation()
     );
+
+    if (!Manager.IsActiveRestartAILivePositioningWaitComplete())
+    {
+        return;
+    }
 
     // El corner no inicia la carrera si un rival vuelve a entrar
     // en el radio mientras el ejecutor se coloca fuera del campo.

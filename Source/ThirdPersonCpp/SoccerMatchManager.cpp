@@ -521,6 +521,7 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 	if (IsRestartContextActive())
 	{
 		UpdateActiveRestartRestrictionSystem(DeltaTime);
+		UpdateActiveRestartLivePositioning(DeltaTime);
 	}
 	else
 	{
@@ -10800,6 +10801,9 @@ bool ASoccerMatchManager::TryStartHumanThrowInToTarget(
 		return false;
 	}
 
+	// The click commits the restart. Off-ball targets remain valid but stop
+	// changing while the human walks to the exact throw start and animates.
+	LockActiveRestartLivePositioning();
 	bThrowInHumanTargetSelected = true;
 	bThrowInHumanRepositioningForTarget = true;
 
@@ -11903,6 +11907,18 @@ FVector ASoccerMatchManager::BuildThrowInReceiverMoveLocation() const
 	if (!IsValid(ThrowInReceiverAI))
 	{
 		return ThrowInLocation + ThrowInInwardDirection * 700.0f;
+	}
+
+	if (IsActiveRestartLivePositioningActive())
+	{
+		if (const FRestartLivePositioningPlan* ReceiverPlan =
+			ActiveRestartLiveAttackingPlans.Find(ThrowInReceiverAI))
+		{
+			if (!ReceiverPlan->CommittedTargetLocation.IsNearlyZero())
+			{
+				return ReceiverPlan->CommittedTargetLocation;
+			}
+		}
 	}
 
 	const FVector PitchLengthDirection = IsValid(SoccerField)
@@ -13029,6 +13045,21 @@ FVector ASoccerMatchManager::BuildGoalLineRestartReceiverMoveLocation() const
 	if (!IsValid(GoalLineRestart.ReceiverAI))
 	{
 		return GoalLineRestart.BallLocation;
+	}
+
+	if (
+		IsActiveRestartLivePositioningActive() &&
+		ActiveRestartType == ESoccerRestartType::CornerKick
+	)
+	{
+		if (const FRestartLivePositioningPlan* ReceiverPlan =
+			ActiveRestartLiveAttackingPlans.Find(GoalLineRestart.ReceiverAI))
+		{
+			if (!ReceiverPlan->CommittedTargetLocation.IsNearlyZero())
+			{
+				return ReceiverPlan->CommittedTargetLocation;
+			}
+		}
 	}
 
 	const FVector AttackDirection =
@@ -16261,6 +16292,7 @@ void ASoccerMatchManager::BeginRestartContext(
 	DestroyActiveRestartHumanRestrictionIndicator();
 	ResetActiveRestartRestrictionRecovery();
 	ClearActiveRestartExecutionReceiver();
+	ResetActiveRestartLivePositioning();
 
 	bRestartContextActive = RestartType != ESoccerRestartType::None;
 	ActiveRestartType = RestartType;
@@ -16280,6 +16312,7 @@ void ASoccerMatchManager::EndRestartContext()
 	DestroyActiveRestartHumanRestrictionIndicator();
 	ResetActiveRestartRestrictionRecovery();
 	ClearActiveRestartExecutionReceiver();
+	ResetActiveRestartLivePositioning();
 	ResetKickoffRunUpState();
 	FreeKickRestart.ResetRuntime(*this);
 	GoalLineRestart.ResetGoalKickFinalRunRuntime(*this);
@@ -16319,6 +16352,1593 @@ void ASoccerMatchManager::ResetActiveRestartReadyHold()
 	ActiveRestartAllBotsReadySince = -1000.0f;
 }
 
+bool ASoccerMatchManager::IsActiveRestartLivePositioningActive() const
+{
+	const bool bSupportedRestart =
+		ActiveRestartType == ESoccerRestartType::ThrowIn ||
+		ActiveRestartType == ESoccerRestartType::CornerKick;
+
+	return
+		bActiveRestartLivePositioning &&
+		IsRestartContextActive() &&
+		bSupportedRestart;
+}
+
+bool ASoccerMatchManager::HasActiveRestartLivePositioningPlan(
+	const ASoccerAICharacter* SoccerAICharacter
+) const
+{
+	return
+		IsActiveRestartLivePositioningActive() &&
+		IsValid(SoccerAICharacter) &&
+		(
+			ActiveRestartLiveAttackingPlans.Contains(SoccerAICharacter) ||
+			ActiveRestartLiveDefensivePlans.Contains(SoccerAICharacter)
+		);
+}
+
+float ASoccerMatchManager::GetActiveRestartLivePositioningMoveAcceptanceRadius()
+	const
+{
+	return FMath::Max(5.0f, RestartLiveMoveAcceptanceRadius);
+}
+
+void ASoccerMatchManager::CommitActiveRestartLivePositioningForHumanAction()
+{
+	LockActiveRestartLivePositioning();
+}
+
+void ASoccerMatchManager::ResetActiveRestartLivePositioning()
+{
+	bActiveRestartLivePositioning = false;
+	bActiveRestartLivePositioningLocked = false;
+	ActiveRestartLivePositioningStartTime = -1000.0f;
+	ActiveRestartLivePositioningAIWaitEndTime = -1000.0f;
+	ActiveRestartLiveNextDefensiveDecisionTime = -1000.0f;
+	ActiveRestartLiveDefensiveDecisionIndex = 0;
+	ActiveRestartLiveAttackingPlans.Empty();
+	ActiveRestartLiveDefensivePlans.Empty();
+}
+
+int32 ASoccerMatchManager::BuildActiveRestartLivePositioningSeed(
+	const ASoccerCharacterBase* SubjectCharacter,
+	int32 DecisionIndex,
+	int32 Salt
+) const
+{
+	uint32 Seed = HashCombine(
+		GetTypeHash(ActiveRestartLivePositioningSequence),
+		GetTypeHash(DecisionIndex)
+	);
+	Seed = HashCombine(Seed, GetTypeHash(Salt));
+
+	if (IsValid(SubjectCharacter))
+	{
+		Seed = HashCombine(Seed, GetTypeHash(SubjectCharacter->GetUniqueID()));
+	}
+
+	return static_cast<int32>(Seed & 0x7fffffffu);
+}
+
+void ASoccerMatchManager::BeginActiveRestartLivePositioning()
+{
+	UWorld* World = GetWorld();
+	const bool bSupportedRestart =
+		(
+			ActiveRestartType == ESoccerRestartType::ThrowIn &&
+			bEnableThrowInLivePositioning
+		) ||
+		(
+			ActiveRestartType == ESoccerRestartType::CornerKick &&
+			bEnableCornerKickLivePositioning
+		);
+	if (
+		!bEnableRestartLivePositioning ||
+		!bSupportedRestart ||
+		World == nullptr ||
+		GetNetMode() == NM_Client ||
+		!IsRestartContextActive()
+	)
+	{
+		return;
+	}
+
+	ResetActiveRestartLivePositioning();
+	bActiveRestartLivePositioning = true;
+	bActiveRestartLivePositioningLocked = false;
+	ActiveRestartLivePositioningSequence++;
+	if (ActiveRestartLivePositioningSequence <= 0)
+	{
+		ActiveRestartLivePositioningSequence = 1;
+	}
+
+	const float CurrentWorldTime = World->GetTimeSeconds();
+	ActiveRestartLivePositioningStartTime = CurrentWorldTime;
+
+	const float SafeMinimumWait = FMath::Max(
+		0.0f,
+		RestartLiveAIWaitMinTime
+	);
+	const float SafeMaximumWait = FMath::Max(
+		SafeMinimumWait,
+		RestartLiveAIWaitMaxTime
+	);
+	FRandomStream WaitRandom(BuildActiveRestartLivePositioningSeed(
+		nullptr,
+		0,
+		101
+	));
+	ActiveRestartLivePositioningAIWaitEndTime =
+		CurrentWorldTime +
+		WaitRandom.FRandRange(SafeMinimumWait, SafeMaximumWait);
+
+	InitializeActiveRestartLivePositioningPlans(CurrentWorldTime);
+
+	ASoccerDebugManager::Message(
+		this,
+		ESoccerDebugCategory::Restarts,
+		ActiveRestartType == ESoccerRestartType::CornerKick
+			? TEXT("CORNER: comienza disputa dinamica de posiciones")
+			: TEXT("LATERAL: comienza disputa dinamica de posiciones"),
+		FColor::Cyan
+	);
+}
+
+void ASoccerMatchManager::LockActiveRestartLivePositioning()
+{
+	if (!IsActiveRestartLivePositioningActive())
+	{
+		return;
+	}
+
+	bActiveRestartLivePositioningLocked = true;
+}
+
+bool ASoccerMatchManager::IsActiveRestartAILivePositioningWaitComplete() const
+{
+	if (!IsActiveRestartLivePositioningActive())
+	{
+		return true;
+	}
+
+	if (bActiveRestartLivePositioningLocked)
+	{
+		return true;
+	}
+
+	const UWorld* World = GetWorld();
+	return
+		World == nullptr ||
+		World->GetTimeSeconds() >=
+			ActiveRestartLivePositioningAIWaitEndTime;
+}
+
+FVector ASoccerMatchManager::SanitizeActiveRestartLivePositioningTarget(
+	const ASoccerAICharacter* SoccerAICharacter,
+	const FVector& RequestedLocation
+) const
+{
+	if (!IsValid(SoccerAICharacter))
+	{
+		return RequestedLocation;
+	}
+
+	const float SafeFieldInset = FMath::Max(0.0f, RestartLiveFieldInset);
+	FVector ResultLocation = RequestedLocation;
+
+	if (IsValid(SoccerField))
+	{
+		ResultLocation = SoccerField->ClampWorldLocationInsidePitch(
+			ResultLocation,
+			SafeFieldInset
+		);
+	}
+	else
+	{
+		ResultLocation = SoccerFieldDimensions::ClampLocationInsidePitch(
+			ResultLocation,
+			SafeFieldInset
+		);
+	}
+
+	ResultLocation.Z = SoccerAICharacter->GetActorLocation().Z;
+	ResultLocation = ProjectLocationToNavigation(
+		ResultLocation,
+		SoccerAICharacter
+	);
+
+	if (IsValid(SoccerField))
+	{
+		ResultLocation = SoccerField->ClampWorldLocationInsidePitch(
+			ResultLocation,
+			SafeFieldInset
+		);
+	}
+	else
+	{
+		ResultLocation = SoccerFieldDimensions::ClampLocationInsidePitch(
+			ResultLocation,
+			SafeFieldInset
+		);
+	}
+
+	ResultLocation.Z = SoccerAICharacter->GetActorLocation().Z;
+	return ResultLocation;
+}
+
+bool ASoccerMatchManager::IsActiveRestartLiveTaker(
+	const ASoccerCharacterBase* Character
+) const
+{
+	if (!IsValid(Character))
+	{
+		return false;
+	}
+
+	if (const ASoccerAICharacter* SoccerAICharacter =
+		Cast<ASoccerAICharacter>(Character))
+	{
+		if (ActiveRestartType == ESoccerRestartType::ThrowIn)
+		{
+			return IsThrowInTaker(SoccerAICharacter);
+		}
+
+		if (ActiveRestartType == ESoccerRestartType::CornerKick)
+		{
+			return IsGoalLineRestartTaker(SoccerAICharacter);
+		}
+	}
+
+	if (const AThirdPersonCppCharacter* HumanCharacter =
+		Cast<AThirdPersonCppCharacter>(Character))
+	{
+		if (ActiveRestartType == ESoccerRestartType::ThrowIn)
+		{
+			return IsHumanThrowInTaker(HumanCharacter);
+		}
+
+		if (ActiveRestartType == ESoccerRestartType::CornerKick)
+		{
+			return IsHumanFootRestartTaker(HumanCharacter);
+		}
+	}
+
+	return false;
+}
+
+void ASoccerMatchManager::InitializeActiveRestartLivePositioningPlans(
+	float CurrentWorldTime
+)
+{
+	UWorld* World = GetWorld();
+	if (
+		World == nullptr ||
+		!IsActiveRestartLivePositioningActive()
+	)
+	{
+		return;
+	}
+
+	ActiveRestartLiveAttackingPlans.Empty();
+	ActiveRestartLiveDefensivePlans.Empty();
+
+	TArray<ASoccerAICharacter*> AttackingCharacters;
+	TArray<ASoccerAICharacter*> DefendingCharacters;
+
+	for (TActorIterator<ASoccerAICharacter> It(World); It; ++It)
+	{
+		ASoccerAICharacter* CandidateCharacter = *It;
+		if (
+			!IsValid(CandidateCharacter) ||
+			CandidateCharacter->IsHidden() ||
+			CandidateCharacter->ActorHasTag(
+				FName(TEXT("SubstitutionPresentation"))
+			) ||
+			CandidateCharacter->GetPlayerRole() ==
+				ESoccerPlayerRole::Goalkeeper
+		)
+		{
+			continue;
+		}
+
+		if (CandidateCharacter->GetTeam() == ActiveRestartTeam)
+		{
+			if (!IsActiveRestartLiveTaker(CandidateCharacter))
+			{
+				AttackingCharacters.Add(CandidateCharacter);
+			}
+		}
+		else
+		{
+			DefendingCharacters.Add(CandidateCharacter);
+		}
+	}
+
+	AttackingCharacters.Sort(
+		[](const ASoccerAICharacter& A, const ASoccerAICharacter& B)
+		{
+			return A.GetUniqueID() < B.GetUniqueID();
+		}
+	);
+	DefendingCharacters.Sort(
+		[](const ASoccerAICharacter& A, const ASoccerAICharacter& B)
+		{
+			return A.GetUniqueID() < B.GetUniqueID();
+		}
+	);
+
+	auto GetFixedTarget = [this](const ASoccerAICharacter* Character)
+	{
+		if (const FVector* CapturedTarget =
+			ActiveRestartAITargetLocations.Find(Character))
+		{
+			return *CapturedTarget;
+		}
+
+		return BuildActiveRestartMoveLocation(Character);
+	};
+
+	for (ASoccerAICharacter* AttackingCharacter : AttackingCharacters)
+	{
+		FVector BaseTarget = GetFixedTarget(AttackingCharacter);
+		if (BaseTarget.IsNearlyZero())
+		{
+			BaseTarget = AttackingCharacter->GetActorLocation();
+		}
+		BaseTarget = SanitizeActiveRestartLivePositioningTarget(
+			AttackingCharacter,
+			BaseTarget
+		);
+
+		FRestartLivePositioningPlan NewPlan;
+		NewPlan.BaseTargetLocation = BaseTarget;
+		NewPlan.CommittedTargetLocation = BaseTarget;
+		NewPlan.NextDecisionWorldTime = CurrentWorldTime;
+		ActiveRestartLiveAttackingPlans.Add(AttackingCharacter, NewPlan);
+	}
+
+	for (ASoccerAICharacter* DefendingCharacter : DefendingCharacters)
+	{
+		FVector BaseTarget = GetFixedTarget(DefendingCharacter);
+		if (BaseTarget.IsNearlyZero())
+		{
+			BaseTarget = DefendingCharacter->GetActorLocation();
+		}
+		BaseTarget = SanitizeActiveRestartLivePositioningTarget(
+			DefendingCharacter,
+			BaseTarget
+		);
+
+		FRestartLivePositioningPlan NewPlan;
+		NewPlan.BaseTargetLocation = BaseTarget;
+		NewPlan.CommittedTargetLocation = BaseTarget;
+		NewPlan.NextDecisionWorldTime = CurrentWorldTime;
+		ActiveRestartLiveDefensivePlans.Add(DefendingCharacter, NewPlan);
+	}
+
+	UpdateActiveRestartLiveAttackingPlans(CurrentWorldTime, true);
+	UpdateActiveRestartLiveDefensivePlans(CurrentWorldTime, true);
+
+	int32 RepositioningAttackerCount = 0;
+	for (const TPair<const ASoccerAICharacter*, FRestartLivePositioningPlan>& Pair :
+		ActiveRestartLiveAttackingPlans)
+	{
+		if (
+			IsValid(Pair.Key) &&
+			FVector::Dist2D(
+				Pair.Value.BaseTargetLocation,
+				Pair.Value.CommittedTargetLocation
+			) >= FMath::Max(
+				20.0f,
+				RestartLiveAttackMinimumRelocationDistance
+			)
+		)
+		{
+			RepositioningAttackerCount++;
+		}
+	}
+
+	ASoccerDebugManager::Message(
+		this,
+		ESoccerDebugCategory::Restarts,
+		FString::Printf(
+			TEXT("%s: atacantes con nueva posicion %d/%d"),
+			ActiveRestartType == ESoccerRestartType::CornerKick
+				? TEXT("CORNER")
+				: TEXT("LATERAL"),
+			RepositioningAttackerCount,
+			ActiveRestartLiveAttackingPlans.Num()
+		),
+		RepositioningAttackerCount > 0 ? FColor::Green : FColor::Orange
+	);
+}
+
+float ASoccerMatchManager::ScoreActiveRestartLiveAttackingCandidate(
+	const ASoccerAICharacter* SoccerAICharacter,
+	const FVector& CandidateLocation,
+	const FVector& BaseLocation,
+	int32 DecisionIndex,
+	int32 CandidateIndex
+) const
+{
+	if (
+		!IsValid(SoccerAICharacter) ||
+		SoccerAICharacter->GetTeam() != ActiveRestartTeam
+	)
+	{
+		return -BIG_NUMBER;
+	}
+
+	const bool bCornerKick =
+		ActiveRestartType == ESoccerRestartType::CornerKick;
+	const FVector RestartBallLocation = bCornerKick
+		? GoalLineRestart.GetBallLocation()
+		: ThrowInLocation;
+	const ASoccerAICharacter* RestartTakerAI = bCornerKick
+		? GoalLineRestart.GetTaker()
+		: ThrowInTakerAI;
+
+	float Score = 1000.0f;
+	Score -= FVector::Dist2D(CandidateLocation, BaseLocation) *
+		FMath::Max(0.0f, RestartLiveAttackBaseDistancePenalty);
+
+	const float OwnArrivalTime =
+		SoccerAICharacter->EstimateArrivalTimeToLocation(CandidateLocation);
+	const float OpponentArrivalTime =
+		GetEarliestOpponentArrivalTimeToLocation(
+			ActiveRestartTeam,
+			CandidateLocation
+		);
+	// Do not use a direct OpponentArrival - OwnArrival margin here. Because the
+	// player has already reached the fixed setup target, OwnArrival is zero at
+	// that exact point and used to give it an artificial permanent advantage.
+	// Reward genuinely free space strongly and charge only a modest travel cost
+	// for offering a few metres away.
+	const float MaximumRelevantArrivalTime = 2.50f;
+	if (
+		FMath::IsFinite(OpponentArrivalTime) &&
+		OpponentArrivalTime < BIG_NUMBER * 0.5f
+	)
+	{
+		Score += FMath::Clamp(
+			OpponentArrivalTime,
+			0.0f,
+			MaximumRelevantArrivalTime
+		) *
+			FMath::Max(
+				0.0f,
+				RestartLiveAttackArrivalMarginWeight
+			);
+	}
+
+	if (
+		FMath::IsFinite(OwnArrivalTime) &&
+		OwnArrivalTime < BIG_NUMBER * 0.5f
+	)
+	{
+		Score -= FMath::Clamp(
+			OwnArrivalTime,
+			0.0f,
+			MaximumRelevantArrivalTime
+		) * FMath::Max(
+			0.0f,
+			RestartLiveAttackOwnTravelTimePenaltyWeight
+		);
+	}
+
+	if (IsOpponentBlockingLaneBetweenLocations(
+		ActiveRestartTeam,
+		RestartBallLocation,
+		CandidateLocation,
+		FMath::Max(0.0f, RestartReceiverAerialLaneHalfWidth)
+	))
+	{
+		Score -= FMath::Max(0.0f, RestartLiveAttackBlockedLanePenalty);
+	}
+
+	const float RestartReceiverScore = ScoreRestartPassReceiverCandidate(
+		ActiveRestartTeam,
+		RestartTakerAI,
+		SoccerAICharacter,
+		CandidateLocation,
+		true
+	);
+	if (RestartReceiverScore > -BIG_NUMBER * 0.5f)
+	{
+		Score += RestartReceiverScore * 0.20f;
+	}
+	else
+	{
+		Score -= 520.0f;
+	}
+
+	if (bCornerKick)
+	{
+		const FVector AttackedGoalLocation =
+			GetOpponentGoalReferenceLocation(ActiveRestartTeam);
+		const float IdealGoalDistance =
+			SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+				FMath::Max(100.0f, RestartLiveCornerIdealGoalDistance)
+			);
+		Score -= FMath::Abs(
+			FVector::Dist2D(CandidateLocation, AttackedGoalLocation) -
+			IdealGoalDistance
+		) * FMath::Max(
+			0.0f,
+			RestartLiveCornerGoalDistancePenaltyWeight
+		);
+	}
+	else
+	{
+		const float IdealPassDistance =
+			SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(900.0f);
+		Score -= FMath::Abs(
+			FVector::Dist2D(RestartBallLocation, CandidateLocation) -
+			IdealPassDistance
+		) * 0.12f;
+	}
+
+	UWorld* World = GetWorld();
+	if (World != nullptr)
+	{
+		const float SafeTeammateRadius = FMath::Max(
+			20.0f,
+			RestartLiveAttackTeammateAvoidRadius
+		);
+		const float SafeReservationRadius = FMath::Max(
+			20.0f,
+			RestartLiveAttackReservationRadius
+		);
+		const float SafeCrowdingPenalty = FMath::Max(
+			0.0f,
+			RestartLiveAttackCrowdingPenalty
+		);
+
+		for (TActorIterator<ASoccerCharacterBase> It(World); It; ++It)
+		{
+			const ASoccerCharacterBase* Teammate = *It;
+			if (
+				!IsValid(Teammate) ||
+				Teammate == SoccerAICharacter ||
+				Teammate->GetTeam() != ActiveRestartTeam
+			)
+			{
+				continue;
+			}
+
+			// AI teammates reserve their committed destination; a human teammate
+			// contributes only their observed position and current movement. This
+			// informs bot decisions without ever assigning movement to the human.
+			const FVector TeammateReferenceLocation =
+				GetActiveRestartLiveThreatLocation(Teammate);
+
+			const float TeammateDistance = FVector::Dist2D(
+				CandidateLocation,
+				TeammateReferenceLocation
+			);
+			if (TeammateDistance < SafeTeammateRadius)
+			{
+				Score -=
+					(1.0f - TeammateDistance / SafeTeammateRadius) *
+					SafeCrowdingPenalty;
+			}
+
+			if (
+				Cast<ASoccerAICharacter>(Teammate) != nullptr &&
+				TeammateDistance < SafeReservationRadius
+			)
+			{
+				Score -=
+					(1.0f - TeammateDistance / SafeReservationRadius) *
+					SafeCrowdingPenalty * 1.35f;
+			}
+		}
+	}
+
+	FVector AttackDirection = GetFieldAttackDirectionForTeam(ActiveRestartTeam);
+	AttackDirection.Z = 0.0f;
+	AttackDirection = AttackDirection.GetSafeNormal();
+	const float ForwardProgress = FVector::DotProduct(
+		CandidateLocation - BaseLocation,
+		AttackDirection
+	);
+
+	const ESoccerPlayerRole PlayerRole =
+		SoccerAICharacter->GetPlayerRole();
+	if (PlayerRole == ESoccerPlayerRole::Forward)
+	{
+		Score += FMath::Clamp(ForwardProgress, -300.0f, 360.0f) * 0.32f;
+		if (bCornerKick)
+		{
+			Score += 90.0f;
+		}
+	}
+	else if (PlayerRole == ESoccerPlayerRole::Midfielder)
+	{
+		Score += FMath::Clamp(ForwardProgress, -260.0f, 300.0f) * 0.16f;
+		if (bCornerKick)
+		{
+			Score += 45.0f;
+		}
+	}
+	else if (PlayerRole == ESoccerPlayerRole::Defender)
+	{
+		Score -= FMath::Max(0.0f, ForwardProgress - 120.0f) * 0.28f;
+	}
+
+	if (CandidateIndex >= 0)
+	{
+		FRandomStream DecisionRandom(BuildActiveRestartLivePositioningSeed(
+			SoccerAICharacter,
+			DecisionIndex,
+			1000 + CandidateIndex
+		));
+		const float SafeScoreJitter = FMath::Max(
+			0.0f,
+			RestartLiveAttackDecisionScoreJitter
+		);
+		Score += DecisionRandom.FRandRange(-SafeScoreJitter, SafeScoreJitter);
+	}
+
+	return Score;
+}
+
+void ASoccerMatchManager::UpdateActiveRestartLiveAttackingPlans(
+	float CurrentWorldTime,
+	bool bForceDecision
+)
+{
+	if (
+		!IsActiveRestartLivePositioningActive() ||
+		bActiveRestartLivePositioningLocked
+	)
+	{
+		return;
+	}
+
+	TArray<const ASoccerAICharacter*> AttackingCharacters;
+	ActiveRestartLiveAttackingPlans.GetKeys(AttackingCharacters);
+	AttackingCharacters.RemoveAll(
+		[](const ASoccerAICharacter* Character)
+		{
+			return !IsValid(Character);
+		}
+	);
+	AttackingCharacters.Sort(
+		[](const ASoccerAICharacter& A, const ASoccerAICharacter& B)
+		{
+			return A.GetUniqueID() < B.GetUniqueID();
+		}
+	);
+
+	const bool bCornerKick =
+		ActiveRestartType == ESoccerRestartType::CornerKick;
+	FVector PrimarySearchDirection = bCornerKick
+		? GetFieldAttackDirectionForTeam(ActiveRestartTeam)
+		: ThrowInInwardDirection;
+	PrimarySearchDirection.Z = 0.0f;
+	PrimarySearchDirection = PrimarySearchDirection.GetSafeNormal();
+
+	FVector SecondarySearchDirection;
+	if (bCornerKick)
+	{
+		SecondarySearchDirection = FVector::CrossProduct(
+			FVector::UpVector,
+			PrimarySearchDirection
+		);
+	}
+	else
+	{
+		SecondarySearchDirection = IsValid(SoccerField)
+			? SoccerField->GetPitchLengthWorldDirection()
+			: FVector::ForwardVector;
+	}
+	SecondarySearchDirection.Z = 0.0f;
+	SecondarySearchDirection = SecondarySearchDirection.GetSafeNormal();
+
+	const float SafeMinimumDecisionInterval = FMath::Max(
+		0.10f,
+		RestartLiveAttackDecisionMinInterval
+	);
+	const float SafeMaximumDecisionInterval = FMath::Max(
+		SafeMinimumDecisionInterval,
+		RestartLiveAttackDecisionMaxInterval
+	);
+	const int32 SafeMaximumRepositions = FMath::Max(
+		0,
+		RestartLiveMaximumAttackingRepositions
+	);
+
+	for (const ASoccerAICharacter* AttackingCharacter : AttackingCharacters)
+	{
+		if (!IsValid(AttackingCharacter))
+		{
+			ActiveRestartLiveAttackingPlans.Remove(AttackingCharacter);
+			continue;
+		}
+
+		FRestartLivePositioningPlan* Plan =
+			ActiveRestartLiveAttackingPlans.Find(AttackingCharacter);
+		if (
+			Plan == nullptr ||
+			(!bForceDecision &&
+			 CurrentWorldTime < Plan->NextDecisionWorldTime)
+		)
+		{
+			continue;
+		}
+
+		if (Plan->CommittedTargetLocation.IsNearlyZero())
+		{
+			Plan->CommittedTargetLocation = Plan->BaseTargetLocation;
+		}
+
+		const int32 CurrentDecisionIndex = Plan->DecisionIndex;
+		const float CurrentTargetScore =
+			ScoreActiveRestartLiveAttackingCandidate(
+				AttackingCharacter,
+				Plan->CommittedTargetLocation,
+				Plan->BaseTargetLocation,
+				CurrentDecisionIndex,
+				-1
+			);
+
+		FVector BestTarget = Plan->CommittedTargetLocation;
+		float BestTargetScore = CurrentTargetScore;
+
+		float PlayerSearchScale = 1.0f;
+		const ESoccerPlayerRole PlayerRole =
+			AttackingCharacter->GetPlayerRole();
+		if (PlayerRole == ESoccerPlayerRole::Defender)
+		{
+			PlayerSearchScale = 0.68f;
+		}
+		else if (PlayerRole == ESoccerPlayerRole::Forward)
+		{
+			PlayerSearchScale = 1.12f;
+		}
+
+		const float PrimarySearchStep = bCornerKick
+			? SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+				FMath::Max(20.0f, RestartLiveCornerDepthSearchStep)
+			) * PlayerSearchScale
+			: SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+				FMath::Max(20.0f, RestartLiveThrowInInwardSearchStep)
+			) * PlayerSearchScale;
+		const float SecondarySearchStep = bCornerKick
+			? SoccerFieldDimensions::ScaleAuthoredLateralDistance(
+				FMath::Max(20.0f, RestartLiveCornerWidthSearchStep)
+			) * PlayerSearchScale
+			: SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+				FMath::Max(20.0f, RestartLiveThrowInAlongLineSearchStep)
+			) * PlayerSearchScale;
+
+		const FVector2D CandidateOffsets[] =
+		{
+			FVector2D(0.0f, 0.0f),
+			FVector2D(1.0f, 0.0f),
+			FVector2D(-0.55f, 0.0f),
+			FVector2D(0.0f, 1.0f),
+			FVector2D(0.0f, -1.0f),
+			FVector2D(0.80f, 1.0f),
+			FVector2D(0.80f, -1.0f),
+			FVector2D(-0.35f, 0.85f),
+			FVector2D(-0.35f, -0.85f)
+		};
+
+		for (int32 CandidateIndex = 0;
+			 CandidateIndex < UE_ARRAY_COUNT(CandidateOffsets);
+			 ++CandidateIndex)
+		{
+			const FVector2D& CandidateOffset =
+				CandidateOffsets[CandidateIndex];
+			FVector CandidateLocation =
+				Plan->BaseTargetLocation +
+				PrimarySearchDirection *
+					(CandidateOffset.X * PrimarySearchStep) +
+				SecondarySearchDirection *
+					(CandidateOffset.Y * SecondarySearchStep);
+			CandidateLocation = SanitizeActiveRestartLivePositioningTarget(
+				AttackingCharacter,
+				CandidateLocation
+			);
+
+			float CandidateScore =
+				ScoreActiveRestartLiveAttackingCandidate(
+					AttackingCharacter,
+					CandidateLocation,
+					Plan->BaseTargetLocation,
+					CurrentDecisionIndex,
+					CandidateIndex
+				);
+
+			const bool bInitialSupportingOffer =
+				bForceDecision &&
+				CurrentDecisionIndex == 0 &&
+				CandidateIndex > 0;
+			if (bInitialSupportingOffer)
+			{
+				CandidateScore += FMath::Max(
+					0.0f,
+					RestartLiveAttackInitialOfferMovementBonus
+				);
+			}
+
+			if (CandidateScore > BestTargetScore)
+			{
+				BestTargetScore = CandidateScore;
+				BestTarget = CandidateLocation;
+			}
+		}
+
+		const float RequiredImprovement = bForceDecision
+			? 0.0f
+			: FMath::Max(
+				0.0f,
+				RestartLiveAttackMinimumScoreImprovement
+			);
+		const bool bCanChangeTarget =
+			Plan->RepositionCount < SafeMaximumRepositions;
+		const bool bTargetIsMateriallyDifferent =
+			FVector::Dist2D(
+				BestTarget,
+				Plan->CommittedTargetLocation
+			) >= FMath::Max(
+				20.0f,
+				RestartLiveAttackMinimumRelocationDistance
+			);
+
+		if (
+			bCanChangeTarget &&
+			bTargetIsMateriallyDifferent &&
+			BestTargetScore >= CurrentTargetScore + RequiredImprovement
+		)
+		{
+			Plan->CommittedTargetLocation = BestTarget;
+			Plan->LastEvaluatedScore = BestTargetScore;
+			Plan->RepositionCount++;
+		}
+		else
+		{
+			Plan->LastEvaluatedScore = CurrentTargetScore;
+		}
+
+		Plan->DecisionIndex++;
+		FRandomStream IntervalRandom(BuildActiveRestartLivePositioningSeed(
+			AttackingCharacter,
+			Plan->DecisionIndex,
+			2001
+		));
+		Plan->NextDecisionWorldTime =
+			CurrentWorldTime +
+			IntervalRandom.FRandRange(
+				SafeMinimumDecisionInterval,
+				SafeMaximumDecisionInterval
+			);
+	}
+}
+
+FVector ASoccerMatchManager::GetActiveRestartLiveThreatLocation(
+	const ASoccerCharacterBase* AttackingCharacter
+) const
+{
+	if (!IsValid(AttackingCharacter))
+	{
+		return FVector::ZeroVector;
+	}
+
+	FVector ThreatLocation = AttackingCharacter->GetActorLocation();
+	if (const ASoccerAICharacter* AttackingAI =
+		Cast<ASoccerAICharacter>(AttackingCharacter))
+	{
+		if (const FRestartLivePositioningPlan* Plan =
+			ActiveRestartLiveAttackingPlans.Find(AttackingAI))
+		{
+			ThreatLocation = Plan->CommittedTargetLocation;
+		}
+	}
+	else
+	{
+		FVector HumanVelocity = AttackingCharacter->GetVelocity();
+		HumanVelocity.Z = 0.0f;
+		ThreatLocation += HumanVelocity * FMath::Max(
+			0.0f,
+			RestartLiveHumanMotionLookAheadTime
+		);
+	}
+
+	const float SafeFieldInset = FMath::Max(0.0f, RestartLiveFieldInset);
+	if (IsValid(SoccerField))
+	{
+		ThreatLocation = SoccerField->ClampWorldLocationInsidePitch(
+			ThreatLocation,
+			SafeFieldInset
+		);
+	}
+	else
+	{
+		ThreatLocation = SoccerFieldDimensions::ClampLocationInsidePitch(
+			ThreatLocation,
+			SafeFieldInset
+		);
+	}
+	ThreatLocation.Z = AttackingCharacter->GetActorLocation().Z;
+	return ThreatLocation;
+}
+
+void ASoccerMatchManager::UpdateActiveRestartLiveDefensivePlans(
+	float CurrentWorldTime,
+	bool bForceDecision
+)
+{
+	if (
+		!IsActiveRestartLivePositioningActive() ||
+		bActiveRestartLivePositioningLocked ||
+		(!bForceDecision &&
+		 CurrentWorldTime < ActiveRestartLiveNextDefensiveDecisionTime)
+	)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	const bool bCornerKick =
+		ActiveRestartType == ESoccerRestartType::CornerKick;
+	const FVector RestartBallLocation = bCornerKick
+		? GoalLineRestart.GetBallLocation()
+		: ThrowInLocation;
+	const FVector DefendingGoalLocation =
+		GetOpponentGoalReferenceLocation(ActiveRestartTeam);
+
+	struct FRestartLiveThreat
+	{
+		ASoccerCharacterBase* Character = nullptr;
+		FVector TargetLocation = FVector::ZeroVector;
+		float ThreatScore = -BIG_NUMBER;
+		bool bCoveredByHuman = false;
+	};
+
+	const ESoccerTeam DefendingTeam = GetOppositeTeam(ActiveRestartTeam);
+	AThirdPersonCppCharacter* HumanDefender =
+		FindHumanCharacterForTeam(DefendingTeam);
+	FVector HumanCoverageLocation = FVector::ZeroVector;
+	if (IsValid(HumanDefender))
+	{
+		FVector HumanVelocity = HumanDefender->GetVelocity();
+		HumanVelocity.Z = 0.0f;
+		HumanCoverageLocation =
+			HumanDefender->GetActorLocation() +
+			HumanVelocity * FMath::Max(
+				0.0f,
+				RestartLiveHumanMotionLookAheadTime
+			);
+	}
+
+	TArray<FRestartLiveThreat> Threats;
+	for (TActorIterator<ASoccerCharacterBase> It(World); It; ++It)
+	{
+		ASoccerCharacterBase* CandidateAttacker = *It;
+		if (
+			!IsValid(CandidateAttacker) ||
+			CandidateAttacker->IsHidden() ||
+			CandidateAttacker->ActorHasTag(
+				FName(TEXT("SubstitutionPresentation"))
+			) ||
+			CandidateAttacker->GetTeam() != ActiveRestartTeam ||
+			CandidateAttacker->GetPlayerRole() ==
+				ESoccerPlayerRole::Goalkeeper
+		)
+		{
+			continue;
+		}
+
+		if (IsActiveRestartLiveTaker(CandidateAttacker))
+		{
+			continue;
+		}
+
+		FRestartLiveThreat Threat;
+		Threat.Character = CandidateAttacker;
+		Threat.TargetLocation =
+			GetActiveRestartLiveThreatLocation(CandidateAttacker);
+
+		if (bCornerKick)
+		{
+			const float IdealGoalDistance =
+				SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+					FMath::Max(100.0f, RestartLiveCornerIdealGoalDistance)
+				);
+			Threat.ThreatScore =
+				1120.0f -
+				FMath::Abs(
+					FVector::Dist2D(
+						Threat.TargetLocation,
+						DefendingGoalLocation
+					) - IdealGoalDistance
+				) * FMath::Max(
+					0.0f,
+					RestartLiveCornerGoalDistancePenaltyWeight
+				);
+		}
+		else
+		{
+			const float DistanceFromRestart = FVector::Dist2D(
+				RestartBallLocation,
+				Threat.TargetLocation
+			);
+			const float IdealPassDistance =
+				SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+					900.0f
+				);
+			Threat.ThreatScore =
+				1000.0f -
+				FMath::Abs(
+					DistanceFromRestart - IdealPassDistance
+				) * 0.16f;
+		}
+
+		if (!IsOpponentBlockingLaneBetweenLocations(
+			ActiveRestartTeam,
+			RestartBallLocation,
+			Threat.TargetLocation,
+			FMath::Max(0.0f, RestartReceiverAerialLaneHalfWidth)
+		))
+		{
+			Threat.ThreatScore += 150.0f;
+		}
+
+		const ESoccerPlayerRole PlayerRole =
+			CandidateAttacker->GetPlayerRole();
+		if (PlayerRole == ESoccerPlayerRole::Forward)
+		{
+			Threat.ThreatScore += 100.0f;
+		}
+		else if (PlayerRole == ESoccerPlayerRole::Midfielder)
+		{
+			Threat.ThreatScore += 70.0f;
+		}
+
+		const float SafeHumanCoverageRadius = FMath::Max(
+			20.0f,
+			RestartLiveHumanCoverageRadius
+		) * FMath::Clamp(
+			RestartLiveHumanCoverageCredit,
+			0.0f,
+			1.0f
+		);
+		Threat.bCoveredByHuman =
+			IsValid(HumanDefender) &&
+			SafeHumanCoverageRadius > 0.0f &&
+			FVector::Dist2D(
+				HumanCoverageLocation,
+				Threat.TargetLocation
+			) <= SafeHumanCoverageRadius;
+
+		Threats.Add(Threat);
+	}
+
+	Threats.Sort(
+		[](const FRestartLiveThreat& A, const FRestartLiveThreat& B)
+		{
+			if (!FMath::IsNearlyEqual(A.ThreatScore, B.ThreatScore, 0.1f))
+			{
+				return A.ThreatScore > B.ThreatScore;
+			}
+
+			const uint32 AId = IsValid(A.Character)
+				? A.Character->GetUniqueID()
+				: MAX_uint32;
+			const uint32 BId = IsValid(B.Character)
+				? B.Character->GetUniqueID()
+				: MAX_uint32;
+			return AId < BId;
+		}
+	);
+
+	TArray<const ASoccerAICharacter*> DefendingCharacters;
+	ActiveRestartLiveDefensivePlans.GetKeys(DefendingCharacters);
+	DefendingCharacters.RemoveAll(
+		[](const ASoccerAICharacter* Character)
+		{
+			return !IsValid(Character);
+		}
+	);
+	DefendingCharacters.Sort(
+		[](const ASoccerAICharacter& A, const ASoccerAICharacter& B)
+		{
+			return A.GetUniqueID() < B.GetUniqueID();
+		}
+	);
+
+	auto FindThreat = [&Threats](ASoccerCharacterBase* Character)
+		-> const FRestartLiveThreat*
+	{
+		for (const FRestartLiveThreat& Threat : Threats)
+		{
+			if (Threat.Character == Character)
+			{
+				return &Threat;
+			}
+		}
+		return nullptr;
+	};
+
+	auto BuildMarkTarget = [
+		this,
+		bCornerKick,
+		RestartBallLocation,
+		DefendingGoalLocation
+	](
+		const ASoccerAICharacter* DefendingCharacter,
+		const FRestartLivePositioningPlan& Plan,
+		const FRestartLiveThreat& Threat
+	)
+	{
+		FVector MarkingReferenceDirection =
+			(bCornerKick ? DefendingGoalLocation : RestartBallLocation) -
+			Threat.TargetLocation;
+		MarkingReferenceDirection.Z = 0.0f;
+		MarkingReferenceDirection =
+			MarkingReferenceDirection.GetSafeNormal();
+		if (MarkingReferenceDirection.IsNearlyZero())
+		{
+			MarkingReferenceDirection =
+				-GetFieldAttackDirectionForTeam(ActiveRestartTeam);
+		}
+		const float MarkingDistance = bCornerKick
+			? RestartLiveCornerDefenderGoalSideDistance
+			: RestartLiveDefenderMarkingDistance;
+
+		FVector DesiredMarkTarget =
+			Threat.TargetLocation +
+			MarkingReferenceDirection * FMath::Max(
+				20.0f,
+				MarkingDistance
+			);
+		DesiredMarkTarget = FMath::Lerp(
+			DesiredMarkTarget,
+			Plan.BaseTargetLocation,
+			FMath::Clamp(
+				RestartLiveDefensiveShapeRetention,
+				0.0f,
+				1.0f
+			)
+		);
+		DesiredMarkTarget = SanitizeActiveRestartLivePositioningTarget(
+			DefendingCharacter,
+			DesiredMarkTarget
+		);
+		DesiredMarkTarget = BuildCircularRestartOpponentMoveLocation(
+			DefendingCharacter,
+			DesiredMarkTarget,
+			RestartBallLocation,
+			bCornerKick
+				? CornerKickOpponentRequiredDistance
+				: ThrowInOpponentRequiredDistance,
+			bCornerKick
+				? CornerKickOpponentMoveExtraDistance
+				: ThrowInOpponentMoveExtraDistance
+		);
+		return SanitizeActiveRestartLivePositioningTarget(
+			DefendingCharacter,
+			DesiredMarkTarget
+		);
+	};
+
+	TSet<ASoccerCharacterBase*> AssignedThreats;
+	TSet<const ASoccerAICharacter*> RetainedDefenders;
+
+	for (const ASoccerAICharacter* DefendingCharacter : DefendingCharacters)
+	{
+		FRestartLivePositioningPlan* Plan =
+			ActiveRestartLiveDefensivePlans.Find(DefendingCharacter);
+		if (Plan == nullptr)
+		{
+			continue;
+		}
+
+		ASoccerCharacterBase* PreviousMarkedAttacker =
+			Plan->MarkedAttacker.Get();
+		const FRestartLiveThreat* PreviousThreat =
+			FindThreat(PreviousMarkedAttacker);
+		if (
+			PreviousThreat != nullptr &&
+			!PreviousThreat->bCoveredByHuman &&
+			CurrentWorldTime < Plan->MarkCommitUntilWorldTime &&
+			!AssignedThreats.Contains(PreviousMarkedAttacker)
+		)
+		{
+			AssignedThreats.Add(PreviousMarkedAttacker);
+			RetainedDefenders.Add(DefendingCharacter);
+			Plan->CommittedTargetLocation = BuildMarkTarget(
+				DefendingCharacter,
+				*Plan,
+				*PreviousThreat
+			);
+		}
+	}
+
+	const float SafeMinimumMarkHold = FMath::Max(
+		0.10f,
+		RestartLiveDefenderMarkMinHoldTime
+	);
+	const float SafeMaximumMarkHold = FMath::Max(
+		SafeMinimumMarkHold,
+		RestartLiveDefenderMarkMaxHoldTime
+	);
+
+	for (const ASoccerAICharacter* DefendingCharacter : DefendingCharacters)
+	{
+		if (!IsValid(DefendingCharacter))
+		{
+			ActiveRestartLiveDefensivePlans.Remove(DefendingCharacter);
+			continue;
+		}
+
+		FRestartLivePositioningPlan* Plan =
+			ActiveRestartLiveDefensivePlans.Find(DefendingCharacter);
+		if (Plan == nullptr || RetainedDefenders.Contains(DefendingCharacter))
+		{
+			continue;
+		}
+
+		ASoccerCharacterBase* PreviousMarkedAttacker =
+			Plan->MarkedAttacker.Get();
+		const FRestartLiveThreat* BestThreat = nullptr;
+		float BestAssignmentScore = -BIG_NUMBER;
+
+		for (const FRestartLiveThreat& Threat : Threats)
+		{
+			if (
+				!IsValid(Threat.Character) ||
+				Threat.bCoveredByHuman ||
+				AssignedThreats.Contains(Threat.Character)
+			)
+			{
+				continue;
+			}
+
+			float AssignmentScore =
+				Threat.ThreatScore -
+				FVector::Dist2D(
+					DefendingCharacter->GetActorLocation(),
+					Threat.TargetLocation
+				) * 0.18f;
+			if (Threat.Character == PreviousMarkedAttacker)
+			{
+				AssignmentScore += FMath::Max(
+					0.0f,
+					RestartLiveDefenderMarkRetentionBonus
+				);
+			}
+
+			if (AssignmentScore > BestAssignmentScore)
+			{
+				BestAssignmentScore = AssignmentScore;
+				BestThreat = &Threat;
+			}
+		}
+
+		if (BestThreat == nullptr)
+		{
+			Plan->MarkedAttacker.Reset();
+			Plan->MarkCommitUntilWorldTime = -1000.0f;
+			Plan->CommittedTargetLocation = Plan->BaseTargetLocation;
+			continue;
+		}
+
+		Plan->MarkedAttacker = BestThreat->Character;
+		AssignedThreats.Add(BestThreat->Character);
+		FRandomStream HoldRandom(BuildActiveRestartLivePositioningSeed(
+			DefendingCharacter,
+			ActiveRestartLiveDefensiveDecisionIndex,
+			3001
+		));
+		Plan->MarkCommitUntilWorldTime =
+			CurrentWorldTime +
+			HoldRandom.FRandRange(
+				SafeMinimumMarkHold,
+				SafeMaximumMarkHold
+			);
+		Plan->CommittedTargetLocation = BuildMarkTarget(
+			DefendingCharacter,
+			*Plan,
+			*BestThreat
+		);
+	}
+
+	ActiveRestartLiveDefensiveDecisionIndex++;
+	const float SafeMinimumDecisionInterval = FMath::Max(
+		0.05f,
+		RestartLiveDefenseDecisionMinInterval
+	);
+	const float SafeMaximumDecisionInterval = FMath::Max(
+		SafeMinimumDecisionInterval,
+		RestartLiveDefenseDecisionMaxInterval
+	);
+	FRandomStream IntervalRandom(BuildActiveRestartLivePositioningSeed(
+		nullptr,
+		ActiveRestartLiveDefensiveDecisionIndex,
+		4001
+	));
+	ActiveRestartLiveNextDefensiveDecisionTime =
+		CurrentWorldTime +
+		IntervalRandom.FRandRange(
+			SafeMinimumDecisionInterval,
+			SafeMaximumDecisionInterval
+		);
+}
+
+void ASoccerMatchManager::UpdateActiveRestartLivePositioning(float DeltaTime)
+{
+	(void)DeltaTime;
+
+	if (!bActiveRestartLivePositioning)
+	{
+		return;
+	}
+
+	const bool bSupportedRestart =
+		(
+			ActiveRestartType == ESoccerRestartType::ThrowIn &&
+			bEnableThrowInLivePositioning
+		) ||
+		(
+			ActiveRestartType == ESoccerRestartType::CornerKick &&
+			bEnableCornerKickLivePositioning
+		);
+	if (
+		!bEnableRestartLivePositioning ||
+		!bSupportedRestart ||
+		!IsRestartContextActive()
+	)
+	{
+		ResetActiveRestartLivePositioning();
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	if (!bActiveRestartLivePositioningLocked)
+	{
+		const float CurrentWorldTime = World->GetTimeSeconds();
+		UpdateActiveRestartLiveAttackingPlans(CurrentWorldTime, false);
+		UpdateActiveRestartLiveDefensivePlans(CurrentWorldTime, false);
+	}
+
+	DrawActiveRestartLivePositioningDebug();
+}
+
+void ASoccerMatchManager::CommitBestActiveRestartLiveReceiver()
+{
+	const bool bCornerKick =
+		ActiveRestartType == ESoccerRestartType::CornerKick;
+	ASoccerAICharacter* RestartTakerAI = bCornerKick
+		? GoalLineRestart.GetTaker()
+		: ThrowInTakerAI;
+	if (
+		!IsActiveRestartLivePositioningActive() ||
+		!IsValid(RestartTakerAI)
+	)
+	{
+		return;
+	}
+
+	const ASoccerAICharacter* BestReceiver = nullptr;
+	float BestReceiverScore = -BIG_NUMBER;
+
+	for (const TPair<const ASoccerAICharacter*, FRestartLivePositioningPlan>& Pair :
+		ActiveRestartLiveAttackingPlans)
+	{
+		const ASoccerAICharacter* CandidateReceiver = Pair.Key;
+		if (
+			!IsValid(CandidateReceiver) ||
+			CandidateReceiver == RestartTakerAI ||
+			CandidateReceiver->GetTeam() != ActiveRestartTeam ||
+			CandidateReceiver->GetPlayerRole() ==
+				ESoccerPlayerRole::Goalkeeper
+		)
+		{
+			continue;
+		}
+
+		const FVector CandidateTarget =
+			Pair.Value.CommittedTargetLocation;
+		float CandidateScore = ScoreRestartPassReceiverCandidate(
+			ActiveRestartTeam,
+			RestartTakerAI,
+			CandidateReceiver,
+			CandidateTarget,
+			true
+		);
+		if (CandidateScore <= -BIG_NUMBER * 0.5f)
+		{
+			CandidateScore = Pair.Value.LastEvaluatedScore - 800.0f;
+		}
+		CandidateScore -= FVector::Dist2D(
+			CandidateReceiver->GetActorLocation(),
+			CandidateTarget
+		) * 0.20f;
+
+		if (
+			CandidateScore > BestReceiverScore ||
+			(
+				FMath::IsNearlyEqual(
+					CandidateScore,
+					BestReceiverScore,
+					0.1f
+				) &&
+				(
+					BestReceiver == nullptr ||
+					CandidateReceiver->GetUniqueID() <
+						BestReceiver->GetUniqueID()
+				)
+			)
+		)
+		{
+			BestReceiver = CandidateReceiver;
+			BestReceiverScore = CandidateScore;
+		}
+	}
+
+	if (!IsValid(BestReceiver))
+	{
+		return;
+	}
+
+	ASoccerAICharacter* PreviousReceiver = bCornerKick
+		? GoalLineRestart.GetReceiver()
+		: ThrowInReceiverAI;
+	ASoccerAICharacter* CommittedReceiver =
+		const_cast<ASoccerAICharacter*>(BestReceiver);
+	if (bCornerKick)
+	{
+		GoalLineRestart.SetCornerParticipants(
+			GoalLineRestart.GetTaker(),
+			CommittedReceiver
+		);
+	}
+	else
+	{
+		ThrowInReceiverAI = CommittedReceiver;
+	}
+
+	if (const FRestartLivePositioningPlan* ReceiverPlan =
+		ActiveRestartLiveAttackingPlans.Find(BestReceiver))
+	{
+		if (bCornerKick)
+		{
+			GoalLineRestart.ReceiverMoveLocation =
+				ReceiverPlan->CommittedTargetLocation;
+		}
+		else
+		{
+			ThrowInReceiverMoveLocation =
+				ReceiverPlan->CommittedTargetLocation;
+		}
+	}
+
+	if (PreviousReceiver != CommittedReceiver)
+	{
+		ASoccerDebugManager::Message(
+			this,
+			ESoccerDebugCategory::Restarts,
+			FString::Printf(
+				TEXT("%s: receptor dinamico elegido %s"),
+				bCornerKick
+					? TEXT("CORNER")
+					: TEXT("LATERAL"),
+				*CommittedReceiver->GetName()
+			),
+			FColor::Green
+		);
+	}
+}
+
+void ASoccerMatchManager::DrawActiveRestartLivePositioningDebug() const
+{
+	if (
+		!bDrawRestartLivePositioningDebug ||
+		!IsActiveRestartLivePositioningActive()
+	)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (const TPair<const ASoccerAICharacter*, FRestartLivePositioningPlan>& Pair :
+		ActiveRestartLiveAttackingPlans)
+	{
+		if (!IsValid(Pair.Key))
+		{
+			continue;
+		}
+
+		DrawDebugLine(
+			World,
+			Pair.Key->GetActorLocation(),
+			Pair.Value.CommittedTargetLocation,
+			FColor::Green,
+			false,
+			0.0f,
+			0,
+			2.0f
+		);
+		DrawDebugSphere(
+			World,
+			Pair.Value.CommittedTargetLocation,
+			28.0f,
+			8,
+			FColor::Green,
+			false,
+			0.0f,
+			0,
+			2.0f
+		);
+	}
+
+	for (const TPair<const ASoccerAICharacter*, FRestartLivePositioningPlan>& Pair :
+		ActiveRestartLiveDefensivePlans)
+	{
+		if (!IsValid(Pair.Key))
+		{
+			continue;
+		}
+
+		DrawDebugLine(
+			World,
+			Pair.Key->GetActorLocation(),
+			Pair.Value.CommittedTargetLocation,
+			FColor::Orange,
+			false,
+			0.0f,
+			0,
+			2.0f
+		);
+		DrawDebugSphere(
+			World,
+			Pair.Value.CommittedTargetLocation,
+			28.0f,
+			8,
+			FColor::Orange,
+			false,
+			0.0f,
+			0,
+			2.0f
+		);
+
+		ASoccerCharacterBase* MarkedAttacker =
+			Pair.Value.MarkedAttacker.Get();
+		if (IsValid(MarkedAttacker))
+		{
+			DrawDebugLine(
+				World,
+				Pair.Value.CommittedTargetLocation,
+				GetActiveRestartLiveThreatLocation(MarkedAttacker),
+				FColor::Red,
+				false,
+				0.0f,
+				0,
+				1.5f
+			);
+		}
+	}
+}
+
 FVector ASoccerMatchManager::GetActiveRestartMoveLocation(
 	const ASoccerAICharacter* SoccerAICharacter
 ) const
@@ -16342,6 +17962,27 @@ FVector ASoccerMatchManager::GetActiveRestartMoveLocation(
 	if (IsGoalKickTakerFinalApproach(SoccerAICharacter))
 	{
 		return GetGoalLineRestartMoveLocation(SoccerAICharacter);
+	}
+
+	if (IsActiveRestartLivePositioningActive())
+	{
+		if (const FRestartLivePositioningPlan* AttackingPlan =
+			ActiveRestartLiveAttackingPlans.Find(SoccerAICharacter))
+		{
+			if (!AttackingPlan->CommittedTargetLocation.IsNearlyZero())
+			{
+				return AttackingPlan->CommittedTargetLocation;
+			}
+		}
+
+		if (const FRestartLivePositioningPlan* DefensivePlan =
+			ActiveRestartLiveDefensivePlans.Find(SoccerAICharacter))
+		{
+			if (!DefensivePlan->CommittedTargetLocation.IsNearlyZero())
+			{
+				return DefensivePlan->CommittedTargetLocation;
+			}
+		}
 	}
 
 	if (!bCapturingActiveRestartAITargetLocations)
