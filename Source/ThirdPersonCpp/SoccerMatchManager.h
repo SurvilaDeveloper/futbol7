@@ -1508,8 +1508,8 @@ bool IsPenaltyMatchStateActive() const;
 	void ResetActiveRestartReadyHold();
 
 	// Live restart positioning starts only after the fixed legal setup is ready.
-	// Throw-ins, corners and goal kicks share the stable plan runtime while
-	// preserving their own candidate geometry, legal restrictions and execution.
+	// Throw-ins, corners, goal kicks and free kicks share the stable plan runtime
+	// while preserving their own geometry, restrictions and execution flow.
 	void BeginActiveRestartLivePositioning();
 	void ResetActiveRestartLivePositioning();
 	void UpdateActiveRestartLivePositioning(float DeltaTime);
@@ -2729,7 +2729,7 @@ bool IsPenaltyMatchStateActive() const;
 		float RestartReceiverMinimumCandidateScore = 420.0f;
 
 	// ============================================================
-	// LIVE RESTART POSITIONING - THROW IN, CORNER KICK AND GOAL KICK
+	// LIVE RESTART POSITIONING - THROW IN, CORNERS, GOAL KICKS AND FREE KICKS
 	// ============================================================
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning")
@@ -2743,6 +2743,12 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Goal Kick")
 		bool bEnableGoalKickLivePositioning = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Free Kick")
+		bool bEnableOffsideFreeKickLivePositioning = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Free Kick")
+		bool bEnableDirectFreeKickLivePositioning = true;
 
 	// AI takers observe the off-ball contest for a short bounded window. Human
 	// takers keep the window open until their manual target selection.
@@ -2803,6 +2809,18 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Goal Kick|Attack", meta = (ClampMin = "0.0"))
 		float RestartLiveGoalKickPassDistancePenaltyWeight = 0.14f;
 
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Free Kick|Attack", meta = (ClampMin = "20.0", ClampMax = "1000.0"))
+		float RestartLiveFreeKickForwardSearchStep = 240.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Free Kick|Attack", meta = (ClampMin = "20.0", ClampMax = "1200.0"))
+		float RestartLiveFreeKickLateralSearchStep = 300.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Free Kick|Attack", meta = (ClampMin = "100.0", ClampMax = "3000.0"))
+		float RestartLiveFreeKickIdealPassDistance = 1050.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Free Kick|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveFreeKickPassDistancePenaltyWeight = 0.15f;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
 		float RestartLiveAttackMinimumScoreImprovement = 85.0f;
 
@@ -2852,6 +2870,9 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Goal Kick|Defense", meta = (ClampMin = "20.0", ClampMax = "500.0"))
 		float RestartLiveGoalKickDefenderBallSideDistance = 125.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Free Kick|Defense", meta = (ClampMin = "20.0", ClampMax = "500.0"))
+		float RestartLiveFreeKickDefenderBallSideDistance = 120.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Defense", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 		float RestartLiveDefensiveShapeRetention = 0.18f;

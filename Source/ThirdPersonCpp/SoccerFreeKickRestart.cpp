@@ -318,6 +318,7 @@ bool FSoccerFreeKickRestart::IsPreparationReady(ASoccerMatchManager& Manager)
 	// receives a different target.
 	if (UpdateHumanTakerClaimDuringPreparation(Manager))
 	{
+		Manager.ResetActiveRestartLivePositioning();
 		RecalculateRunUpGeometry(Manager);
 		Manager.CaptureActiveRestartAITargetLocations(
 			AreOpponentsClear(Manager)
@@ -325,10 +326,72 @@ bool FSoccerFreeKickRestart::IsPreparationReady(ASoccerMatchManager& Manager)
 		return false;
 	}
 
-	return Manager.UpdateActiveRestartReadiness(
-		SetupStartTime,
-		Manager.OffsideRestartMinSetupTime
-	);
+	// First complete the fixed regulatory setup: opponents clear the protected
+	// circle and the wall, goalkeeper and taker all settle at stable positions.
+	if (!Manager.IsActiveRestartLivePositioningActive())
+	{
+		if (!Manager.UpdateActiveRestartReadiness(
+			SetupStartTime,
+			Manager.OffsideRestartMinSetupTime
+		))
+		{
+			return false;
+		}
+
+		RecalculateRunUpGeometry(Manager);
+		Manager.BeginActiveRestartLivePositioning();
+	}
+
+	// A human taker remains manual. The live plans stay open until a valid click
+	// commits the human action through StoreKickTarget.
+	if (bHumanTakerClaimed && IsValid(HumanTaker))
+	{
+		return true;
+	}
+
+	if (!Manager.IsActiveRestartAILivePositioningWaitComplete())
+	{
+		return false;
+	}
+
+	if (
+		Manager.IsActiveRestartLivePositioningActive() &&
+		!Manager.bActiveRestartLivePositioningLocked
+	)
+	{
+		Manager.CommitBestActiveRestartLiveReceiver();
+		Manager.LockActiveRestartLivePositioning();
+		RecalculateRunUpGeometry(Manager);
+	}
+
+	// A different receiver changes the kick angle. Replace only the taker's old
+	// captured target and let the existing navigation reach the recalculated
+	// run-up point before the unchanged physical final run begins.
+	if (Manager.IsActiveRestartLivePositioningActive())
+	{
+		if (!IsValid(TakerAI))
+		{
+			return false;
+		}
+
+		if (!RunUpStartLocation.IsNearlyZero())
+		{
+			Manager.ActiveRestartAITargetLocations.Add(
+				TakerAI,
+				RunUpStartLocation
+			);
+
+			if (FVector::Dist2D(
+				TakerAI->GetActorLocation(),
+				RunUpStartLocation
+			) > Manager.GetOffsideRestartRunUpMoveAcceptanceRadius())
+			{
+				return false;
+			}
+		}
+	}
+
+	return AreOpponentsClear(Manager);
 }
 
 bool FSoccerFreeKickRestart::EnterExecution(ASoccerMatchManager& Manager)
@@ -397,6 +460,7 @@ bool FSoccerFreeKickRestart::TickExecutionAndCompleteIfNeeded(ASoccerMatchManage
 
 		bHumanTakerClaimed = false;
 		bHumanExecutionAuthorized = false;
+		Manager.ResetActiveRestartLivePositioning();
 		RecalculateRunUpGeometry(Manager);
 		Manager.CaptureActiveRestartAITargetLocations(
 			AreOpponentsClear(Manager)
@@ -568,6 +632,27 @@ FVector FSoccerFreeKickRestart::BuildReceiverMoveLocation(const ASoccerMatchMana
 	}
 
 	return BuildReceiverDesiredMoveLocation(Manager);
+}
+
+void FSoccerFreeKickRestart::CommitLiveReceiver(
+	ASoccerAICharacter* InReceiverAI,
+	const FVector& InReceiverHoldLocation
+)
+{
+	if (
+		!IsValid(InReceiverAI) ||
+		InReceiverAI == TakerAI ||
+		InReceiverAI->GetTeam() != RestartTeam ||
+		InReceiverAI->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper
+	)
+	{
+		return;
+	}
+
+	ReceiverAI = InReceiverAI;
+	ReceiverHoldLocation = InReceiverHoldLocation.IsNearlyZero()
+		? InReceiverAI->GetActorLocation()
+		: InReceiverHoldLocation;
 }
 
 FVector FSoccerFreeKickRestart::BuildReceiverDesiredMoveLocation(const ASoccerMatchManager& Manager) const
@@ -844,6 +929,72 @@ FVector FSoccerFreeKickRestart::BuildOpponentDesiredMoveLocation(
 			FMath::Max(0.0f, Manager.OffsideRestartOpponentLegalBuffer),
 		Manager.OffsideRestartOpponentMoveExtraDistance
 	);
+}
+
+FVector FSoccerFreeKickRestart::BuildLiveDefenderMoveLocation(
+	const ASoccerMatchManager& Manager,
+	const ASoccerAICharacter* SoccerAICharacter,
+	const FVector& DesiredTacticalLocation
+) const
+{
+	if (
+		!IsValid(SoccerAICharacter) ||
+		SoccerAICharacter->GetTeam() == RestartTeam
+	)
+	{
+		return FVector::ZeroVector;
+	}
+
+	if (
+		SoccerAICharacter->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper ||
+		DefensiveWallMembers.Contains(SoccerAICharacter)
+	)
+	{
+		return BuildOpponentMoveLocation(Manager, SoccerAICharacter);
+	}
+
+	const float RequiredClearance = FMath::Max(
+		0.0f,
+		Manager.OffsideRestartOpponentRequiredDistance +
+			FMath::Max(0.0f, Manager.OffsideRestartOpponentLegalBuffer)
+	);
+	const float ProtectedPathRadius =
+		RequiredClearance +
+		FMath::Max(0.0f, Manager.FreeKickOpponentPathSafetyMargin);
+	const FVector CurrentLocation = SoccerAICharacter->GetActorLocation();
+
+	// If a physical contact pushed the bot back inside the circle, preserve the
+	// existing mandatory-escape target; the shared recovery system owns this case.
+	if (FVector::Dist2D(CurrentLocation, RestartLocation) < RequiredClearance)
+	{
+		return BuildOpponentMoveLocation(Manager, SoccerAICharacter);
+	}
+
+	FVector LegalTarget = Manager.BuildCircularRestartOpponentMoveLocation(
+		SoccerAICharacter,
+		DesiredTacticalLocation,
+		RestartLocation,
+		RequiredClearance,
+		Manager.OffsideRestartOpponentMoveExtraDistance
+	);
+
+	if (
+		LegalTarget.IsNearlyZero() ||
+		FVector::Dist2D(LegalTarget, RestartLocation) < RequiredClearance ||
+		!DoesNavigationPathAvoidRestartCircle(
+			Manager,
+			SoccerAICharacter,
+			LegalTarget,
+			ProtectedPathRadius
+		)
+	)
+	{
+		// Both the current and candidate positions are legal, but a shortest path
+		// that cuts through the circle is not. Holding position avoids a route loop.
+		return CurrentLocation;
+	}
+
+	return LegalTarget;
 }
 
 

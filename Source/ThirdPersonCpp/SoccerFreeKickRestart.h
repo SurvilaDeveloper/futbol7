@@ -49,8 +49,17 @@ public:
 
 	FVector GetMoveLocation(const ASoccerMatchManager& Manager, const ASoccerAICharacter* SoccerAICharacter) const;
 	FVector BuildReceiverMoveLocation(const ASoccerMatchManager& Manager) const;
+	void CommitLiveReceiver(
+		ASoccerAICharacter* InReceiverAI,
+		const FVector& InReceiverHoldLocation
+	);
 	FVector BuildOpponentMoveLocation(const ASoccerMatchManager& Manager, const ASoccerAICharacter* SoccerAICharacter) const;
-bool AreOpponentsClear(const ASoccerMatchManager& Manager) const;
+	FVector BuildLiveDefenderMoveLocation(
+		const ASoccerMatchManager& Manager,
+		const ASoccerAICharacter* SoccerAICharacter,
+		const FVector& DesiredTacticalLocation
+	) const;
+	bool AreOpponentsClear(const ASoccerMatchManager& Manager) const;
 	bool IsCharacterTooClose(const ASoccerMatchManager& Manager, const ASoccerCharacterBase* Character) const;
 	bool ShouldDefendingCharacterFaceBall(const ASoccerAICharacter* SoccerAICharacter) const;
 	bool IsDefensiveWallMember(const ASoccerAICharacter* SoccerAICharacter) const;

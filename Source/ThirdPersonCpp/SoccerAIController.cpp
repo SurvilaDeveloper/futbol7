@@ -815,6 +815,10 @@ void ASoccerAIController::Tick(float DeltaTime)
 
 		const FVector RestartMoveLocation =
 			MatchManager->GetActiveRestartMoveLocation(SoccerCharacter);
+		const bool bFreeKickLiveOffBallPositioning =
+			MatchManager->HasActiveRestartLivePositioningPlan(
+				SoccerCharacter
+			);
 
 		if (!RestartMoveLocation.IsNearlyZero())
 		{
@@ -833,7 +837,9 @@ void ASoccerAIController::Tick(float DeltaTime)
 				? MatchManager->GetFreeKickWallMoveAcceptanceRadius()
 				: bOffsideTaker && !bOffsideFinalRun
 				? MatchManager->GetOffsideRestartRunUpMoveAcceptanceRadius()
-				: MoveAcceptanceRadius;
+				: bFreeKickLiveOffBallPositioning
+					? MatchManager->GetActiveRestartLivePositioningMoveAcceptanceRadius()
+					: MoveAcceptanceRadius;
 
 			MoveToLocationWithAIMovement(
 				bOffsideFinalRun
