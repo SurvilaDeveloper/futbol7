@@ -13049,7 +13049,10 @@ FVector ASoccerMatchManager::BuildGoalLineRestartReceiverMoveLocation() const
 
 	if (
 		IsActiveRestartLivePositioningActive() &&
-		ActiveRestartType == ESoccerRestartType::CornerKick
+		(
+			ActiveRestartType == ESoccerRestartType::CornerKick ||
+			ActiveRestartType == ESoccerRestartType::GoalKick
+		)
 	)
 	{
 		if (const FRestartLivePositioningPlan* ReceiverPlan =
@@ -16356,7 +16359,8 @@ bool ASoccerMatchManager::IsActiveRestartLivePositioningActive() const
 {
 	const bool bSupportedRestart =
 		ActiveRestartType == ESoccerRestartType::ThrowIn ||
-		ActiveRestartType == ESoccerRestartType::CornerKick;
+		ActiveRestartType == ESoccerRestartType::CornerKick ||
+		ActiveRestartType == ESoccerRestartType::GoalKick;
 
 	return
 		bActiveRestartLivePositioning &&
@@ -16431,6 +16435,10 @@ void ASoccerMatchManager::BeginActiveRestartLivePositioning()
 		(
 			ActiveRestartType == ESoccerRestartType::CornerKick &&
 			bEnableCornerKickLivePositioning
+		) ||
+		(
+			ActiveRestartType == ESoccerRestartType::GoalKick &&
+			bEnableGoalKickLivePositioning
 		);
 	if (
 		!bEnableRestartLivePositioning ||
@@ -16479,7 +16487,9 @@ void ASoccerMatchManager::BeginActiveRestartLivePositioning()
 		ESoccerDebugCategory::Restarts,
 		ActiveRestartType == ESoccerRestartType::CornerKick
 			? TEXT("CORNER: comienza disputa dinamica de posiciones")
-			: TEXT("LATERAL: comienza disputa dinamica de posiciones"),
+			: ActiveRestartType == ESoccerRestartType::GoalKick
+				? TEXT("SAQUE DE ARCO: comienza disputa dinamica de posiciones")
+				: TEXT("LATERAL: comienza disputa dinamica de posiciones"),
 		FColor::Cyan
 	);
 }
@@ -16583,7 +16593,10 @@ bool ASoccerMatchManager::IsActiveRestartLiveTaker(
 			return IsThrowInTaker(SoccerAICharacter);
 		}
 
-		if (ActiveRestartType == ESoccerRestartType::CornerKick)
+		if (
+			ActiveRestartType == ESoccerRestartType::CornerKick ||
+			ActiveRestartType == ESoccerRestartType::GoalKick
+		)
 		{
 			return IsGoalLineRestartTaker(SoccerAICharacter);
 		}
@@ -16597,7 +16610,10 @@ bool ASoccerMatchManager::IsActiveRestartLiveTaker(
 			return IsHumanThrowInTaker(HumanCharacter);
 		}
 
-		if (ActiveRestartType == ESoccerRestartType::CornerKick)
+		if (
+			ActiveRestartType == ESoccerRestartType::CornerKick ||
+			ActiveRestartType == ESoccerRestartType::GoalKick
+		)
 		{
 			return IsHumanFootRestartTaker(HumanCharacter);
 		}
@@ -16745,7 +16761,9 @@ void ASoccerMatchManager::InitializeActiveRestartLivePositioningPlans(
 			TEXT("%s: atacantes con nueva posicion %d/%d"),
 			ActiveRestartType == ESoccerRestartType::CornerKick
 				? TEXT("CORNER")
-				: TEXT("LATERAL"),
+				: ActiveRestartType == ESoccerRestartType::GoalKick
+					? TEXT("SAQUE DE ARCO")
+					: TEXT("LATERAL"),
 			RepositioningAttackerCount,
 			ActiveRestartLiveAttackingPlans.Num()
 		),
@@ -16771,10 +16789,13 @@ float ASoccerMatchManager::ScoreActiveRestartLiveAttackingCandidate(
 
 	const bool bCornerKick =
 		ActiveRestartType == ESoccerRestartType::CornerKick;
-	const FVector RestartBallLocation = bCornerKick
+	const bool bGoalKick =
+		ActiveRestartType == ESoccerRestartType::GoalKick;
+	const bool bGoalLineKick = bCornerKick || bGoalKick;
+	const FVector RestartBallLocation = bGoalLineKick
 		? GoalLineRestart.GetBallLocation()
 		: ThrowInLocation;
-	const ASoccerAICharacter* RestartTakerAI = bCornerKick
+	const ASoccerAICharacter* RestartTakerAI = bGoalLineKick
 		? GoalLineRestart.GetTaker()
 		: ThrowInTakerAI;
 
@@ -16871,11 +16892,21 @@ float ASoccerMatchManager::ScoreActiveRestartLiveAttackingCandidate(
 	else
 	{
 		const float IdealPassDistance =
-			SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(900.0f);
+			SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
+				bGoalKick
+					? FMath::Max(
+						100.0f,
+						RestartLiveGoalKickIdealPassDistance
+					)
+					: 900.0f
+			);
+		const float PassDistancePenaltyWeight = bGoalKick
+			? RestartLiveGoalKickPassDistancePenaltyWeight
+			: 0.12f;
 		Score -= FMath::Abs(
 			FVector::Dist2D(RestartBallLocation, CandidateLocation) -
 			IdealPassDistance
-		) * 0.12f;
+		) * FMath::Max(0.0f, PassDistancePenaltyWeight);
 	}
 
 	UWorld* World = GetWorld();
@@ -16964,6 +16995,18 @@ float ASoccerMatchManager::ScoreActiveRestartLiveAttackingCandidate(
 	else if (PlayerRole == ESoccerPlayerRole::Defender)
 	{
 		Score -= FMath::Max(0.0f, ForwardProgress - 120.0f) * 0.28f;
+		if (bGoalKick)
+		{
+			Score += 80.0f;
+		}
+	}
+
+	if (
+		bGoalKick &&
+		PlayerRole == ESoccerPlayerRole::Midfielder
+	)
+	{
+		Score += 45.0f;
 	}
 
 	if (CandidateIndex >= 0)
@@ -17013,14 +17056,17 @@ void ASoccerMatchManager::UpdateActiveRestartLiveAttackingPlans(
 
 	const bool bCornerKick =
 		ActiveRestartType == ESoccerRestartType::CornerKick;
-	FVector PrimarySearchDirection = bCornerKick
+	const bool bGoalKick =
+		ActiveRestartType == ESoccerRestartType::GoalKick;
+	const bool bGoalLineKick = bCornerKick || bGoalKick;
+	FVector PrimarySearchDirection = bGoalLineKick
 		? GetFieldAttackDirectionForTeam(ActiveRestartTeam)
 		: ThrowInInwardDirection;
 	PrimarySearchDirection.Z = 0.0f;
 	PrimarySearchDirection = PrimarySearchDirection.GetSafeNormal();
 
 	FVector SecondarySearchDirection;
-	if (bCornerKick)
+	if (bGoalLineKick)
 	{
 		SecondarySearchDirection = FVector::CrossProduct(
 			FVector::UpVector,
@@ -17098,16 +17144,26 @@ void ASoccerMatchManager::UpdateActiveRestartLiveAttackingPlans(
 			PlayerSearchScale = 1.12f;
 		}
 
-		const float PrimarySearchStep = bCornerKick
+		const float PrimarySearchStep = bGoalLineKick
 			? SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
-				FMath::Max(20.0f, RestartLiveCornerDepthSearchStep)
+				FMath::Max(
+					20.0f,
+					bCornerKick
+						? RestartLiveCornerDepthSearchStep
+						: RestartLiveGoalKickDepthSearchStep
+				)
 			) * PlayerSearchScale
 			: SoccerFieldDimensions::ScaleAuthoredLateralDistance(
 				FMath::Max(20.0f, RestartLiveThrowInInwardSearchStep)
 			) * PlayerSearchScale;
-		const float SecondarySearchStep = bCornerKick
+		const float SecondarySearchStep = bGoalLineKick
 			? SoccerFieldDimensions::ScaleAuthoredLateralDistance(
-				FMath::Max(20.0f, RestartLiveCornerWidthSearchStep)
+				FMath::Max(
+					20.0f,
+					bCornerKick
+						? RestartLiveCornerWidthSearchStep
+						: RestartLiveGoalKickWidthSearchStep
+				)
 			) * PlayerSearchScale
 			: SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
 				FMath::Max(20.0f, RestartLiveThrowInAlongLineSearchStep)
@@ -17289,7 +17345,10 @@ void ASoccerMatchManager::UpdateActiveRestartLiveDefensivePlans(
 
 	const bool bCornerKick =
 		ActiveRestartType == ESoccerRestartType::CornerKick;
-	const FVector RestartBallLocation = bCornerKick
+	const bool bGoalKick =
+		ActiveRestartType == ESoccerRestartType::GoalKick;
+	const bool bGoalLineKick = bCornerKick || bGoalKick;
+	const FVector RestartBallLocation = bGoalLineKick
 		? GoalLineRestart.GetBallLocation()
 		: ThrowInLocation;
 	const FVector DefendingGoalLocation =
@@ -17373,13 +17432,21 @@ void ASoccerMatchManager::UpdateActiveRestartLiveDefensivePlans(
 			);
 			const float IdealPassDistance =
 				SoccerFieldDimensions::ScaleAuthoredLongitudinalDistance(
-					900.0f
+					bGoalKick
+						? FMath::Max(
+							100.0f,
+							RestartLiveGoalKickIdealPassDistance
+						)
+						: 900.0f
 				);
+			const float PassDistancePenaltyWeight = bGoalKick
+				? RestartLiveGoalKickPassDistancePenaltyWeight
+				: 0.16f;
 			Threat.ThreatScore =
 				1000.0f -
 				FMath::Abs(
 					DistanceFromRestart - IdealPassDistance
-				) * 0.16f;
+				) * FMath::Max(0.0f, PassDistancePenaltyWeight);
 		}
 
 		if (!IsOpponentBlockingLaneBetweenLocations(
@@ -17394,7 +17461,22 @@ void ASoccerMatchManager::UpdateActiveRestartLiveDefensivePlans(
 
 		const ESoccerPlayerRole PlayerRole =
 			CandidateAttacker->GetPlayerRole();
-		if (PlayerRole == ESoccerPlayerRole::Forward)
+		if (bGoalKick)
+		{
+			if (PlayerRole == ESoccerPlayerRole::Defender)
+			{
+				Threat.ThreatScore += 100.0f;
+			}
+			else if (PlayerRole == ESoccerPlayerRole::Midfielder)
+			{
+				Threat.ThreatScore += 70.0f;
+			}
+			else if (PlayerRole == ESoccerPlayerRole::Forward)
+			{
+				Threat.ThreatScore += 40.0f;
+			}
+		}
+		else if (PlayerRole == ESoccerPlayerRole::Forward)
 		{
 			Threat.ThreatScore += 100.0f;
 		}
@@ -17471,6 +17553,7 @@ void ASoccerMatchManager::UpdateActiveRestartLiveDefensivePlans(
 	auto BuildMarkTarget = [
 		this,
 		bCornerKick,
+		bGoalKick,
 		RestartBallLocation,
 		DefendingGoalLocation
 	](
@@ -17492,7 +17575,9 @@ void ASoccerMatchManager::UpdateActiveRestartLiveDefensivePlans(
 		}
 		const float MarkingDistance = bCornerKick
 			? RestartLiveCornerDefenderGoalSideDistance
-			: RestartLiveDefenderMarkingDistance;
+			: bGoalKick
+				? RestartLiveGoalKickDefenderBallSideDistance
+				: RestartLiveDefenderMarkingDistance;
 
 		FVector DesiredMarkTarget =
 			Threat.TargetLocation +
@@ -17513,6 +17598,14 @@ void ASoccerMatchManager::UpdateActiveRestartLiveDefensivePlans(
 			DefendingCharacter,
 			DesiredMarkTarget
 		);
+		if (bGoalKick)
+		{
+			return BuildPenaltyAreaRestartOpponentMoveLocation(
+				DefendingCharacter,
+				DesiredMarkTarget
+			);
+		}
+
 		DesiredMarkTarget = BuildCircularRestartOpponentMoveLocation(
 			DefendingCharacter,
 			DesiredMarkTarget,
@@ -17691,6 +17784,10 @@ void ASoccerMatchManager::UpdateActiveRestartLivePositioning(float DeltaTime)
 		(
 			ActiveRestartType == ESoccerRestartType::CornerKick &&
 			bEnableCornerKickLivePositioning
+		) ||
+		(
+			ActiveRestartType == ESoccerRestartType::GoalKick &&
+			bEnableGoalKickLivePositioning
 		);
 	if (
 		!bEnableRestartLivePositioning ||
@@ -17722,7 +17819,10 @@ void ASoccerMatchManager::CommitBestActiveRestartLiveReceiver()
 {
 	const bool bCornerKick =
 		ActiveRestartType == ESoccerRestartType::CornerKick;
-	ASoccerAICharacter* RestartTakerAI = bCornerKick
+	const bool bGoalKick =
+		ActiveRestartType == ESoccerRestartType::GoalKick;
+	const bool bGoalLineKick = bCornerKick || bGoalKick;
+	ASoccerAICharacter* RestartTakerAI = bGoalLineKick
 		? GoalLineRestart.GetTaker()
 		: ThrowInTakerAI;
 	if (
@@ -17795,17 +17895,27 @@ void ASoccerMatchManager::CommitBestActiveRestartLiveReceiver()
 		return;
 	}
 
-	ASoccerAICharacter* PreviousReceiver = bCornerKick
+	ASoccerAICharacter* PreviousReceiver = bGoalLineKick
 		? GoalLineRestart.GetReceiver()
 		: ThrowInReceiverAI;
 	ASoccerAICharacter* CommittedReceiver =
 		const_cast<ASoccerAICharacter*>(BestReceiver);
-	if (bCornerKick)
+	if (bGoalLineKick)
 	{
-		GoalLineRestart.SetCornerParticipants(
-			GoalLineRestart.GetTaker(),
-			CommittedReceiver
-		);
+		if (bCornerKick)
+		{
+			GoalLineRestart.SetCornerParticipants(
+				GoalLineRestart.GetTaker(),
+				CommittedReceiver
+			);
+		}
+		else
+		{
+			GoalLineRestart.SetGoalKickParticipants(
+				GoalLineRestart.GetTaker(),
+				CommittedReceiver
+			);
+		}
 	}
 	else
 	{
@@ -17815,7 +17925,7 @@ void ASoccerMatchManager::CommitBestActiveRestartLiveReceiver()
 	if (const FRestartLivePositioningPlan* ReceiverPlan =
 		ActiveRestartLiveAttackingPlans.Find(BestReceiver))
 	{
-		if (bCornerKick)
+		if (bGoalLineKick)
 		{
 			GoalLineRestart.ReceiverMoveLocation =
 				ReceiverPlan->CommittedTargetLocation;
@@ -17836,7 +17946,9 @@ void ASoccerMatchManager::CommitBestActiveRestartLiveReceiver()
 				TEXT("%s: receptor dinamico elegido %s"),
 				bCornerKick
 					? TEXT("CORNER")
-					: TEXT("LATERAL"),
+					: bGoalKick
+						? TEXT("SAQUE DE ARCO")
+						: TEXT("LATERAL"),
 				*CommittedReceiver->GetName()
 			),
 			FColor::Green

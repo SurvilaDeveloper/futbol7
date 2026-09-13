@@ -1508,8 +1508,8 @@ bool IsPenaltyMatchStateActive() const;
 	void ResetActiveRestartReadyHold();
 
 	// Live restart positioning starts only after the fixed legal setup is ready.
-	// Throw-ins and corners share the stable plan runtime while preserving their
-	// own candidate geometry, defensive reference and execution flow.
+	// Throw-ins, corners and goal kicks share the stable plan runtime while
+	// preserving their own candidate geometry, legal restrictions and execution.
 	void BeginActiveRestartLivePositioning();
 	void ResetActiveRestartLivePositioning();
 	void UpdateActiveRestartLivePositioning(float DeltaTime);
@@ -2729,7 +2729,7 @@ bool IsPenaltyMatchStateActive() const;
 		float RestartReceiverMinimumCandidateScore = 420.0f;
 
 	// ============================================================
-	// LIVE RESTART POSITIONING - THROW IN AND CORNER KICK
+	// LIVE RESTART POSITIONING - THROW IN, CORNER KICK AND GOAL KICK
 	// ============================================================
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning")
@@ -2740,6 +2740,9 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Corner Kick")
 		bool bEnableCornerKickLivePositioning = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Goal Kick")
+		bool bEnableGoalKickLivePositioning = true;
 
 	// AI takers observe the off-ball contest for a short bounded window. Human
 	// takers keep the window open until their manual target selection.
@@ -2788,6 +2791,18 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Corner Kick|Attack", meta = (ClampMin = "0.0"))
 		float RestartLiveCornerGoalDistancePenaltyWeight = 0.18f;
 
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Goal Kick|Attack", meta = (ClampMin = "20.0", ClampMax = "1000.0"))
+		float RestartLiveGoalKickDepthSearchStep = 260.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Goal Kick|Attack", meta = (ClampMin = "20.0", ClampMax = "1200.0"))
+		float RestartLiveGoalKickWidthSearchStep = 310.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Goal Kick|Attack", meta = (ClampMin = "100.0", ClampMax = "3000.0"))
+		float RestartLiveGoalKickIdealPassDistance = 1150.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Goal Kick|Attack", meta = (ClampMin = "0.0"))
+		float RestartLiveGoalKickPassDistancePenaltyWeight = 0.14f;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0.0"))
 		float RestartLiveAttackMinimumScoreImprovement = 85.0f;
 
@@ -2834,6 +2849,9 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Corner Kick|Defense", meta = (ClampMin = "20.0", ClampMax = "500.0"))
 		float RestartLiveCornerDefenderGoalSideDistance = 105.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Goal Kick|Defense", meta = (ClampMin = "20.0", ClampMax = "500.0"))
+		float RestartLiveGoalKickDefenderBallSideDistance = 125.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Defense", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 		float RestartLiveDefensiveShapeRetention = 0.18f;

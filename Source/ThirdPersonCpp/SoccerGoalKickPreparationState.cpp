@@ -2,6 +2,7 @@
 
 #include "SoccerMatchManager.h"
 #include "SoccerGoalLineRestart.h"
+#include "SoccerAICharacter.h"
 #include "SoccerBall.h"
 #include "SoccerDebugManager.h"
 
@@ -98,6 +99,7 @@ void FSoccerGoalKickPreparationState::Tick(ASoccerMatchManager& Manager, float D
 		ESoccerRestartType::GoalKick
 	))
 	{
+		Manager.ResetActiveRestartLivePositioning();
 		Manager.RecalculateGoalLineRestartGeometry();
 		Manager.CaptureActiveRestartAITargetLocations(
 			Manager.AreActiveRestartOpponentsLegal()
@@ -105,13 +107,88 @@ void FSoccerGoalKickPreparationState::Tick(ASoccerMatchManager& Manager, float D
 		return;
 	}
 
-	if (Manager.UpdateActiveRestartReadiness(
-		Manager.GoalLineRestart.GetSetupStartTime(),
-		Manager.GoalLineRestartMinSetupTime
-	))
+	// First complete the fixed legal setup, including the penalty-area escape.
+	// The live phase starts only after every AI has remained settled long enough.
+	if (!Manager.IsActiveRestartLivePositioningActive())
+	{
+		if (!Manager.UpdateActiveRestartReadiness(
+			Manager.GoalLineRestart.GetSetupStartTime(),
+			Manager.GoalLineRestartMinSetupTime
+		))
+		{
+			return;
+		}
+
+		Manager.GoalLineRestart.ResetGoalKickFinalRunRuntime(Manager);
+		Manager.RecalculateGoalLineRestartGeometry();
+		Manager.BeginActiveRestartLivePositioning();
+	}
+
+	// The human remains fully manual. Bot plans continue adapting until the
+	// player chooses a valid target; StoreKickTarget then locks those plans.
+	if (Manager.IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::GoalKick))
 	{
 		Manager.RequestMatchStateTransition(
 			ESoccerMatchStateTransition::GoalKickExecution
 		);
+		return;
 	}
+
+	if (!Manager.IsActiveRestartAILivePositioningWaitComplete())
+	{
+		return;
+	}
+
+	if (
+		Manager.IsActiveRestartLivePositioningActive() &&
+		!Manager.bActiveRestartLivePositioningLocked
+	)
+	{
+		Manager.CommitBestActiveRestartLiveReceiver();
+		Manager.LockActiveRestartLivePositioning();
+		Manager.RecalculateGoalLineRestartGeometry();
+	}
+
+	// A new receiver can change the kick angle and therefore the run-up point.
+	// Let the existing AI movement reach that recalculated point before starting
+	// the unchanged physical final run through the ball.
+	if (Manager.IsActiveRestartLivePositioningActive())
+	{
+		ASoccerAICharacter* Taker = Manager.GoalLineRestart.GetTaker();
+		const FVector& UpdatedRunUpLocation =
+			Manager.GoalLineRestart.GetGoalKickRunUpStartLocation();
+		if (!IsValid(Taker))
+		{
+			return;
+		}
+
+		if (!UpdatedRunUpLocation.IsNearlyZero())
+		{
+			// The generic restart lookup otherwise keeps the fixed setup target
+			// captured before the live receiver was selected.
+			Manager.ActiveRestartAITargetLocations.Add(
+				Taker,
+				UpdatedRunUpLocation
+			);
+
+			if (FVector::Dist2D(
+				Taker->GetActorLocation(),
+				UpdatedRunUpLocation
+			) > Manager.GetGoalKickRunUpMoveAcceptanceRadius())
+			{
+				return;
+			}
+		}
+	}
+
+	// A dynamic mark is legal by construction, but the human opponent is only
+	// observed. Do not start the run while that player remains inside the area.
+	if (!Manager.AreActiveRestartOpponentsLegal())
+	{
+		return;
+	}
+
+	Manager.RequestMatchStateTransition(
+		ESoccerMatchStateTransition::GoalKickExecution
+	);
 }
