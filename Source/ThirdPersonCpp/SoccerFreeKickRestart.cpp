@@ -354,44 +354,15 @@ bool FSoccerFreeKickRestart::IsPreparationReady(ASoccerMatchManager& Manager)
 		return false;
 	}
 
-	if (
-		Manager.IsActiveRestartLivePositioningActive() &&
-		!Manager.bActiveRestartLivePositioningLocked
-	)
+	if (!AreOpponentsClear(Manager))
 	{
-		Manager.CommitBestActiveRestartLiveReceiver();
-		Manager.LockActiveRestartLivePositioning();
-		RecalculateRunUpGeometry(Manager);
+		return false;
 	}
 
-	// A different receiver changes the kick angle. Replace only the taker's old
-	// captured target and let the existing navigation reach the recalculated
-	// run-up point before the unchanged physical final run begins.
-	if (Manager.IsActiveRestartLivePositioningActive())
-	{
-		if (!IsValid(TakerAI))
-		{
-			return false;
-		}
-
-		if (!RunUpStartLocation.IsNearlyZero())
-		{
-			Manager.ActiveRestartAITargetLocations.Add(
-				TakerAI,
-				RunUpStartLocation
-			);
-
-			if (FVector::Dist2D(
-				TakerAI->GetActorLocation(),
-				RunUpStartLocation
-			) > Manager.GetOffsideRestartRunUpMoveAcceptanceRadius())
-			{
-				return false;
-			}
-		}
-	}
-
-	return AreOpponentsClear(Manager);
+	// Freeze only the receiver identity for the run. Offers and marks continue,
+	// and the physical target/direction will be sampled at ball contact.
+	Manager.CommitBestActiveRestartLiveReceiver();
+	return true;
 }
 
 bool FSoccerFreeKickRestart::EnterExecution(ASoccerMatchManager& Manager)
@@ -529,6 +500,21 @@ void FSoccerFreeKickRestart::Complete(ASoccerMatchManager& Manager)
 		return;
 	}
 
+	if (!bAIKickMontageStarted)
+	{
+		Manager.CommitActiveRestartLivePositioningForAIAction();
+
+		if (!IsValid(Manager.GetActiveRestartExecutionReceiver()))
+		{
+			Manager.SelectActiveRestartExecutionReceiver(
+				RestartTeam,
+				TakerAI,
+				ReceiverAI,
+				false
+			);
+		}
+	}
+
 	ASoccerAICharacter* CompletedTaker = TakerAI;
 	ASoccerAICharacter* CompletedReceiver = ReceiverAI;
 
@@ -545,6 +531,15 @@ void FSoccerFreeKickRestart::Complete(ASoccerMatchManager& Manager)
 	// the ball. Missing/unplayable montages keep the old immediate fallback.
 	if (!bAIKickMontageStarted)
 	{
+		FVector FacingDirection =
+			PassTargetLocation - CompletedTaker->GetActorLocation();
+		FacingDirection.Z = 0.0f;
+
+		if (FacingDirection.Normalize())
+		{
+			CompletedTaker->SetActorRotation(FacingDirection.Rotation());
+		}
+
 		if (CompletedTaker->StartAIKickMontageForRestart(
 			Manager.SoccerBall,
 			PassTargetLocation,

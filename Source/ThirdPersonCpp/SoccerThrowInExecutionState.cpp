@@ -63,6 +63,27 @@ bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 		return false;
 	}
 
+	// Normal preparation commits this immediately before entering Execution.
+	// Keep this guarded fallback for restored/legacy states that bypassed it.
+	if (!Manager.bThrowInAICommittedTargetSelected)
+	{
+		Manager.CommitActiveRestartLivePositioningForAIAction();
+		Manager.SelectActiveRestartExecutionReceiver(
+			Manager.ThrowInTeam,
+			Manager.ThrowInTakerAI,
+			Manager.ThrowInReceiverAI,
+			true
+		);
+		Manager.ThrowInAICommittedTargetLocation =
+			Manager.GetActiveRestartExecutionTargetLocation(
+				Manager.ThrowInReceiverMoveLocation
+			);
+		Manager.ThrowInAICommittedTargetLocation.Z =
+			Manager.SoccerBall->GetActorLocation().Z;
+		Manager.bThrowInAICommittedTargetSelected = true;
+		Manager.RecalculateThrowInGeometry();
+	}
+
 	Manager.ThrowInTakerAI->SetActorRotation(
 		Manager.ThrowInDirection.Rotation()
 	);
@@ -85,13 +106,6 @@ bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 	Manager.PossessionTeam =
 		Manager.ConvertTeamToPossessionTeam(Manager.ThrowInTeam);
 
-	Manager.SelectActiveRestartExecutionReceiver(
-		Manager.ThrowInTeam,
-		Manager.ThrowInTakerAI,
-		Manager.ThrowInReceiverAI,
-		true
-	);
-
 	Manager.bThrowInExecutionActive = true;
 	Manager.bThrowInBallReleased = false;
 	Manager.bThrowInReturningToField = false;
@@ -113,8 +127,9 @@ bool FSoccerThrowInExecutionState::Enter(ASoccerMatchManager& Manager)
 
 	if (MontageDuration <= KINDA_SMALL_NUMBER)
 	{
-		FVector TargetLocation =
-			Manager.GetActiveRestartExecutionTargetLocation(
+		FVector TargetLocation = Manager.bThrowInAICommittedTargetSelected
+			? Manager.ThrowInAICommittedTargetLocation
+			: Manager.GetActiveRestartExecutionTargetLocation(
 				IsValid(Manager.ThrowInReceiverAI)
 					? Manager.ThrowInReceiverAI->GetActorLocation()
 					: Manager.ThrowInReceiverMoveLocation
@@ -372,8 +387,9 @@ void FSoccerThrowInExecutionState::Tick(
 		return;
 	}
 
-	FVector TargetLocation =
-		Manager.GetActiveRestartExecutionTargetLocation(
+	FVector TargetLocation = Manager.bThrowInAICommittedTargetSelected
+		? Manager.ThrowInAICommittedTargetLocation
+		: Manager.GetActiveRestartExecutionTargetLocation(
 			IsValid(Manager.ThrowInReceiverAI)
 			? Manager.ThrowInReceiverAI->GetActorLocation()
 			: Manager.ThrowInReceiverMoveLocation

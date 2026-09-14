@@ -139,54 +139,16 @@ void FSoccerGoalKickPreparationState::Tick(ASoccerMatchManager& Manager, float D
 		return;
 	}
 
-	if (
-		Manager.IsActiveRestartLivePositioningActive() &&
-		!Manager.bActiveRestartLivePositioningLocked
-	)
-	{
-		Manager.CommitBestActiveRestartLiveReceiver();
-		Manager.LockActiveRestartLivePositioning();
-		Manager.RecalculateGoalLineRestartGeometry();
-	}
-
-	// A new receiver can change the kick angle and therefore the run-up point.
-	// Let the existing AI movement reach that recalculated point before starting
-	// the unchanged physical final run through the ball.
-	if (Manager.IsActiveRestartLivePositioningActive())
-	{
-		ASoccerAICharacter* Taker = Manager.GoalLineRestart.GetTaker();
-		const FVector& UpdatedRunUpLocation =
-			Manager.GoalLineRestart.GetGoalKickRunUpStartLocation();
-		if (!IsValid(Taker))
-		{
-			return;
-		}
-
-		if (!UpdatedRunUpLocation.IsNearlyZero())
-		{
-			// The generic restart lookup otherwise keeps the fixed setup target
-			// captured before the live receiver was selected.
-			Manager.ActiveRestartAITargetLocations.Add(
-				Taker,
-				UpdatedRunUpLocation
-			);
-
-			if (FVector::Dist2D(
-				Taker->GetActorLocation(),
-				UpdatedRunUpLocation
-			) > Manager.GetGoalKickRunUpMoveAcceptanceRadius())
-			{
-				return;
-			}
-		}
-	}
-
 	// A dynamic mark is legal by construction, but the human opponent is only
 	// observed. Do not start the run while that player remains inside the area.
 	if (!Manager.AreActiveRestartOpponentsLegal())
 	{
 		return;
 	}
+
+	// Select the intended receiver at the start of the run, without freezing
+	// either team's live destinations. The actual direction is sampled at contact.
+	Manager.CommitBestActiveRestartLiveReceiver();
 
 	Manager.RequestMatchStateTransition(
 		ESoccerMatchStateTransition::GoalKickExecution

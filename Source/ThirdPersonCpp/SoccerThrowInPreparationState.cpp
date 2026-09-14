@@ -138,8 +138,9 @@ void FSoccerThrowInPreparationState::Tick(ASoccerMatchManager& Manager, float De
 
         if (!Manager.bThrowInHumanTakerClaimed)
         {
+            // Choose who the AI intends to serve before it starts carrying the
+            // ball, but keep every live destination open during that approach.
             Manager.CommitBestActiveRestartLiveReceiver();
-            Manager.LockActiveRestartLivePositioning();
         }
 
         Manager.RecalculateThrowInGeometry();
@@ -210,8 +211,8 @@ void FSoccerThrowInPreparationState::Tick(ASoccerMatchManager& Manager, float De
             return;
         }
 
-        // AI fallback path: unchanged. It picks the ball up and walks to the
-        // direction-dependent outside start before the throw-in montage begins.
+        // The AI picks the ball up and walks toward the provisional outside
+        // start while receivers and markers are still allowed to reposition.
         FVector FaceBallDirection =
             Manager.ThrowInLocation - Manager.ThrowInTakerAI->GetActorLocation();
         FaceBallDirection.Z = 0.0f;
@@ -307,12 +308,65 @@ void FSoccerThrowInPreparationState::Tick(ASoccerMatchManager& Manager, float De
     );
 
     Manager.ThrowInTakerAI->ClearScriptedLocomotionVelocity();
-    Manager.ThrowInTakerAI->SetActorRotation(Manager.ThrowInDirection.Rotation());
 
     if (!Manager.AreActiveRestartOpponentsLegal())
     {
         return;
     }
+
+    if (!Manager.bThrowInAICommittedTargetSelected)
+    {
+        // This is the last safe instant to choose the real receiver (the human
+        // may be the best option) and one physical target for animation/release.
+        Manager.CommitBestActiveRestartLiveReceiver();
+        Manager.SelectActiveRestartExecutionReceiver(
+            Manager.ThrowInTeam,
+            Manager.ThrowInTakerAI,
+            Manager.ThrowInReceiverAI,
+            true
+        );
+
+        Manager.ThrowInAICommittedTargetLocation =
+            Manager.GetActiveRestartExecutionTargetLocation(
+                Manager.ThrowInReceiverMoveLocation
+            );
+        Manager.ThrowInAICommittedTargetLocation.Z =
+            Manager.SoccerBall->GetActorLocation().Z;
+        Manager.bThrowInAICommittedTargetSelected = true;
+        Manager.RecalculateThrowInGeometry();
+
+        // A new final direction also changes the curve-derived exterior start.
+        // Reach that correction through the existing physical movement path.
+        FVector CorrectedMoveDirection =
+            Manager.ThrowInOutsideStartLocation -
+            Manager.ThrowInTakerAI->GetActorLocation();
+        CorrectedMoveDirection.Z = 0.0f;
+
+        if (CorrectedMoveDirection.Size() > 3.0f)
+        {
+            Manager.ThrowInTakerAI->SetActorRotation(
+                CorrectedMoveDirection.GetSafeNormal().Rotation()
+            );
+            Manager.ThrowInTakerAI->RequestAIMovementMode(
+                ESoccerAIMovementMode::Jog,
+                ESoccerAIMovementReason::NearbyReposition,
+                true
+            );
+            return;
+        }
+    }
+
+    Manager.ThrowInTakerAI->SetActorLocation(
+        Manager.ThrowInOutsideStartLocation,
+        false,
+        nullptr,
+        ETeleportType::TeleportPhysics
+    );
+    Manager.ThrowInTakerAI->SetActorRotation(Manager.ThrowInDirection.Rotation());
+
+    // Keep all offers and marks alive even during a possible final exterior
+    // correction. Lock only on the frame that starts the throw animation.
+    Manager.CommitActiveRestartLivePositioningForAIAction();
 
     Manager.RequestMatchStateTransition(
         ESoccerMatchStateTransition::ThrowInExecution

@@ -174,20 +174,6 @@ void FSoccerCornerPreparationState::Tick(ASoccerMatchManager& Manager, float Del
         return;
     }
 
-    // The AI taker may already walk toward the exterior run-up point while the
-    // off-ball contest develops. When the bounded decision window ends, freeze
-    // the receiver and all destinations, then recompute the exact run direction.
-    if (
-        Manager.IsActiveRestartLivePositioningActive() &&
-        Manager.IsActiveRestartAILivePositioningWaitComplete() &&
-        !Manager.bActiveRestartLivePositioningLocked
-    )
-    {
-        Manager.CommitBestActiveRestartLiveReceiver();
-        Manager.LockActiveRestartLivePositioning();
-        Manager.RecalculateGoalLineRestartGeometry();
-    }
-
     const FVector CurrentLocation =
         Manager.GoalLineRestart.GetTaker()->GetActorLocation();
     const FVector NewLocation = FMath::VInterpConstantTo(
@@ -254,6 +240,10 @@ void FSoccerCornerPreparationState::Tick(ASoccerMatchManager& Manager, float Del
     {
         return;
     }
+
+    // Fix only the intended receiver before the run. Off-ball destinations
+    // remain live until physical contact, so both teams can keep contesting.
+    Manager.CommitBestActiveRestartLiveReceiver();
 
     Manager.RequestMatchStateTransition(
         ESoccerMatchStateTransition::CornerExecution

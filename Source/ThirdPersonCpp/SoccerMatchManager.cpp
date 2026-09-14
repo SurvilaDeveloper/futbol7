@@ -11595,6 +11595,8 @@ bool ASoccerMatchManager::ConfigureThrowInRestart(
 	}
 
 	ResetHumanThrowInTakerRuntime();
+	bThrowInAICommittedTargetSelected = false;
+	ThrowInAICommittedTargetLocation = FVector::ZeroVector;
 
 	ThrowInTeam = RestartTeam;
 	ThrowInLocation = TouchlineLocation;
@@ -11800,9 +11802,15 @@ void ASoccerMatchManager::RecalculateThrowInGeometry()
 	}
 
 	ThrowInReceiverMoveLocation = BuildThrowInReceiverMoveLocation();
+	const FVector DirectionTargetLocation =
+		bThrowInAICommittedTargetSelected
+		? ThrowInAICommittedTargetLocation
+		: GetActiveRestartExecutionTargetLocation(
+			ThrowInReceiverMoveLocation
+		);
 
 	FVector RawDirection =
-		ThrowInReceiverMoveLocation - ThrowInLocation;
+		DirectionTargetLocation - ThrowInLocation;
 	RawDirection.Z = 0.0f;
 	RawDirection = RawDirection.GetSafeNormal();
 
@@ -12331,6 +12339,8 @@ void ASoccerMatchManager::FinishThrowInExecution()
 	bThrowInReturningToField = false;
 	bThrowInCurveMotionInitialized = false;
 	bThrowInStagedDuringBallOutOfPlayDelay = false;
+	bThrowInAICommittedTargetSelected = false;
+	ThrowInAICommittedTargetLocation = FVector::ZeroVector;
 
 	if (MatchPlayState == ESoccerMatchPlayState::ThrowInExecuting)
 	{
@@ -12384,6 +12394,8 @@ void ASoccerMatchManager::CancelThrowInRestart()
 	bThrowInBallReleased = false;
 	bThrowInReturningToField = false;
 	bThrowInCurveMotionInitialized = false;
+	bThrowInAICommittedTargetSelected = false;
+	ThrowInAICommittedTargetLocation = FVector::ZeroVector;
 	ThrowInTakerAI = nullptr;
 	ThrowInReceiverAI = nullptr;
 	ResetHumanThrowInTakerRuntime();
@@ -13395,6 +13407,24 @@ void ASoccerMatchManager::CompleteGoalLineRestart()
 		)
 	{
 		return;
+	}
+
+	if (!GoalLineRestart.bAIKickMontageStarted)
+	{
+		// The approach uses a stable receiver identity, while that receiver and
+		// every marker may keep adjusting. Freeze the contest only at contact and
+		// sample the final pass direction immediately before the kick montage.
+		CommitActiveRestartLivePositioningForAIAction();
+
+		if (!IsValid(GetActiveRestartExecutionReceiver()))
+		{
+			SelectActiveRestartExecutionReceiver(
+				GoalLineRestart.RestartTeam,
+				GoalLineRestart.TakerAI,
+				GoalLineRestart.ReceiverAI,
+				true
+			);
+		}
 	}
 
 	const ESoccerGoalLineRestartType CompletedType = GoalLineRestart.RestartType;
@@ -16394,6 +16424,13 @@ void ASoccerMatchManager::CommitActiveRestartLivePositioningForHumanAction()
 	LockActiveRestartLivePositioning();
 }
 
+void ASoccerMatchManager::CommitActiveRestartLivePositioningForAIAction()
+{
+	// The planned receiver is selected before the approach/run, but every
+	// off-ball plan remains live until the physical action actually begins.
+	LockActiveRestartLivePositioning();
+}
+
 void ASoccerMatchManager::ResetActiveRestartLivePositioning()
 {
 	bActiveRestartLivePositioning = false;
@@ -17335,6 +17372,7 @@ void ASoccerMatchManager::UpdateActiveRestartLiveAttackingPlans(
 				RestartLiveAttackMinimumScoreImprovement
 			);
 		const bool bCanChangeTarget =
+			bRestartLiveContinuousAttackingRepositionsUntilCommit ||
 			Plan->RepositionCount < SafeMaximumRepositions;
 		const bool bTargetIsMateriallyDifferent =
 			FVector::Dist2D(

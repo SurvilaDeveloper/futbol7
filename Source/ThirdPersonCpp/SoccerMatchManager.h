@@ -1514,6 +1514,7 @@ bool IsPenaltyMatchStateActive() const;
 	void ResetActiveRestartLivePositioning();
 	void UpdateActiveRestartLivePositioning(float DeltaTime);
 	void LockActiveRestartLivePositioning();
+	void CommitActiveRestartLivePositioningForAIAction();
 	bool IsActiveRestartAILivePositioningWaitComplete() const;
 	void InitializeActiveRestartLivePositioningPlans(float CurrentWorldTime);
 	void UpdateActiveRestartLiveAttackingPlans(
@@ -2750,8 +2751,9 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Free Kick")
 		bool bEnableDirectFreeKickLivePositioning = true;
 
-	// AI takers observe the off-ball contest for a short bounded window. Human
-	// takers keep the window open until their manual target selection.
+	// AI takers observe a short bounded window before beginning their approach;
+	// the contest itself remains live through that approach. Human takers keep it
+	// open until their manual target selection.
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.0", ClampMax = "6.0"))
 		float RestartLiveAIWaitMinTime = 1.80f;
 
@@ -2775,6 +2777,11 @@ bool IsPenaltyMatchStateActive() const;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Timing", meta = (ClampMin = "0.10", ClampMax = "5.0"))
 		float RestartLiveDefenderMarkMaxHoldTime = 1.80f;
+
+	// By default attackers may keep making measured offers until the taker really
+	// commits the restart. Disable this only to restore the legacy finite cap.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack")
+		bool bRestartLiveContinuousAttackingRepositionsUntilCommit = true;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Restarts|Live Positioning|Attack", meta = (ClampMin = "0", ClampMax = "8"))
 		int32 RestartLiveMaximumAttackingRepositions = 2;
@@ -4481,6 +4488,8 @@ bool IsPenaltyMatchStateActive() const;
 	bool bThrowInHumanRepositioningForTarget = false;
 	bool bThrowInHumanMontageStarted = false;
 	FVector ThrowInHumanTargetLocation = FVector::ZeroVector;
+	bool bThrowInAICommittedTargetSelected = false;
+	FVector ThrowInAICommittedTargetLocation = FVector::ZeroVector;
 
 	ESoccerTeam ThrowInTeam = ESoccerTeam::PlayerTeam;
 	FVector ThrowInLocation = FVector::ZeroVector;
