@@ -12,6 +12,18 @@ This repository is under active development. The current focus is not visual pol
 
 ---
 
+<img src="docs/images/futbol7_1.jpg" alt="Captura del gameplay" width="800">
+
+---
+
+<img src="docs/images/futbol7_2.jpg" alt="Captura del gameplay" width="800">
+
+---
+
+<img src="docs/images/futbol7_3.jpg" alt="Captura del gameplay" width="800">
+
+---
+
 ## Current focus
 
 Development is currently centered on:

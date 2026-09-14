@@ -12,6 +12,18 @@ El repositorio se encuentra en desarrollo activo. El foco actual no está puesto
 
 ---
 
+<img src="docs/images/futbol7_1.jpg" alt="Captura del gameplay" width="800">
+
+---
+
+<img src="docs/images/futbol7_2.jpg" alt="Captura del gameplay" width="800">
+
+---
+
+<img src="docs/images/futbol7_3.jpg" alt="Captura del gameplay" width="800">
+
+---
+
 ## En qué se está trabajando actualmente
 
 El desarrollo está centrado principalmente en:
