@@ -18484,6 +18484,13 @@ float ASoccerMatchManager::GetActiveRestartAcceptanceRadius(
 		{
 			return GetPenaltyKickGoalkeeperMoveAcceptanceRadius();
 		}
+		if (!PenaltyKickRestart.IsTaker(SoccerAICharacter))
+		{
+			return FMath::Max(
+				5.0f,
+				PenaltyKickOtherPlayersMoveAcceptanceRadius
+			);
+		}
 		break;
 
 	case ESoccerRestartType::None:
@@ -18575,7 +18582,7 @@ bool ASoccerMatchManager::AreActiveRestartLegalConditionsSatisfied() const
 		return AreActiveRestartOpponentsLegal();
 
 	case ESoccerRestartType::PenaltyKick:
-		return true;
+		return PenaltyKickRestart.AreNonParticipantsInLegalPositions(*this);
 
 	case ESoccerRestartType::None:
 	default:
@@ -23655,6 +23662,84 @@ float ASoccerMatchManager::GetKickoffRunUpMoveAcceptanceRadius() const
 	return FMath::Max(1.0f, KickoffRunUpMoveAcceptanceRadius);
 }
 
+FVector ASoccerMatchManager::BuildLegalKickoffHomeLocation(
+	const ASoccerAICharacter* SoccerAICharacter,
+	const FVector& DesiredHomeLocation
+) const
+{
+	if (!IsValid(SoccerAICharacter))
+	{
+		return DesiredHomeLocation;
+	}
+
+	// El ejecutor AI conserva su ubicación authored; es el único habilitado a
+	// entrar al círculo. Si el humano reclama el saque, ese AI deja de estar
+	// exento y también recibe un destino legal.
+	if (
+		SoccerAICharacter == KickoffTakerAI &&
+		!IsNonFreeKickHumanTakerClaimedFor(ESoccerRestartType::Kickoff)
+	)
+	{
+		return DesiredHomeLocation;
+	}
+
+	const FVector CenterLocation = GetKickoffCenterLocation();
+	const float RequiredDistance =
+		SoccerFieldDimensions::CenterCircleRadiusCm +
+		FMath::Max(0.0f, KickoffCenterCircleExtraDistance) +
+		FMath::Max(20.0f, KickoffHomeAcceptanceRadius) +
+		20.0f;
+	FVector FromCenter = DesiredHomeLocation - CenterLocation;
+	FromCenter.Z = 0.0f;
+
+	if (FromCenter.SizeSquared2D() >= RequiredDistance * RequiredDistance)
+	{
+		return DesiredHomeLocation;
+	}
+
+	FVector OwnHalfDirection =
+		GetOwnGoalReferenceLocation(SoccerAICharacter->GetTeam()) -
+		CenterLocation;
+	OwnHalfDirection.Z = 0.0f;
+	if (!OwnHalfDirection.Normalize())
+	{
+		OwnHalfDirection =
+			-GetFieldAttackDirectionForTeam(SoccerAICharacter->GetTeam());
+		OwnHalfDirection.Z = 0.0f;
+		if (!OwnHalfDirection.Normalize())
+		{
+			OwnHalfDirection = FVector::ForwardVector;
+		}
+	}
+
+	const FVector TeamRight =
+		GetFieldRightDirectionForTeam(SoccerAICharacter->GetTeam());
+	const float LateralDistance = FVector::DotProduct(FromCenter, TeamRight);
+
+	if (
+		!FromCenter.Normalize() ||
+		FVector::DotProduct(FromCenter, OwnHalfDirection) <= 0.0f
+	)
+	{
+		FromCenter =
+			OwnHalfDirection +
+			TeamRight * FMath::Clamp(
+				LateralDistance / RequiredDistance,
+				-0.9f,
+				0.9f
+			);
+		if (!FromCenter.Normalize())
+		{
+			FromCenter = OwnHalfDirection;
+		}
+	}
+
+	FVector LegalLocation =
+		CenterLocation + FromCenter * RequiredDistance;
+	LegalLocation.Z = SoccerAICharacter->GetActorLocation().Z;
+	return LegalLocation;
+}
+
 FVector ASoccerMatchManager::GetKickoffMoveLocation(
 	const ASoccerAICharacter* SoccerAICharacter
 ) const
@@ -23676,10 +23761,16 @@ FVector ASoccerMatchManager::GetKickoffMoveLocation(
 				HomePositionActor->GetActorLocation()
 			);
 			HomeLocation.Z = SoccerAICharacter->GetActorLocation().Z;
-			return HomeLocation;
+			return BuildLegalKickoffHomeLocation(
+				SoccerAICharacter,
+				HomeLocation
+			);
 		}
 
-		return SoccerAICharacter->GetActorLocation();
+		return BuildLegalKickoffHomeLocation(
+			SoccerAICharacter,
+			SoccerAICharacter->GetActorLocation()
+		);
 	}
 
 	if (
@@ -23708,10 +23799,16 @@ FVector ASoccerMatchManager::GetKickoffMoveLocation(
 		HomeLocation.Z =
 			SoccerAICharacter->GetActorLocation().Z;
 
-		return HomeLocation;
+		return BuildLegalKickoffHomeLocation(
+			SoccerAICharacter,
+			HomeLocation
+		);
 	}
 
-	return SoccerAICharacter->GetActorLocation();
+	return BuildLegalKickoffHomeLocation(
+		SoccerAICharacter,
+		SoccerAICharacter->GetActorLocation()
+	);
 }
 
 float ASoccerMatchManager::GetAttackDepthAlphaForLocation(

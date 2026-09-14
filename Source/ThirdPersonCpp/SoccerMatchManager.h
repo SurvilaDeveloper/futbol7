@@ -1181,6 +1181,10 @@ bool IsPenaltyMatchStateActive() const;
 	) const;
 
 	FVector GetKickoffCenterLocation() const;
+	FVector BuildLegalKickoffHomeLocation(
+		const ASoccerAICharacter* SoccerAICharacter,
+		const FVector& DesiredHomeLocation
+	) const;
 
 	//////
 
@@ -2311,6 +2315,16 @@ bool IsPenaltyMatchStateActive() const;
 
     UPROPERTY(EditAnywhere, Category = "Soccer|Fouls|Penalty", meta = (ClampMin = "100.0"))
     float PenaltyKickOtherPlayersExtraDepth = 240.0f;
+
+	// Separación adicional respecto del radio del arco penal. Se aplica a los
+	// objetivos de todos los jugadores salvo el pateador y el arquero defensor.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Fouls|Penalty|Positioning", meta = (ClampMin = "20.0", UIMin = "20.0", UIMax = "300.0"))
+	float PenaltyKickOtherPlayersArcClearance = 100.0f;
+
+	// Radio de llegada específico para la formación del penal. El valor global
+	// es demasiado amplio para detenerse con precisión del lado legal de la D.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Fouls|Penalty|Positioning", meta = (ClampMin = "5.0", UIMin = "5.0", UIMax = "150.0"))
+	float PenaltyKickOtherPlayersMoveAcceptanceRadius = 60.0f;
 
     // Separation between the defending and attacking outfield lines during a penalty.
     // Both lines remain outside the penalty area/arc, but they no longer share one target band.

@@ -74,6 +74,81 @@ bool FSoccerPenaltyKickRestart::IsDefendingGoalkeeper(
 	return IsValid(Character) && Character == GoalkeeperAI.Get();
 }
 
+bool FSoccerPenaltyKickRestart::AreNonParticipantsInLegalPositions(
+	const ASoccerMatchManager& Manager
+) const
+{
+	if (!IsActive(Manager))
+	{
+		return true;
+	}
+
+	UWorld* World = Manager.GetWorld();
+	if (World == nullptr)
+	{
+		return false;
+	}
+
+	for (TActorIterator<ASoccerCharacterBase> It(World); It; ++It)
+	{
+		const ASoccerCharacterBase* Candidate = *It;
+
+		if (!IsNonParticipantInLegalPosition(Manager, Candidate))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool FSoccerPenaltyKickRestart::IsNonParticipantInLegalPosition(
+	const ASoccerMatchManager& Manager,
+	const ASoccerCharacterBase* Character
+) const
+{
+	if (
+		!IsValid(Character) ||
+		Character->IsHidden() ||
+		Character->ActorHasTag(FName(TEXT("SubstitutionPresentation"))) ||
+		IsTaker(Character) ||
+		Character == GoalkeeperAI.Get()
+	)
+	{
+		return true;
+	}
+
+	const ASoccerField* Field = Manager.GetSoccerField();
+	const FVector RuleLocation = IsValid(Field)
+		? Field->WorldToPitchLocal(Character->GetActorLocation())
+		: Character->GetActorLocation();
+	const float DefendingGoalLineSign =
+		Manager.GetOpponentGoalLineSign(RestartTeam);
+	constexpr float RuleToleranceCm = 5.0f;
+
+	if (
+		SoccerFieldDimensions::IsLocationInsidePenaltyArea2D(
+			RuleLocation,
+			DefendingGoalLineSign
+		) ||
+		SoccerFieldDimensions::IsLocationInsidePenaltyDistanceCircle2D(
+			RuleLocation,
+			DefendingGoalLineSign,
+			-RuleToleranceCm
+		) ||
+		SoccerFieldDimensions::GetPenaltySpotBehindProgress2D(
+			RuleLocation,
+			DefendingGoalLineSign
+		) < -RuleToleranceCm ||
+		!SoccerFieldDimensions::IsLocationInsidePitch2D(RuleLocation)
+	)
+	{
+		return false;
+	}
+
+	return true;
+}
+
 bool FSoccerPenaltyKickRestart::CanAcceptFirstTouch(
 	const ASoccerMatchManager& Manager,
 	const ASoccerCharacterBase* TouchingCharacter
@@ -83,6 +158,7 @@ bool FSoccerPenaltyKickRestart::CanAcceptFirstTouch(
 		IsActive(Manager) &&
 		Manager.MatchPlayState == ESoccerMatchPlayState::PenaltyKickTaking &&
 		IsTaker(TouchingCharacter) &&
+		AreNonParticipantsInLegalPositions(Manager) &&
 		!bTaken;
 }
 
@@ -327,6 +403,83 @@ void FSoccerPenaltyKickRestart::RecoverDefendingGoalkeeperToCenter(
 	}
 }
 
+FVector FSoccerPenaltyKickRestart::EnforceLegalOutfieldTarget(
+	const ASoccerMatchManager& Manager,
+	const ASoccerAICharacter* SoccerAICharacter,
+	const FVector& DesiredTarget
+) const
+{
+	if (!IsValid(SoccerAICharacter))
+	{
+		return DesiredTarget;
+	}
+
+	const ASoccerField* Field = Manager.GetSoccerField();
+	FVector LocalTarget = IsValid(Field)
+		? Field->WorldToPitchLocal(DesiredTarget)
+		: DesiredTarget;
+	const float DefendingGoalLineSign =
+		Manager.GetOpponentGoalLineSign(RestartTeam);
+	const float InwardSign = -SoccerFieldDimensions::NormalizeGoalLineSign(
+		DefendingGoalLineSign
+	);
+	const float GoalLineX = SoccerFieldDimensions::GetGoalLineX(
+		DefendingGoalLineSign
+	);
+
+	// Primero garantiza que el objetivo quede detrás del frente del área.
+	const float MinimumAreaDepth =
+		SoccerFieldDimensions::PenaltyAreaDepthCm +
+		FMath::Max(100.0f, Manager.PenaltyKickOtherPlayersExtraDepth);
+	const float CurrentAreaDepth =
+		(LocalTarget.X - GoalLineX) * InwardSign;
+
+	if (CurrentAreaDepth < MinimumAreaDepth)
+	{
+		LocalTarget.X = GoalLineX + InwardSign * MinimumAreaDepth;
+	}
+
+	// El margen nunca puede ser menor que el radio de aceptación del MoveTo;
+	// de lo contrario el bot podría dar su movimiento por terminado dentro de
+	// la distancia reglamentaria aunque su destino matemático fuese legal.
+	const float SafeArcClearance = FMath::Max(
+		FMath::Max(20.0f, Manager.PenaltyKickOtherPlayersArcClearance),
+		FMath::Max(5.0f, Manager.PenaltyKickOtherPlayersMoveAcceptanceRadius) +
+			20.0f
+	);
+	const float TeamRadialSeparation =
+		SoccerAICharacter->GetTeam() == RestartTeam
+		? FMath::Max(50.0f, Manager.PenaltyKickTeamLineSeparation)
+		: 0.0f;
+	const float RequiredDistance =
+		SoccerFieldDimensions::PenaltyArcRadiusCm +
+		SafeArcClearance +
+		TeamRadialSeparation;
+	const FVector LocalSpot =
+		SoccerFieldDimensions::GetPenaltySpotLocalLocation(
+			DefendingGoalLineSign,
+			LocalTarget.Z
+		);
+	FVector FromSpot = LocalTarget - LocalSpot;
+	FromSpot.Z = 0.0f;
+
+	if (FromSpot.SizeSquared2D() < RequiredDistance * RequiredDistance)
+	{
+		if (!FromSpot.Normalize())
+		{
+			FromSpot = FVector(InwardSign, 0.0f, 0.0f);
+		}
+
+		LocalTarget = LocalSpot + FromSpot * RequiredDistance;
+	}
+
+	FVector Result = IsValid(Field)
+		? Field->PitchLocalToWorld(LocalTarget)
+		: LocalTarget;
+	Result.Z = SoccerAICharacter->GetActorLocation().Z;
+	return Result;
+}
+
 FVector FSoccerPenaltyKickRestart::BuildMoveLocation(
 	const ASoccerMatchManager& Manager,
 	const ASoccerAICharacter* SoccerAICharacter
@@ -441,7 +594,11 @@ FVector FSoccerPenaltyKickRestart::BuildMoveLocation(
 		AwayFromDefendingGoal * (BaseDepth + TeamDepthOffset + StaggerDepth) +
 		FieldRight * LateralOffset;
 	Target.Z = SoccerAICharacter->GetActorLocation().Z;
-	return Target;
+	return EnforceLegalOutfieldTarget(
+		Manager,
+		SoccerAICharacter,
+		Target
+	);
 }
 
 void FSoccerPenaltyKickRestart::ResetRuntimeState()

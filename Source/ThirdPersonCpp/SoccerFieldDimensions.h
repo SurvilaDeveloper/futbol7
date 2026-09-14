@@ -6,7 +6,7 @@
 
 namespace SoccerFieldDimensions
 {
-	// Unreal usa cent�metros.
+	// Unreal usa centímetros.
 
 	// ============================================================
 	// Cancha
@@ -21,8 +21,8 @@ namespace SoccerFieldDimensions
 
 	// Dimensiones actuales del campo. Cambiar solamente estas dos constantes
 	// debe adaptar geometria, referencias authored y shape tactico.
-	static constexpr float PitchLengthCm = 9000.0f;
-	static constexpr float PitchWidthCm = 6000.0f;
+	static constexpr float PitchLengthCm = 6000.0f;
+	static constexpr float PitchWidthCm = 4000.0f;
 
 	static constexpr float HalfPitchLengthCm = PitchLengthCm * 0.5f;
 	static constexpr float HalfPitchWidthCm = PitchWidthCm * 0.5f;
@@ -73,13 +73,22 @@ namespace SoccerFieldDimensions
 	static constexpr float HalfOuterWidthCm = OuterWidthCm * 0.5f;
 
 	// ============================================================
-	// C�rculo central
+	// Distancia reglamentaria de reinicios
 	// ============================================================
+	// En la cancha authored de 60x40 el círculo central tenía 6 m. El radio
+	// conserva esa proporción respecto del ancho cuando cambia el tamaño del
+	// campo. El círculo central y los arcos penales comparten necesariamente
+	// esta distancia para no desincronizar dibujo y reglas.
+	static constexpr float AuthoredRestartDistanceRadiusCm = 600.0f;
+	static constexpr float RestartDistanceRadiusCm =
+		AuthoredRestartDistanceRadiusCm *
+		(PitchWidthCm / AuthoredReferencePitchWidthCm);
 
-	static constexpr float CenterCircleRadiusCm = 600.0f;
+	static constexpr float CenterCircleRadiusCm = RestartDistanceRadiusCm;
+	static constexpr float PenaltyArcRadiusCm = RestartDistanceRadiusCm;
 
 	// ============================================================
-	// �reas
+	// Áreas
 	// ============================================================
 
 	static constexpr float PenaltyAreaDepthCm = 1300.0f;
@@ -87,6 +96,27 @@ namespace SoccerFieldDimensions
 	static constexpr float PenaltyAreaHalfWidthCm = PenaltyAreaWidthCm * 0.5f;
 
 	static constexpr float PenaltySpotDistanceCm = 900.0f;
+
+	// Distancia longitudinal entre el punto penal y el frente del área. Sirve
+	// para calcular la porción visible del círculo que queda fuera del área.
+	static constexpr float PenaltySpotToAreaFrontCm =
+		PenaltyAreaDepthCm - PenaltySpotDistanceCm;
+
+	FORCEINLINE float GetPenaltyArcHalfAngleDegrees()
+	{
+		if (PenaltyArcRadiusCm <= KINDA_SMALL_NUMBER)
+		{
+			return 0.0f;
+		}
+
+		const float IntersectionRatio = FMath::Clamp(
+			PenaltySpotToAreaFrontCm / PenaltyArcRadiusCm,
+			-1.0f,
+			1.0f
+		);
+
+		return FMath::RadiansToDegrees(FMath::Acos(IntersectionRatio));
+	}
 
 	// Area de meta. Mantiene aproximadamente la proporcion reglamentaria
 	// respecto del area penal usada por esta cancha reducida.
@@ -202,6 +232,36 @@ namespace SoccerFieldDimensions
 			CenterY,
 			LocalZ
 		);
+	}
+
+	FORCEINLINE float GetPenaltySpotBehindProgress2D(
+		const FVector& Location,
+		float GoalLineSign
+	)
+	{
+		const float Sign = NormalizeGoalLineSign(GoalLineSign);
+		const FVector PenaltySpot = GetPenaltySpotLocalLocation(Sign);
+
+		// Positivo significa hacia el centro del campo, es decir, detrás del
+		// punto penal con respecto al arco defendido.
+		return (Location.X - PenaltySpot.X) * -Sign;
+	}
+
+	FORCEINLINE bool IsLocationInsidePenaltyDistanceCircle2D(
+		const FVector& Location,
+		float GoalLineSign,
+		float ExtraRadiusCm = 0.0f
+	)
+	{
+		const FVector PenaltySpot = GetPenaltySpotLocalLocation(GoalLineSign);
+		const float Radius = FMath::Max(
+			0.0f,
+			PenaltyArcRadiusCm + ExtraRadiusCm
+		);
+		const float DeltaX = Location.X - PenaltySpot.X;
+		const float DeltaY = Location.Y - PenaltySpot.Y;
+
+		return DeltaX * DeltaX + DeltaY * DeltaY < Radius * Radius;
 	}
 
 	FORCEINLINE FVector GetCornerLocalLocation(

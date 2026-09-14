@@ -42,9 +42,9 @@ ASoccerField::ASoccerField()
 	// ============================================================
 	// MEDIDAS GENERALES
 	// ============================================================
-	// Unreal usa centÌmetros.
+	// Unreal usa cent√≠metros.
 	//
-	// F˙tbol 7 propuesto:
+	// F√∫tbol 7 propuesto:
 	// Largo cancha: 60m = 6000 cm
 	// Ancho cancha: 40m = 4000 cm
 	//
@@ -156,7 +156,7 @@ ASoccerField::ASoccerField()
 	);
 
 	// ============================================================
-	// LÕNEAS DE LA CANCHA
+	// L√çNEAS DE LA CANCHA
 	// ============================================================
 
 	const float LeftGoalLineX =
@@ -171,7 +171,7 @@ ASoccerField::ASoccerField()
 	const float SouthTouchLineY =
 		SoccerFieldDimensions::SouthTouchLineY;
 
-	// Laterales y lÌneas de fondo.
+	// Laterales y l√≠neas de fondo.
 	CreateLineSegment(
 		Cube,
 		TEXT("Line_NorthTouchLine"),
@@ -208,7 +208,7 @@ ASoccerField::ASoccerField()
 		LineHeightCm
 	);
 
-	// LÌnea media.
+	// L√≠nea media.
 	CreateLineSegment(
 		Cube,
 		TEXT("Line_HalfwayLine"),
@@ -218,7 +218,7 @@ ASoccerField::ASoccerField()
 		LineHeightCm
 	);
 
-	// CÌrculo central.
+	// C√≠rculo central.
 	const float CenterCircleRadiusCm =
 		SoccerFieldDimensions::CenterCircleRadiusCm;
 	CreateCircleMarking(
@@ -243,15 +243,15 @@ ASoccerField::ASoccerField()
 	);
 
 	// ============================================================
-	// ¡REAS PENALES F⁄TBOL 7
+	// √ÅREAS PENALES F√öTBOL 7
 	// ============================================================
-	// Modelo pr·ctico para juego:
-	// ¡rea rectangular:
+	// Modelo pr√°ctico para juego:
+	// √Årea rectangular:
 	// Profundidad: 13m
 	// Ancho: 20m
 	//
 	// Punto penal:
-	// 9m desde lÌnea de gol.
+	// 9m desde l√≠nea de gol.
 	// ============================================================
 
 	const float PenaltyAreaDepthCm =
@@ -266,8 +266,8 @@ ASoccerField::ASoccerField()
 	const float LeftPenaltyFrontX = LeftGoalLineX + PenaltyAreaDepthCm;
 	const float RightPenaltyFrontX = RightGoalLineX - PenaltyAreaDepthCm;
 
-	// ¡reas penales izquierda y derecha.
-	// Las dos usan la misma construcciÛn rectangular que las ·reas de meta.
+	// √Åreas penales izquierda y derecha.
+	// Las dos usan la misma construcci√≥n rectangular que las √°reas de meta.
 	CreateGoalLineAreaMarking(
 		Cube,
 		TEXT("Line_LeftPenaltyArea"),
@@ -311,11 +311,49 @@ ASoccerField::ASoccerField()
 		true
 	);
 
+	// Arcos penales (la "D"). Se dibuja solamente la porci√≥n del c√≠rculo
+	// reglamentario que queda fuera del rect√°ngulo del √°rea. El mismo radio
+	// gobierna despu√©s la legalidad de los jugadores durante un penal.
+	const float PenaltyArcRadiusCm =
+		SoccerFieldDimensions::PenaltyArcRadiusCm;
+	const float PenaltyArcHalfAngleDegrees =
+		SoccerFieldDimensions::GetPenaltyArcHalfAngleDegrees();
+
+	if (
+		PenaltyArcRadiusCm > KINDA_SMALL_NUMBER &&
+		PenaltyArcHalfAngleDegrees > KINDA_SMALL_NUMBER
+	)
+	{
+		CreateArcMarking(
+			Cube,
+			TEXT("Line_LeftPenaltyArc"),
+			SoccerFieldDimensions::GetPenaltySpotLocalLocation(-1.0f, LineZ),
+			PenaltyArcRadiusCm,
+			-PenaltyArcHalfAngleDegrees,
+			PenaltyArcHalfAngleDegrees,
+			32,
+			LineThicknessCm,
+			LineHeightCm
+		);
+
+		CreateArcMarking(
+			Cube,
+			TEXT("Line_RightPenaltyArc"),
+			SoccerFieldDimensions::GetPenaltySpotLocalLocation(1.0f, LineZ),
+			PenaltyArcRadiusCm,
+			180.0f - PenaltyArcHalfAngleDegrees,
+			180.0f + PenaltyArcHalfAngleDegrees,
+			32,
+			LineThicknessCm,
+			LineHeightCm
+		);
+	}
+
 	// ============================================================
-	// ¡REAS DE META / ¡REAS CHICAS
+	// √ÅREAS DE META / √ÅREAS CHICAS
 	// ============================================================
-	// Se dibujan con el mismo criterio que las ·reas penales:
-	// la lÌnea de fondo ya forma el cuarto lado del rect·ngulo.
+	// Se dibujan con el mismo criterio que las √°reas penales:
+	// la l√≠nea de fondo ya forma el cuarto lado del rect√°ngulo.
 	// ============================================================
 
 	const float GoalAreaHalfWidthCm =
@@ -399,12 +437,12 @@ ASoccerField::ASoccerField()
 	);
 
 	// ============================================================
-	// ARCOS / PORTERÕAS
+	// ARCOS / PORTER√çAS
 	// ============================================================
-	// F˙tbol 7:
+	// F√∫tbol 7:
 	// Arco propuesto: 6m de ancho x 2m de alto.
 	//
-	// La pelota rebota porque estos componentes tienen colisiÛn:
+	// La pelota rebota porque estos componentes tienen colisi√≥n:
 	// QueryAndPhysics + WorldStatic + Block.
 	// ============================================================
 
@@ -485,9 +523,9 @@ ASoccerField::ASoccerField()
 	// ============================================================
 // REDES DE LOS ARCOS
 // ============================================================
-// Paneles finos con colisiÛn para que la pelota pueda quedar
-// visualmente dentro del arco despuÈs del gol.
-// La boca del arco queda abierta: solo hay red atr·s, costados y arriba.
+// Paneles finos con colisi√≥n para que la pelota pueda quedar
+// visualmente dentro del arco despu√©s del gol.
+// La boca del arco queda abierta: solo hay red atr√°s, costados y arriba.
 // ============================================================
 
 	const float GoalDepthCm =
@@ -535,7 +573,7 @@ ASoccerField::ASoccerField()
 			ECR_Ignore
 		);
 
-		// Opcional: que la c·mara no choque con la red.
+		// Opcional: que la c√°mara no choque con la red.
 		NetComponent->SetCollisionResponseToChannel(
 			ECC_Camera,
 			ECR_Ignore
@@ -552,7 +590,7 @@ ASoccerField::ASoccerField()
 
 	// --------------------
 	// Red arco izquierdo.
-	// El arco izquierdo mira hacia -X por detr·s de la lÌnea.
+	// El arco izquierdo mira hacia -X por detr√°s de la l√≠nea.
 	// --------------------
 
 	UStaticMeshComponent* LeftBackNet =
@@ -641,7 +679,7 @@ ASoccerField::ASoccerField()
 
 	// --------------------
 	// Red arco derecho.
-	// El arco derecho mira hacia +X por detr·s de la lÌnea.
+	// El arco derecho mira hacia +X por detr√°s de la l√≠nea.
 	// --------------------
 
 	UStaticMeshComponent* RightBackNet =

@@ -27,6 +27,9 @@ public:
 	bool IsTaker(const ASoccerCharacterBase* Character) const;
 	bool IsHumanTaker(const AThirdPersonCppCharacter* Character) const;
 	bool IsDefendingGoalkeeper(const ASoccerAICharacter* Character) const;
+	bool AreNonParticipantsInLegalPositions(
+		const ASoccerMatchManager& Manager
+	) const;
 
 	// Two-phase first-touch handling: validation happens before the generic
 	// touch registration; completion happens only after that registration succeeds.
@@ -62,6 +65,15 @@ private:
 	FVector GetDefendingGoalkeeperCenterLocation(const ASoccerMatchManager& Manager) const;
 	bool IsDefendingGoalkeeperReady(const ASoccerMatchManager& Manager) const;
 	void RecoverDefendingGoalkeeperToCenter(ASoccerMatchManager& Manager) const;
+	bool IsNonParticipantInLegalPosition(
+		const ASoccerMatchManager& Manager,
+		const ASoccerCharacterBase* Character
+	) const;
+	FVector EnforceLegalOutfieldTarget(
+		const ASoccerMatchManager& Manager,
+		const ASoccerAICharacter* SoccerAICharacter,
+		const FVector& DesiredTarget
+	) const;
 	void ResetRuntimeState();
 
 private:

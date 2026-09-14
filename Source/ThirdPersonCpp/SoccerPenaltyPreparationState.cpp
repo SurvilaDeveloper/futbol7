@@ -88,6 +88,8 @@ void FSoccerPenaltyPreparationState::Tick(ASoccerMatchManager& Manager, float De
 	const bool bSetupTimedOut =
 		SetupElapsed >= FMath::Max(1.0f, Manager.PenaltyKickMaximumSetupWaitTime);
 	const bool bGoalkeeperReady = Penalty.IsDefendingGoalkeeperReady(Manager);
+	const bool bNonParticipantsLegal =
+		Penalty.AreNonParticipantsInLegalPositions(Manager);
 
 	if (!bGoalkeeperReady)
 	{
@@ -110,6 +112,15 @@ void FSoccerPenaltyPreparationState::Tick(ASoccerMatchManager& Manager, float De
 		return;
 	}
 
+	// El timeout sólo puede perdonar que un bot todavía no esté exactamente en
+	// su slot o conserve velocidad residual. Nunca puede habilitar el penal si
+	// alguien —incluido el humano— invade el área, está delante del punto o no
+	// respetó la distancia marcada por la D.
+	if (!bNonParticipantsLegal)
+	{
+		return;
+	}
+
 	if (!bReady && !bSetupTimedOut)
 	{
 		return;
@@ -120,7 +131,7 @@ void FSoccerPenaltyPreparationState::Tick(ASoccerMatchManager& Manager, float De
 		ASoccerDebugManager::Message(
 			&Manager,
 			ESoccerDebugCategory::Restarts,
-			TEXT("PENAL PREPARATION: timeout de jugadores no criticos; arquero listo"),
+			TEXT("PENAL PREPARATION: timeout de asentamiento; posiciones reglamentarias y arquero listos"),
 			FColor::Orange
 		);
 	}
