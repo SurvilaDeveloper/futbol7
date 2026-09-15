@@ -18501,6 +18501,46 @@ float ASoccerMatchManager::GetActiveRestartAcceptanceRadius(
 	return RestartDefaultBotAcceptanceRadius;
 }
 
+bool ASoccerMatchManager::IsActiveRestartCharacterSettled(
+	const ASoccerAICharacter* SoccerAICharacter
+) const
+{
+	if (!IsRestartContextActive() || !IsValid(SoccerAICharacter))
+	{
+		return false;
+	}
+
+	const FVector TargetLocation =
+		GetActiveRestartMoveLocation(SoccerAICharacter);
+
+	// Conserva el comportamiento previo de AreAllActiveRestartBotsSettled():
+	// un personaje sin destino asignado no bloquea la reanudacion.
+	if (TargetLocation.IsNearlyZero())
+	{
+		return true;
+	}
+
+	const float AcceptanceRadius =
+		GetActiveRestartAcceptanceRadius(SoccerAICharacter);
+
+	if (
+		FVector::Dist2D(
+			SoccerAICharacter->GetActorLocation(),
+			TargetLocation
+		) > AcceptanceRadius
+		)
+	{
+		return false;
+	}
+
+	const UCharacterMovementComponent* Movement =
+		SoccerAICharacter->GetCharacterMovement();
+
+	return
+		Movement == nullptr ||
+		Movement->Velocity.Size2D() <= RestartReadyMaximumBotSpeed;
+}
+
 bool ASoccerMatchManager::AreAllActiveRestartBotsSettled() const
 {
 	if (!IsRestartContextActive())
@@ -18524,32 +18564,7 @@ bool ASoccerMatchManager::AreAllActiveRestartBotsSettled() const
 			continue;
 		}
 
-		const FVector TargetLocation =
-			GetActiveRestartMoveLocation(Candidate);
-
-		if (TargetLocation.IsNearlyZero())
-		{
-			continue;
-		}
-
-		const float AcceptanceRadius =
-			GetActiveRestartAcceptanceRadius(Candidate);
-
-		if (FVector::Dist2D(
-			Candidate->GetActorLocation(),
-			TargetLocation
-		) > AcceptanceRadius)
-		{
-			return false;
-		}
-
-		const UCharacterMovementComponent* Movement =
-			Candidate->GetCharacterMovement();
-
-		if (
-			Movement != nullptr &&
-			Movement->Velocity.Size2D() > RestartReadyMaximumBotSpeed
-			)
+		if (!IsActiveRestartCharacterSettled(Candidate))
 		{
 			return false;
 		}

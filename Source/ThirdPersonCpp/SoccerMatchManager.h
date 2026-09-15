@@ -445,6 +445,12 @@ public:
 		const ASoccerAICharacter* SoccerAICharacter
 	) const;
 
+	// Comparte con los consumidores visuales el mismo criterio de llegada que
+	// bloquea o habilita una reanudacion: destino, radio y velocidad residual.
+	bool IsActiveRestartCharacterSettled(
+		const ASoccerAICharacter* SoccerAICharacter
+	) const;
+
 	bool IsPenaltyKickRestartActive() const;
 	bool IsPenaltyKickTaker(const ASoccerCharacterBase* Character) const;
 	bool IsHumanPenaltyTaker(const AThirdPersonCppCharacter* Character) const;

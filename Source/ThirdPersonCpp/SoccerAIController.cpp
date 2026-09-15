@@ -449,8 +449,42 @@ void ASoccerAIController::Tick(float DeltaTime)
 			SoccerCharacter,
 			HalfTimeMoveLocation,
 			HalfTimeAcceptanceRadius
-		))
+			))
 		{
+			// Los jugadores de campo usan bOrientRotationToMovement, pero los
+			// arqueros lo mantienen desactivado para poder mirar la pelota durante
+			// el juego. En esta transicion los orientamos segun su velocidad real;
+			// asi tambien siguen correctamente los ajustes del path al cambiar de
+			// waypoint o esquivar a otro jugador. El destino queda como respaldo
+			// mientras todavia estan arrancando.
+			if (
+				SoccerCharacter->GetPlayerRole() ==
+				ESoccerPlayerRole::Goalkeeper
+				)
+			{
+				FVector HalfTimeFacingLocation =
+					HalfTimeMoveLocation;
+
+				FVector HalfTimeHorizontalVelocity =
+					SoccerCharacter->GetVelocity();
+				HalfTimeHorizontalVelocity.Z = 0.0f;
+
+				if (
+					HalfTimeHorizontalVelocity.SizeSquared() >
+					FMath::Square(10.0f)
+					)
+				{
+					HalfTimeFacingLocation =
+						SoccerCharacter->GetActorLocation() +
+						HalfTimeHorizontalVelocity;
+				}
+
+				FacePawnTowardLocation(
+					HalfTimeFacingLocation,
+					DeltaTime
+				);
+			}
+
 			MoveToLocationWithAIMovement(
 				ESoccerAIOrder::ReturnHome,
 				HalfTimeMoveLocation,
@@ -520,26 +554,25 @@ void ASoccerAIController::Tick(float DeltaTime)
 
 		const FVector KickoffMoveLocation =
 			MatchManager->GetActiveRestartMoveLocation(SoccerCharacter);
-
-		if (!KickoffMoveLocation.IsNearlyZero())
-		{
-			const bool bKickoffFinalRun =
-				MatchManager->IsKickoffFinalRunActiveForCharacter(
-					SoccerCharacter
-				);
-
-			const bool bKickoffTaker =
-				MatchManager->IsKickoffTaker(SoccerCharacter);
-
-			const float KickoffAcceptanceRadius =
-				bKickoffTaker && !bKickoffFinalRun
+		const bool bHasKickoffMoveLocation =
+			!KickoffMoveLocation.IsNearlyZero();
+		const bool bKickoffFinalRun =
+			MatchManager->IsKickoffFinalRunActiveForCharacter(
+				SoccerCharacter
+			);
+		const bool bKickoffTaker =
+			MatchManager->IsKickoffTaker(SoccerCharacter);
+		const float KickoffAcceptanceRadius =
+			bKickoffTaker && !bKickoffFinalRun
 				? MatchManager->GetKickoffRunUpMoveAcceptanceRadius()
 				: MoveAcceptanceRadius;
 
+		if (bHasKickoffMoveLocation)
+		{
 			MoveToLocationWithAIMovement(
 				bKickoffFinalRun
-				? ESoccerAIOrder::AttackRunIntoSpace
-				: ESoccerAIOrder::ReturnHome,
+					? ESoccerAIOrder::AttackRunIntoSpace
+					: ESoccerAIOrder::ReturnHome,
 				KickoffMoveLocation,
 				KickoffAcceptanceRadius,
 				false
@@ -552,6 +585,55 @@ void ASoccerAIController::Tick(float DeltaTime)
 		if (IsValid(SoccerBall))
 		{
 			SetFocus(SoccerBall);
+
+			FVector KickoffHorizontalVelocity =
+				SoccerCharacter->GetVelocity();
+			KickoffHorizontalVelocity.Z = 0.0f;
+
+			const bool bHasKickoffHorizontalVelocity =
+				KickoffHorizontalVelocity.SizeSquared() >
+				FMath::Square(10.0f);
+
+			const bool bKickoffAtAssignedPosition =
+				!bKickoffFinalRun &&
+				MatchManager->IsActiveRestartCharacterSettled(
+					SoccerCharacter
+				);
+
+			if (bKickoffAtAssignedPosition)
+			{
+				// El manager define la llegada con el mismo radio y la misma velocidad
+				// que habilitan el saque. Asi ningun arquero puede quedar orientado
+				// hacia el fondo mientras la reanudacion ya lo considera acomodado.
+				FacePawnTowardLocation(
+					SoccerBall->GetActorLocation(),
+					DeltaTime
+				);
+			}
+			else if (
+				SoccerCharacter->GetPlayerRole() ==
+					ESoccerPlayerRole::Goalkeeper &&
+				bHasKickoffMoveLocation
+				)
+			{
+				// El arquero no se orienta automaticamente al movimiento. Mientras
+				// va hacia su nueva posicion, lo alineamos con la velocidad real para
+				// que no corra de costado. Al arrancar usamos el destino como respaldo.
+				FVector KickoffFacingLocation =
+					KickoffMoveLocation;
+
+				if (bHasKickoffHorizontalVelocity)
+				{
+					KickoffFacingLocation =
+						SoccerCharacter->GetActorLocation() +
+						KickoffHorizontalVelocity;
+				}
+
+				FacePawnTowardLocation(
+					KickoffFacingLocation,
+					DeltaTime
+				);
+			}
 		}
 		else
 		{
@@ -815,10 +897,6 @@ void ASoccerAIController::Tick(float DeltaTime)
 
 		const FVector RestartMoveLocation =
 			MatchManager->GetActiveRestartMoveLocation(SoccerCharacter);
-		const bool bFreeKickLiveOffBallPositioning =
-			MatchManager->HasActiveRestartLivePositioningPlan(
-				SoccerCharacter
-			);
 
 		if (!RestartMoveLocation.IsNearlyZero())
 		{
@@ -837,9 +915,7 @@ void ASoccerAIController::Tick(float DeltaTime)
 				? MatchManager->GetFreeKickWallMoveAcceptanceRadius()
 				: bOffsideTaker && !bOffsideFinalRun
 				? MatchManager->GetOffsideRestartRunUpMoveAcceptanceRadius()
-				: bFreeKickLiveOffBallPositioning
-					? MatchManager->GetActiveRestartLivePositioningMoveAcceptanceRadius()
-					: MoveAcceptanceRadius;
+				: MoveAcceptanceRadius;
 
 			MoveToLocationWithAIMovement(
 				bOffsideFinalRun
