@@ -2,8 +2,13 @@
 
 #include "SoccerBall.h"
 
+#include "SoccerAICharacter.h"
+#include "SoccerCharacterBase.h"
+#include "SoccerMatchManager.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "DrawDebugHelpers.h"
+#include "EngineUtils.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -36,6 +41,235 @@ namespace
             BodyInstance->ClearForces(false);
             BodyInstance->ClearTorques(false);
         }
+    }
+
+    FVector ClosestPointOnSegment(
+        const FVector& Point,
+        const FVector& SegmentStart,
+        const FVector& SegmentEnd
+    )
+    {
+        const FVector Segment = SegmentEnd - SegmentStart;
+        const float SegmentLengthSquared = Segment.SizeSquared();
+
+        if (SegmentLengthSquared <= KINDA_SMALL_NUMBER)
+        {
+            return SegmentStart;
+        }
+
+        const float Alpha = FMath::Clamp(
+            FVector::DotProduct(Point - SegmentStart, Segment) /
+                SegmentLengthSquared,
+            0.0f,
+            1.0f
+        );
+
+        return SegmentStart + Segment * Alpha;
+    }
+
+    void GetCapsuleAxisSegment(
+        const UCapsuleComponent* Capsule,
+        FVector& OutSegmentStart,
+        FVector& OutSegmentEnd
+    )
+    {
+        if (Capsule == nullptr)
+        {
+            OutSegmentStart = FVector::ZeroVector;
+            OutSegmentEnd = FVector::ZeroVector;
+            return;
+        }
+
+        const FVector CapsuleCenter = Capsule->GetComponentLocation();
+        const FVector CapsuleUp = Capsule->GetUpVector().GetSafeNormal();
+        const float CylinderHalfHeight = FMath::Max(
+            0.0f,
+            Capsule->GetScaledCapsuleHalfHeight() -
+                Capsule->GetScaledCapsuleRadius()
+        );
+
+        OutSegmentStart = CapsuleCenter - CapsuleUp * CylinderHalfHeight;
+        OutSegmentEnd = CapsuleCenter + CapsuleUp * CylinderHalfHeight;
+    }
+
+    bool IsPointInsideExpandedCapsule(
+        const FVector& Point,
+        const UCapsuleComponent* Capsule,
+        float AdditionalRadius
+    )
+    {
+        if (Capsule == nullptr)
+        {
+            return false;
+        }
+
+        FVector SegmentStart = FVector::ZeroVector;
+        FVector SegmentEnd = FVector::ZeroVector;
+        GetCapsuleAxisSegment(Capsule, SegmentStart, SegmentEnd);
+
+        const FVector ClosestPoint = ClosestPointOnSegment(
+            Point,
+            SegmentStart,
+            SegmentEnd
+        );
+
+        const float ExpandedRadius =
+            Capsule->GetScaledCapsuleRadius() +
+            FMath::Max(0.0f, AdditionalRadius);
+
+        return FVector::DistSquared(Point, ClosestPoint) <=
+            FMath::Square(ExpandedRadius);
+    }
+
+    bool FindFirstSegmentCapsuleContact(
+        const FVector& SegmentStart,
+        const FVector& SegmentEnd,
+        const UCapsuleComponent* Capsule,
+        float AdditionalRadius,
+        float& OutContactAlpha,
+        FVector& OutContactLocation,
+        FVector& OutImpactNormal
+    )
+    {
+        OutContactAlpha = 0.0f;
+        OutContactLocation = SegmentStart;
+        OutImpactNormal = FVector::ZeroVector;
+
+        if (Capsule == nullptr)
+        {
+            return false;
+        }
+
+        FVector CapsuleSegmentStart = FVector::ZeroVector;
+        FVector CapsuleSegmentEnd = FVector::ZeroVector;
+        GetCapsuleAxisSegment(
+            Capsule,
+            CapsuleSegmentStart,
+            CapsuleSegmentEnd
+        );
+
+        const float ExpandedRadius =
+            Capsule->GetScaledCapsuleRadius() +
+            FMath::Max(0.0f, AdditionalRadius);
+        const float ExpandedRadiusSquared = FMath::Square(ExpandedRadius);
+
+        const auto DistanceSquaredAtAlpha =
+            [&SegmentStart,
+             &SegmentEnd,
+             &CapsuleSegmentStart,
+             &CapsuleSegmentEnd](float Alpha)
+            {
+                const FVector Point = FMath::Lerp(
+                    SegmentStart,
+                    SegmentEnd,
+                    FMath::Clamp(Alpha, 0.0f, 1.0f)
+                );
+                const FVector ClosestCapsuleAxisPoint =
+                    ClosestPointOnSegment(
+                        Point,
+                        CapsuleSegmentStart,
+                        CapsuleSegmentEnd
+                    );
+
+                return FVector::DistSquared(
+                    Point,
+                    ClosestCapsuleAxisPoint
+                );
+            };
+
+        /*
+         * Distance to a convex capsule along a straight segment is convex.
+         * First locate its minimum, then binary-search the first entry. This
+         * remains stable for the cylindrical side as well as both round caps.
+         */
+        float MinimumSearchStart = 0.0f;
+        float MinimumSearchEnd = 1.0f;
+
+        for (int32 Iteration = 0; Iteration < 18; ++Iteration)
+        {
+            const float FirstThird = FMath::Lerp(
+                MinimumSearchStart,
+                MinimumSearchEnd,
+                1.0f / 3.0f
+            );
+            const float SecondThird = FMath::Lerp(
+                MinimumSearchStart,
+                MinimumSearchEnd,
+                2.0f / 3.0f
+            );
+
+            if (
+                DistanceSquaredAtAlpha(FirstThird) <=
+                DistanceSquaredAtAlpha(SecondThird)
+                )
+            {
+                MinimumSearchEnd = SecondThird;
+            }
+            else
+            {
+                MinimumSearchStart = FirstThird;
+            }
+        }
+
+        float ClosestAlpha =
+            (MinimumSearchStart + MinimumSearchEnd) * 0.5f;
+        float ClosestDistanceSquared =
+            DistanceSquaredAtAlpha(ClosestAlpha);
+
+        const float EndDistanceSquared = DistanceSquaredAtAlpha(1.0f);
+        if (EndDistanceSquared < ClosestDistanceSquared)
+        {
+            ClosestAlpha = 1.0f;
+            ClosestDistanceSquared = EndDistanceSquared;
+        }
+
+        if (ClosestDistanceSquared > ExpandedRadiusSquared)
+        {
+            return false;
+        }
+
+        float EntrySearchStart = 0.0f;
+        float EntrySearchEnd = ClosestAlpha;
+
+        for (int32 Iteration = 0; Iteration < 20; ++Iteration)
+        {
+            const float Middle =
+                (EntrySearchStart + EntrySearchEnd) * 0.5f;
+
+            if (
+                DistanceSquaredAtAlpha(Middle) <=
+                ExpandedRadiusSquared
+                )
+            {
+                EntrySearchEnd = Middle;
+            }
+            else
+            {
+                EntrySearchStart = Middle;
+            }
+        }
+
+        OutContactAlpha = FMath::Clamp(
+            EntrySearchEnd,
+            0.0f,
+            1.0f
+        );
+        OutContactLocation = FMath::Lerp(
+            SegmentStart,
+            SegmentEnd,
+            OutContactAlpha
+        );
+
+        const FVector ClosestCapsuleAxisPoint = ClosestPointOnSegment(
+            OutContactLocation,
+            CapsuleSegmentStart,
+            CapsuleSegmentEnd
+        );
+        OutImpactNormal = (
+            OutContactLocation - ClosestCapsuleAxisPoint
+        ).GetSafeNormal();
+
+        return true;
     }
 }
 
@@ -87,8 +321,429 @@ void ASoccerBall::BeginPlay()
 
     BallMesh->OnComponentHit.AddDynamic(this, &ASoccerBall::OnBallHit);
 
+    ResolveMatchManager();
+    ResetPassiveCharacterBodyContactTracking(true);
+
     bPredictionPossessed = !BallMesh->IsSimulatingPhysics();
     MarkTrajectoryChanged();
+}
+
+ASoccerMatchManager* ASoccerBall::ResolveMatchManager()
+{
+    if (IsValid(CachedMatchManager))
+    {
+        return CachedMatchManager;
+    }
+
+    CachedMatchManager = nullptr;
+
+    UWorld* World = GetWorld();
+    if (World == nullptr)
+    {
+        return nullptr;
+    }
+
+    for (TActorIterator<ASoccerMatchManager> It(World); It; ++It)
+    {
+        ASoccerMatchManager* Candidate = *It;
+        if (IsValid(Candidate))
+        {
+            CachedMatchManager = Candidate;
+            break;
+        }
+    }
+
+    return CachedMatchManager;
+}
+
+void ASoccerBall::ResetPassiveCharacterBodyContactTracking(
+    bool bSeedFromCurrentLocation
+)
+{
+    LastPassiveCharacterBodyContact = nullptr;
+    LastPassiveCharacterBodyContactWorldTime = -1000.0f;
+
+    bHasPreviousPassiveCharacterBodyBallLocation =
+        bSeedFromCurrentLocation && BallMesh != nullptr;
+
+    PreviousPassiveCharacterBodyBallLocation =
+        bHasPreviousPassiveCharacterBodyBallLocation
+        ? GetActorLocation()
+        : FVector::ZeroVector;
+}
+
+void ASoccerBall::UpdatePassiveCharacterBodyContact(float DeltaTime)
+{
+    if (BallMesh == nullptr)
+    {
+        ResetPassiveCharacterBodyContactTracking(false);
+        return;
+    }
+
+    const FVector CurrentBallLocation = GetActorLocation();
+
+    const auto AdvanceTrackingSample =
+        [this]()
+        {
+            PreviousPassiveCharacterBodyBallLocation = GetActorLocation();
+            bHasPreviousPassiveCharacterBodyBallLocation = true;
+        };
+
+    if (
+        !bEnablePassiveCharacterBodyContact ||
+        GetNetMode() == NM_Client ||
+        !GetActorEnableCollision() ||
+        !BallMesh->IsSimulatingPhysics()
+        )
+    {
+        AdvanceTrackingSample();
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    ASoccerMatchManager* MatchManager = ResolveMatchManager();
+
+    /*
+     * Field possession is logical in this project: the rigid body can remain
+     * awake while a player carries the ball. Never infer a free ball from
+     * IsSimulatingPhysics() alone.
+     */
+    if (
+        World == nullptr ||
+        !IsValid(MatchManager) ||
+        MatchManager->GetMatchPlayState() !=
+            ESoccerMatchPlayState::Playing ||
+        IsValid(MatchManager->GetPossessingCharacter())
+        )
+    {
+        AdvanceTrackingSample();
+        return;
+    }
+
+    const FVector IncomingBallVelocity =
+        BallMesh->GetPhysicsLinearVelocity();
+    const float IncomingBallSpeed = IncomingBallVelocity.Size();
+
+    if (
+        IncomingBallSpeed <
+            FMath::Max(0.0f, PassiveCharacterBodyMinimumBallSpeed) ||
+        !bHasPreviousPassiveCharacterBodyBallLocation
+        )
+    {
+        AdvanceTrackingSample();
+        return;
+    }
+
+    const FVector SweepStart =
+        PreviousPassiveCharacterBodyBallLocation;
+    const FVector SweepEnd = CurrentBallLocation;
+    const float TravelDistance = FVector::Dist(SweepStart, SweepEnd);
+
+    if (TravelDistance <= KINDA_SMALL_NUMBER)
+    {
+        AdvanceTrackingSample();
+        return;
+    }
+
+    const float SafeDeltaTime = FMath::Clamp(
+        DeltaTime,
+        1.0f / 240.0f,
+        0.25f
+    );
+    const float SweepRadius = FMath::Max(
+        1.0f,
+        GetBallRadiusCm() *
+            FMath::Clamp(
+                PassiveCharacterBodyBallRadiusScale,
+                0.50f,
+                1.25f
+            )
+    );
+    const float MaximumContinuousTravel =
+        IncomingBallSpeed * SafeDeltaTime *
+            FMath::Max(1.0f, PassiveCharacterBodySweepTravelMultiplier) +
+        FMath::Max(0.0f, PassiveCharacterBodyTeleportSlack) +
+        SweepRadius * 2.0f;
+
+    /* A restart/reset placement is not a physical flight segment. */
+    if (TravelDistance > MaximumContinuousTravel)
+    {
+        AdvanceTrackingSample();
+        return;
+    }
+
+    ASoccerCharacterBase* BestCharacter = nullptr;
+    FVector BestContactBallLocation = FVector::ZeroVector;
+    FVector BestImpactNormal = FVector::ZeroVector;
+    float BestHitTime = 2.0f;
+    const float CurrentWorldTime = World->GetTimeSeconds();
+
+    for (TActorIterator<ASoccerCharacterBase> It(World); It; ++It)
+    {
+        ASoccerCharacterBase* Candidate = *It;
+
+        if (
+            !IsValid(Candidate) ||
+            !Candidate->GetActorEnableCollision()
+            )
+        {
+            continue;
+        }
+
+        UCapsuleComponent* CandidateCapsule =
+            Candidate->GetCapsuleComponent();
+
+        /*
+         * The analytic test uses only the movement capsule. Enabling the
+         * skeletal PhysicsAsset as well would create duplicate and
+         * animation-dependent surfaces.
+         */
+        if (
+            CandidateCapsule == nullptr ||
+            CandidateCapsule->GetCollisionEnabled() ==
+                ECollisionEnabled::NoCollision
+            )
+        {
+            continue;
+        }
+
+        if (
+            Candidate->IsTackleActive() ||
+            Candidate->IsAerialActionQueuedOrPlaying()
+            )
+        {
+            continue;
+        }
+
+        const ASoccerAICharacter* AICharacter =
+            Cast<ASoccerAICharacter>(Candidate);
+
+        if (
+            IsValid(AICharacter) &&
+            (
+                AICharacter->IsGoalkeeperActionActive() ||
+                AICharacter->IsAIKickMontageActive()
+            )
+            )
+        {
+            continue;
+        }
+
+        if (!MatchManager->CanCharacterTouchBallNow(Candidate))
+        {
+            continue;
+        }
+
+        if (
+            Candidate == LastPassiveCharacterBodyContact &&
+            CurrentWorldTime - LastPassiveCharacterBodyContactWorldTime <
+                FMath::Max(
+                    0.0f,
+                    PassiveCharacterBodySamePlayerCooldown
+                )
+            )
+        {
+            continue;
+        }
+
+        /*
+         * Kicks start very close to the taker's capsule. If the segment begins
+         * inside that expanded shape, it is an exit rather than a new impact.
+         */
+        if (
+            IsPointInsideExpandedCapsule(
+                SweepStart,
+                CandidateCapsule,
+                SweepRadius
+            )
+            )
+        {
+            continue;
+        }
+
+        float ContactAlpha = 0.0f;
+        FVector ContactBallLocation = FVector::ZeroVector;
+        FVector ImpactNormal = FVector::ZeroVector;
+        if (
+            !FindFirstSegmentCapsuleContact(
+                SweepStart,
+                SweepEnd,
+                CandidateCapsule,
+                SweepRadius,
+                ContactAlpha,
+                ContactBallLocation,
+                ImpactNormal
+            )
+            )
+        {
+            continue;
+        }
+
+        if (ImpactNormal.IsNearlyZero())
+        {
+            ImpactNormal = -IncomingBallVelocity.GetSafeNormal();
+        }
+
+        const FVector RelativeIncomingVelocity =
+            IncomingBallVelocity - Candidate->GetVelocity();
+        const float ApproachSpeed = -FVector::DotProduct(
+            RelativeIncomingVelocity,
+            ImpactNormal
+        );
+
+        if (
+            ApproachSpeed <
+                FMath::Max(
+                    0.0f,
+                    PassiveCharacterBodyMinimumApproachSpeed
+                ) ||
+            ContactAlpha >= BestHitTime
+            )
+        {
+            continue;
+        }
+
+        BestCharacter = Candidate;
+        BestContactBallLocation = ContactBallLocation;
+        BestImpactNormal = ImpactNormal;
+        BestHitTime = ContactAlpha;
+    }
+
+    if (!IsValid(BestCharacter))
+    {
+        AdvanceTrackingSample();
+        return;
+    }
+
+    const FVector PlayerVelocity = BestCharacter->GetVelocity();
+    const FVector RelativeIncomingVelocity =
+        IncomingBallVelocity - PlayerVelocity;
+    const float RelativeNormalVelocity = FVector::DotProduct(
+        RelativeIncomingVelocity,
+        BestImpactNormal
+    );
+    const FVector RelativeTangentialVelocity =
+        RelativeIncomingVelocity -
+        BestImpactNormal * RelativeNormalVelocity;
+
+    FVector OutgoingBallVelocity =
+        RelativeTangentialVelocity *
+            FMath::Clamp(
+                PassiveCharacterBodyTangentialVelocityRetention,
+                0.0f,
+                1.0f
+            ) +
+        BestImpactNormal *
+            (-RelativeNormalVelocity) *
+            FMath::Clamp(
+                PassiveCharacterBodyNormalVelocityRetention,
+                0.0f,
+                1.0f
+            ) +
+        PlayerVelocity *
+            FMath::Clamp(
+                PassiveCharacterBodyPlayerVelocityTransfer,
+                0.0f,
+                1.0f
+            );
+
+    const float MinimumOutgoingNormalSpeed = FMath::Max(
+        0.0f,
+        PassiveCharacterBodyMinimumOutgoingNormalSpeed
+    );
+    const float CurrentOutgoingNormalSpeed = FVector::DotProduct(
+        OutgoingBallVelocity,
+        BestImpactNormal
+    );
+
+    if (CurrentOutgoingNormalSpeed < MinimumOutgoingNormalSpeed)
+    {
+        OutgoingBallVelocity +=
+            BestImpactNormal *
+            (MinimumOutgoingNormalSpeed - CurrentOutgoingNormalSpeed);
+    }
+
+    OutgoingBallVelocity = OutgoingBallVelocity.GetClampedToMaxSize(
+        IncomingBallSpeed *
+            FMath::Max(
+                1.0f,
+                PassiveCharacterBodyMaximumOutgoingSpeedMultiplier
+            )
+    );
+
+    FVector ContactBallLocation = BestContactBallLocation;
+
+    ContactBallLocation +=
+        BestImpactNormal *
+        FMath::Max(0.0f, PassiveCharacterBodyContactSkin);
+
+    ClearAccumulatedPhysicsForcesUE427(BallMesh);
+    SetActorLocation(
+        ContactBallLocation,
+        false,
+        nullptr,
+        ETeleportType::TeleportPhysics
+    );
+    BallMesh->SetPhysicsLinearVelocity(OutgoingBallVelocity, false);
+    BallMesh->SetPhysicsAngularVelocityInDegrees(
+        BallMesh->GetPhysicsAngularVelocityInDegrees() *
+            FMath::Clamp(
+                PassiveCharacterBodyAngularVelocityRetention,
+                0.0f,
+                1.0f
+            ),
+        false
+    );
+    BallMesh->WakeAllRigidBodies();
+
+    LastPassiveCharacterBodyContact = BestCharacter;
+    LastPassiveCharacterBodyContactWorldTime = CurrentWorldTime;
+    PreviousPassiveCharacterBodyBallLocation = ContactBallLocation;
+    bHasPreviousPassiveCharacterBodyBallLocation = true;
+
+    MarkTrajectoryChanged();
+    MatchManager->RegisterPassiveBallDeflection(
+        BestCharacter,
+        ContactBallLocation
+    );
+
+    if (bDebugPassiveCharacterBodyContact)
+    {
+        DrawDebugSphere(
+            World,
+            ContactBallLocation,
+            SweepRadius,
+            12,
+            FColor::Orange,
+            false,
+            0.45f,
+            0,
+            1.5f
+        );
+        DrawDebugDirectionalArrow(
+            World,
+            ContactBallLocation,
+            ContactBallLocation +
+                OutgoingBallVelocity.GetSafeNormal() * 180.0f,
+            28.0f,
+            FColor::Orange,
+            false,
+            0.45f,
+            0,
+            2.0f
+        );
+
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT(
+                "Passive body deflection: %s | in=%.1f cm/s | out=%.1f cm/s"
+            ),
+            *GetNameSafe(BestCharacter),
+            IncomingBallSpeed,
+            OutgoingBallVelocity.Size()
+        );
+    }
 }
 
 float ASoccerBall::GetBallRadiusCm() const
@@ -750,11 +1405,15 @@ void ASoccerBall::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    if (
-        BallMesh == nullptr ||
-        !BallMesh->IsSimulatingPhysics()
-        )
+    if (BallMesh == nullptr)
     {
+        ResetPassiveCharacterBodyContactTracking(false);
+        return;
+    }
+
+    if (!BallMesh->IsSimulatingPhysics())
+    {
+        ResetPassiveCharacterBodyContactTracking(false);
         return;
     }
 
@@ -765,6 +1424,8 @@ void ASoccerBall::Tick(float DeltaTime)
     {
         return;
     }
+
+    UpdatePassiveCharacterBodyContact(DeltaTime);
 
     const FVector BallLocation =
         GetActorLocation();
@@ -1331,6 +1992,7 @@ void ASoccerBall::Kick(
     Impulse.Y *=
         SafeHorizontalScale;
 
+    ResetPassiveCharacterBodyContactTracking(true);
     BallMesh->AddImpulse(
         Impulse,
         NAME_None,
@@ -1403,6 +2065,19 @@ void ASoccerBall::OnBallHit(
     if (IsGoalNetComponent(OtherComp))
     {
         ApplyGoalNetSoftCollision(Hit);
+    }
+
+    /*
+     * A post/wall collision bends the travelled path inside the physics step.
+     * Seed from that resolved location so the next sweep does not draw a false
+     * chord through a nearby player. Ground contacts are deliberately excluded:
+     * a rolling ball can report them continuously and must retain its horizontal
+     * frame-to-frame segment for character detection.
+     */
+    if (SafeImpactNormal.Z < 0.55f)
+    {
+        PreviousPassiveCharacterBodyBallLocation = GetActorLocation();
+        bHasPreviousPassiveCharacterBodyBallLocation = true;
     }
 }
 
@@ -1551,6 +2226,7 @@ void ASoccerBall::ApplyAerialContactVelocity(
         false
     );
 
+    ResetPassiveCharacterBodyContactTracking(true);
     MarkTrajectoryChanged();
 }
 
@@ -1601,6 +2277,7 @@ void ASoccerBall::ApplyAerialContactAtLocation(
     );
 
     BallMesh->WakeAllRigidBodies();
+    ResetPassiveCharacterBodyContactTracking(true);
     MarkTrajectoryChanged();
 }
 
@@ -1673,6 +2350,7 @@ void ASoccerBall::ApplyTackleContactAtLocation(
     );
 
     BallMesh->WakeAllRigidBodies();
+    ResetPassiveCharacterBodyContactTracking(true);
     MarkTrajectoryChanged();
 }
 
@@ -1697,6 +2375,7 @@ void ASoccerBall::SetPossessed(bool bNewPossessed)
         BallMesh->WakeAllRigidBodies();
     }
 
+    ResetPassiveCharacterBodyContactTracking(!bNewPossessed);
     MarkTrajectoryChanged();
 }
 
@@ -2357,6 +3036,7 @@ void ASoccerBall::StopBallKeepingPhysics()
 
     BallMesh->SetPhysicsLinearVelocity(FVector::ZeroVector);
     BallMesh->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+    ResetPassiveCharacterBodyContactTracking(true);
     MarkTrajectoryChanged();
 }
 

@@ -2,292 +2,662 @@
 
 [English](README.md)
 
-**Futbol7** es un proyecto de jugabilidad de fútbol en desarrollo, creado con **Unreal Engine 4.27 y C++**.
+![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-4.27-313131)
+![C++](https://img.shields.io/badge/C%2B%2B-Gameplay%20%26%20AI-00599C)
+![Estado](https://img.shields.io/badge/estado-en%20desarrollo-orange)
 
-> **Nota técnica:** el proyecto de Unreal y el módulo C++ todavía se llaman `ThirdPersonCpp`, porque el desarrollo comenzó a partir del template Third Person de Unreal con su nombre por defecto. El nombre público y conceptual del proyecto es ahora **Futbol7**. Más adelante se podrá migrar también el nombre interno del proyecto y del módulo.
+**Futbol7** es un proyecto de jugabilidad y simulación de fútbol 7 desarrollado principalmente en **C++ con Unreal Engine 4.27**.
 
-El objetivo principal es construir un juego de fútbol en el que el jugador controlado por una persona y los compañeros/rivales controlados por IA compartan el mismo entorno de partido, reglas, interacciones con la pelota, comportamiento táctico, animaciones y sistemas de reanudación.
+El foco del proyecto está puesto en los sistemas: inteligencia artificial táctica, reglas de partido, interacción jugador/pelota, arqueros, formaciones, sustituciones, atributos, acciones sincronizadas con animaciones y repetición instantánea.
 
-El repositorio se encuentra en desarrollo activo. El foco actual no está puesto todavía en el pulido visual ni en ofrecer un juego terminado, sino en construir una base sólida de gameplay sobre la cual pueda desarrollarse un juego de fútbol completo.
+El objetivo es construir un partido en el que el jugador controlado por una persona y los compañeros/rivales controlados por IA funcionen bajo las mismas reglas e interactúen mediante sistemas tácticos, físicos y de estado de partido compartidos.
 
----
+> **Nota técnica:** el nombre público del proyecto es **Futbol7**, pero el proyecto de Unreal y el módulo C++ todavía se llaman `ThirdPersonCpp`, porque el desarrollo comenzó originalmente desde el template Third Person de Unreal.
 
-<img src="docs/images/futbol7_1.jpg" alt="Captura del gameplay" width="800">
-
----
-
-<img src="docs/images/futbol7_2.jpg" alt="Captura del gameplay" width="800">
+> Este repositorio representa una versión de desarrollo; no es todavía un juego comercial terminado ni un release empaquetado.
 
 ---
 
-<img src="docs/images/futbol7_3.jpg" alt="Captura del gameplay" width="800">
+## Capturas del gameplay
+
+<p align="center">
+  <img src="docs/images/futbol7_1.jpg" alt="Captura de Futbol7 1" width="820">
+</p>
+
+<p align="center">
+  <img src="docs/images/futbol7_2.jpg" alt="Captura de Futbol7 2" width="820">
+</p>
+
+<p align="center">
+  <img src="docs/images/futbol7_3.jpg" alt="Captura de Futbol7 3" width="820">
+</p>
 
 ---
 
-## En qué se está trabajando actualmente
+## Puntos destacados de ingeniería
 
-El desarrollo está centrado principalmente en:
+Futbol7 es principalmente un proyecto de programación de gameplay e inteligencia artificial. El código actualmente incluye sistemas para:
 
-- Toma de decisiones y posicionamiento táctico de la IA
-- Interacción del humano y los bots con la pelota
-- Reglas de partido y estados de reanudación
-- Comportamiento del arquero
-- Pases, remates, dribble e intercepción
-- Interacciones con pelotas aéreas
-- Tackles, faltas y penales
-- Sincronización entre animaciones y gameplay
-- Refactorización de situaciones de partido en sistemas más claros
-- Uso de las dimensiones reales de la cancha en lugar de posiciones hardcodeadas
-
-Una parte importante del desarrollo consiste en probar repetidamente situaciones de partido, encontrar casos límite y mejorar la interacción entre reglas, navegación, animaciones, física e inteligencia artificial.
-
----
-
-## Sistemas de gameplay implementados
-
-### Flujo del partido y reglas
-
-El proyecto ya contiene sistemas funcionales o parcialmente desarrollados para:
-
-- Saque del centro
-- Saques laterales
-- Saques de arco
-- Córners
-- Tiros libres
-- Reanudaciones por offside
-- Penales
-- Detección de goles y pelota fuera de juego
-- Seguimiento de posesión
-- Registro del último jugador que tocó la pelota
-- Restricción de doble toque en reanudaciones
-- Fases de preparación y ejecución de pelota parada
-
-Los sistemas de reanudación se están organizando progresivamente en fases más claras:
-
-1. Configuración
-2. Preparación
-3. Ejecución
-
-Esto permite controlar mejor el posicionamiento de los jugadores, la interacción con la pelota y el comportamiento de la IA antes de volver al juego normal.
+- IA contextual con fases ofensiva, defensiva y neutral
+- intercepción predictiva de la pelota
+- pases, remates, dribble y autopases
+- apoyo, presión, cobertura, marcaje y desmarques tácticos
+- posicionamiento, atajadas, capturas y distribución de arqueros
+- manejo de estados para reglas y reanudaciones
+- saque del centro, lateral, tiro libre, córner, saque de arco, offside y penal
+- clases separadas de configuración / preparación / ejecución
+- tackles, faltas y reacciones de caída
+- acciones aéreas y planificación de intercepción
+- nueve formaciones de fútbol 7
+- perfiles de DT y planificación del Coach AI
+- planteles, banco, fatiga y sustituciones
+- presets tácticos persistentes y tácticas rápidas
+- atributos físicos, técnicos, tácticos y de arquero
+- personalización de apariencia y variantes corporales
+- primer tiempo, entretiempo y segundo tiempo
+- geometría de cancha derivada de dimensiones centralizadas
+- instant replay mediante ring buffer y múltiples cámaras
+- herramientas específicas de debug de gameplay
 
 ---
 
-## Jugador controlado por el humano
+## Arquitectura general
 
-El jugador humano actualmente cuenta con sistemas como:
+```text
+                    ┌─────────────────────────────┐
+                    │      SoccerMatchManager     │
+                    │                             │
+                    │ Flujo / reglas / equipos    │
+                    │ posesión / períodos         │
+                    │ cambios / Coach AI          │
+                    └──────────────┬──────────────┘
+                                   │
+          ┌────────────────────────┼────────────────────────┐
+          │                        │                        │
+          ▼                        ▼                        ▼
+┌──────────────────┐    ┌────────────────────┐    ┌────────────────────┐
+│ Estados partido  │    │ IA jugador/equipo  │    │ Perfiles jugador   │
+│                  │    │                    │    │ Perfiles DT        │
+│ Saque centro     │    │ Posicionamiento    │    │ Formaciones        │
+│ Lateral          │    │ Pases              │    │ Presets tácticos   │
+│ Tiro libre       │    │ Intercepción       │    │ Plantel / once     │
+│ Córner           │    │ Marcaje / apoyo    │    │ Atributos          │
+│ Saque arco       │    │ Arqueros           │    │ Apariencia         │
+│ Offside          │    │ Juego aéreo        │    └────────────────────┘
+│ Penal            │    │ Tackles            │
+└──────────────────┘    └──────────┬─────────┘
+                                   │
+                                   ▼
+                         ┌────────────────────┐
+                         │ Pelota / animación │
+                         │ física / NavMesh   │
+                         └────────────────────┘
 
-- Movimiento manual
-- Persecución de la pelota
-- Pases
-- Remates
-- Dribble / autopase
-- Tackle
-- Acciones aéreas
-- Pedido de pases a compañeros controlados por IA
-- Recepción de pases de bots
-- Ejecución de distintas reanudaciones
+          ┌────────────────────────┴────────────────────────┐
+          ▼                                                 ▼
+┌────────────────────┐                            ┌────────────────────┐
+│ Geometría cancha   │                            │ Instant replay     │
+│ dimensiones únicas │                            │ snapshots muestreados│
+└────────────────────┘                            └────────────────────┘
+```
 
-El humano puede convertirse dinámicamente en el ejecutante de determinadas reanudaciones si se encuentra cerca de la pelota. Si se aleja antes de comprometerse con la ejecución, un compañero controlado por IA puede hacerse cargo automáticamente.
-
-Actualmente el humano puede ejecutar:
-
-- Tiros libres
-- Saques del centro
-- Saques de arco
-- Córners
-- Saques laterales
-
-Los laterales utilizan una secuencia específica con las manos en lugar del sistema normal de patadas.
+La arquitectura continúa evolucionando a medida que los sistemas se prueban y refactorizan.
 
 ---
 
-## Inteligencia artificial de fútbol
+## Sistema de estados del partido
 
-Los jugadores controlados por IA están siendo desarrollados alrededor de roles tácticos y comportamiento contextual, en lugar de limitarse a perseguir la pelota.
+Las reanudaciones se modelan mediante estados explícitos de gameplay en lugar de resolverse como eventos aislados.
 
-Entre los sistemas actuales de IA se incluyen:
+Existen clases específicas para situaciones como:
 
-- Fases ofensivas y defensivas por equipo
-- Responsabilidades de presión, apoyo y cobertura
-- Mantenimiento de la forma táctica del equipo
-- Desmarques
-- Marcaje defensivo
-- Posicionamiento de rest-defense
-- Marcaje de receptores peligrosos
-- Intercepción predictiva de la pelota
-- Decisiones de pase
-- Autopases
-- Respuesta a pedidos de pase del humano
-- Selección de ejecutantes y receptores en reanudaciones
-- Recuperación de navegación cuando un jugador termina fuera de la cancha
+```text
+Juego normal
+Saque del centro
+Lateral
+Córner
+Saque de arco
+Tiro libre / falta
+Offside
+Penal
+Delay de pelota afuera
+```
 
-Los bots también pueden elegir al jugador humano como receptor durante distintas reanudaciones cuando el pase resulta conveniente.
+Varias reanudaciones están separadas en tres etapas:
+
+```text
+Configuración
+    ↓
+Preparación
+    ↓
+Ejecución
+```
+
+Esto permite coordinar:
+
+- ubicación de la pelota
+- selección del ejecutante
+- posicionamiento de compañeros
+- restricciones del rival
+- bloqueo/desbloqueo de input humano
+- timing de animaciones
+- regreso al juego abierto
+
+Este diseño también permite ir sacando comportamiento específico del `SoccerMatchManager`.
+
+---
+
+## Inteligencia artificial táctica
+
+Los bots no están diseñados solamente para perseguir la pelota.
+
+Cada equipo trabaja con fases generales:
+
+```text
+Neutral
+Atacando
+Defendiendo
+```
+
+Según el contexto, la IA puede recibir órdenes como:
+
+### En ataque
+
+- recuperar una pelota libre
+- ofrecer apoyo corto
+- ofrecer apoyo hacia adelante
+- desmarcarse
+- dar amplitud
+- mantener rest-defense
+- compensar la posición de un compañero
+
+### En defensa
+
+- presionar al poseedor
+- proteger la línea hacia el arco
+- cubrir el centro
+- mantener un bloque compacto
+- marcar receptores peligrosos
+
+La intención es que las decisiones individuales estén subordinadas a la situación táctica colectiva.
+
+---
+
+## Intercepción predictiva
+
+La persecución puede utilizar **puntos futuros de intercepción** en lugar de limitarse a seguir la posición actual de la pelota.
+
+El sistema maneja información como:
+
+- posición predicha
+- muestras de trayectoria
+- tiempos de llegada
+- tiempo necesario para girar
+- márgenes de seguridad
+- condiciones de intercepción terrestre o aérea
+
+La lógica se reutiliza en distintos sistemas y también puede intervenir en la persecución del jugador humano para los modos de input correspondientes.
+
+---
+
+## Pases y dribble
+
+El proyecto distingue distintas intenciones de progresión con pelota:
+
+- pase normal
+- pase solicitado por el humano
+- pase aéreo
+- pase al espacio
+- autopase / toque de conducción
+- pase durante una reanudación
+
+La IA también tiene en cuenta la intención de un pase para evitar que un compañero trate inmediatamente una pelota enviada deliberadamente como si fuera una pelota libre sin destinatario.
+
+La conducción utiliza evaluación espacial y toques físicos controlados, en lugar de depender solamente de mantener la pelota permanentemente unida al personaje.
 
 ---
 
 ## Sistemas del arquero
 
-Los arqueros cuentan con lógica propia, incluyendo:
+Los arqueros utilizan lógica específica en lugar de comportarse como jugadores de campo.
 
-- Captura de la pelota con las manos
-- Posesión protegida mientras sostienen la pelota
-- Distribución con las manos
-- Posicionamiento respecto del arco
-- Respuesta a remates
-- Posicionamiento en penales
-- Retorno hacia el arco
-- Movimiento y animaciones específicas
+Entre los sistemas implementados y en evolución se encuentran:
 
-El comportamiento del arquero continúa siendo refinado, especialmente en posicionamiento, recuperación y toma de decisiones luego de atajadas o salidas agresivas.
+- posicionamiento dinámico respecto de pelota y arco
+- planificación de respuesta ante remates
+- múltiples acciones de atajada/captura
+- posesión con las manos
+- posesión protegida mientras sostiene la pelota
+- distribución con la mano
+- drop kick y colocación de pelota para sacar
+- posicionamiento en penales
+- regreso hacia el arco
+- ventanas de contacto ligadas a animaciones
 
----
-
-## Pases e intercepción
-
-La persecución de la pelota no se basa únicamente en seguir su posición actual.
-
-El proyecto incluye lógica de intercepción predictiva utilizada tanto por los bots como por el sistema de persecución del jugador humano. Los jugadores pueden estimar hacia dónde se dirige la pelota e intentar interceptar su trayectoria futura.
-
-El sistema de pases también distingue distintas intenciones:
-
-- Pase a un compañero
-- Pase pedido por el humano
-- Pase aéreo
-- Autopase
-- Pase durante una reanudación
-
-Los compañeros controlados por IA intentan respetar la intención de un pase y evitar tratar inmediatamente la pelota como si estuviera libre.
+Las acciones incluyen diferentes tipos de captura, bloqueo, desvío y volada.
 
 ---
 
-## Tackles, faltas y caídas
+## Formaciones y táctica colectiva
 
-El proyecto incluye tackles deslizantes con detección de faltas relacionada con la animación.
+Futbol7 define actualmente **nueve formaciones de fútbol 7**:
 
-Actualmente se trabaja con:
+```text
+1-3-2-1
+1-2-3-1
+1-3-3
+1-2-2-2
+1-3-1-2
+1-2-1-2-1
+1-2-1-3
+1-4-1-1
+1-5-1
+```
 
-- Tackles con pierna izquierda y derecha
-- Detección de contactos
-- Reconocimiento de faltas
-- Detección de penal dentro del área
-- Reacciones de caída para bots y humano
-- Recuperación luego de la caída
-- Recuperación de jugadores que terminan una animación fuera del volumen de navegación
+Cada formación contiene exactamente siete posiciones estructurales:
 
-La intención es que el timing de la animación tenga consecuencias reales sobre el gameplay, en lugar de ser puramente visual.
+```text
+1 arquero + 6 jugadores de campo
+```
+
+Los slots de formación se describen independientemente de los roles generales de gameplay, permitiendo que un mismo rol pueda ocupar distintas líneas o carriles tácticos.
+
+También existen:
+
+- planes tácticos colectivos
+- instrucciones individuales
+- presets tácticos persistentes
+- accesos de táctica rápida
+- interfaz de formación / DT durante el juego
 
 ---
 
-## Interacciones aéreas
+## Coach AI
 
-Se están desarrollando distintas situaciones de pelota aérea, entre ellas:
+Los directores técnicos se representan mediante perfiles independientes y data-driven.
 
-- Cabezazos con los pies en el piso
-- Control con el pecho
-- Cabezazos con salto
-- Disputas aéreas
-- Rebotes dirigidos
+Un perfil de DT contiene conceptos como:
 
-También se utilizan datos de animaciones exportados desde Blender para ayudar a sincronizar el momento de contacto entre jugador y pelota.
+### Filosofía
+
+- intención ofensiva
+- preferencia por posesión
+- juego directo
+- intensidad de presión
+- altura de línea defensiva
+- ancho del equipo
+- compactación
+- tempo
+- preferencia de contraataque
+- tolerancia al riesgo
+
+### Selección de jugadores
+
+- prioridad de posición natural
+- encaje táctico
+- nivel actual
+- condición física
+- rotación
+- preferencia por juventud
+- versatilidad del banco
+
+### Capacidades del DT
+
+- evaluación de jugadores
+- lectura de partido
+- flexibilidad táctica
+- coaching ofensivo/defensivo
+- manejo de fatiga
+- timing de sustituciones
+- compostura
+
+La lógica puede construir planes previos al partido y también tomar decisiones durante el encuentro.
 
 ---
 
-## Sistema de animaciones
+## Planteles, fatiga y sustituciones
 
-El proyecto utiliza assets de animación importados en Unreal Engine y sincronizados con la lógica de gameplay escrita en C++.
+El estado del plantel durante el partido está separado del perfil permanente de cada jugador.
 
-Algunos ejemplos:
+El sistema de cambios contempla:
 
-- Pases parado
-- Pases corriendo
-- Pases laterales
-- Remates largos
-- Tackles
-- Caídas
-- Saques laterales
-- Acciones del arquero
-- Cabezazos y controles con el pecho
+- once inicial y banco
+- historial de sustituciones
+- límite máximo de cambios
+- solicitud de un cambio
+- ejecución durante una pausa apropiada
+- selección de cambios por parte del humano
+- decisiones automáticas del Coach AI rival
+- consideración de fatiga
 
-Cuando resulta conveniente, el humano y los bots mantienen lógicas separadas aunque utilicen assets de animación similares.
+Esto permite mantener separada la identidad/atributos permanentes del estado temporal del partido.
 
-En el sistema de patadas de la IA, la pelota puede permanecer quieta hasta el instante real de impacto del montage, en lugar de salir inmediatamente cuando el bot toma la decisión de patear.
+---
+
+## Perfiles y atributos de jugador
+
+Los futbolistas se representan mediante perfiles con identificadores estables.
+
+Los atributos se dividen en distintos grupos.
+
+### Físicos
+
+```text
+Velocidad
+Aceleración
+Resistencia
+Recuperación de energía
+Fuerza
+Agilidad
+Balance
+```
+
+### Técnicos
+
+```text
+Control de pelota
+Dribbling
+Precisión de pase
+Precisión de remate
+Potencia de remate
+Tackle
+Juego aéreo
+```
+
+### Tácticos
+
+```text
+Reacción defensiva
+Anticipación
+Posicionamiento sin pelota
+Posicionamiento defensivo
+Marcaje
+Toma de decisiones
+Compostura
+```
+
+### Arquero
+
+```text
+Reflejos
+Posicionamiento
+Manejo
+Volada
+Distribución
+```
+
+Los atributos buscan modificar consecuencias reales del gameplay y no funcionar únicamente como estadísticas de presentación.
+
+Por ejemplo, fuerza y juego aéreo participan en disputas físicas/aéreas, mientras que la evaluación de una alineación pondera atributos relevantes para cada slot táctico.
+
+---
+
+## Apariencia de jugadores
+
+La identidad del jugador está separada de la identidad del club.
+
+Existe un catálogo central de apariencia que utiliza identificadores estables `BodyVariantId` para resolver distintas variantes corporales hacia diferentes Skeletal Meshes.
+
+Los perfiles pueden almacenar características individuales, mientras que los elementos visuales propios del club pueden manejarse por separado.
 
 ---
 
 ## Geometría de la cancha
 
-Uno de los objetivos importantes del proyecto es evitar posiciones de cancha hardcodeadas.
+Una regla arquitectónica importante del proyecto es evitar distribuir coordenadas hardcodeadas por las distintas clases.
 
-Los cálculos relacionados con el campo intentan depender del sistema de dimensiones de la cancha, de modo que la lógica pueda adaptarse si en el futuro cambian las medidas del campo o se crean estadios diferentes.
+`SoccerFieldDimensions.h` centraliza elementos como:
 
-Esto afecta sistemas como:
+- largo y ancho
+- laterales y líneas de fondo
+- áreas
+- área de meta
+- punto penal
+- círculo central / distancia de reanudación
+- arcos
+- geometría de córners
 
-- Ubicación de reanudaciones
-- Posicionamiento en penales
-- Posiciones ofensivas y defensivas
-- Recuperación de jugadores fuera del campo
-- Referencias de los arcos
-- Espaciado táctico
+La cancha de referencia actual mide:
 
----
+```text
+60 m × 40 m
+```
 
-## Debug y pruebas
+Distintas distancias tácticas originalmente calibradas para esa cancha se escalan respecto de las dimensiones configuradas.
 
-El proyecto contiene herramientas específicas de debugging para visualizar y probar distintos sistemas de gameplay.
-
-Entre ellas:
-
-- Trayectorias predichas
-- Puntos de intercepción
-- Objetivos de movimiento
-- Posiciones tácticas
-- Comportamiento del arquero
-- Puntos de contacto aéreo
-- Información de estado del partido
-
-El debug se está centralizando progresivamente para evitar que cada clase mantenga sistemas visuales independientes.
+La geometría se define en el espacio local del actor de cancha y luego se transforma al espacio del mundo, evitando que las reglas dependan de una posición/rotación fija del estadio.
 
 ---
 
-## Tecnologías utilizadas
+## Tiempo de partido y cambio de campo
 
-- **Unreal Engine 4.27**
-- **C++**
-- **Visual Studio 2022**
-- **Blender**
-- **Assets y animaciones basados en Mixamo**
-- Animation Blueprints y Animation Montages de Unreal
-- Sistema de navegación / NavMesh de Unreal
+El sistema contempla períodos explícitos y HUD para:
+
+```text
+Primer tiempo
+Entretiempo
+Segundo tiempo
+Finalizado
+```
+
+También maneja el cambio de lado entre tiempos para que los cálculos relativos a ataque, táctica y arqueros sigan funcionando luego de invertir los campos.
+
+---
+
+## Instant replay
+
+Futbol7 posee un sistema de repetición instantánea implementado en C++.
+
+En lugar de volver a ejecutar decisiones de IA para reconstruir el pasado, el recorder almacena **estado visual y físico muestreado**.
+
+Se registran datos como:
+
+- transforms y velocidades de jugadores
+- estado de movimiento
+- flags relevantes de gameplay
+- estado del montage activo
+- transform de la pelota
+- velocidad lineal y angular
+- estado físico de la pelota
+- attachments de la pelota
+
+La configuración por defecto mantiene aproximadamente:
+
+```text
+10 segundos de historial
+30 muestras por segundo
+```
+
+mediante un ring buffer.
+
+El replay manual puede reproducir los últimos cinco segundos y el replay de gol utiliza varias cámaras alrededor del arco.
+
+Al terminar la repetición se restaura el estado vivo del partido.
+
+---
+
+## Sincronización animación/gameplay
+
+Las animaciones forman parte de la lógica y no se utilizan solamente como presentación visual.
+
+El proyecto utiliza:
+
+- Animation Blueprints
+- Animation Montages
+- Anim Notify States
+- ventanas de contacto para el arquero
+- timing de contacto en patadas
+- tackles y caídas
+- animaciones de lateral
+- acciones aéreas
+
+Para distintas acciones, el evento físico sobre la pelota ocurre en el momento de contacto definido por la animación y no inmediatamente cuando la IA toma la decisión.
+
+---
+
+## Tackles, faltas y juego aéreo
+
+El gameplay contempla:
+
+- tackles deslizantes
+- contacto pelota/jugador
+- detección de faltas
+- penales por falta dentro del área
+- reacciones de caída
+- recuperación posterior
+- planes de intercepción aérea
+- cabezazos parado
+- cabezazos con salto
+- control con el pecho
+- disputas aéreas
+
+El timing de la animación, los atributos y la trayectoria de la pelota pueden participar en el resultado.
+
+---
+
+## Herramientas de debug
+
+Existe una capa de debug específica para inspeccionar:
+
+- decisiones de IA
+- formaciones / shape del equipo
+- intercepción predictiva
+- juego aéreo
+- tackles
+- pelota
+- decisiones del arquero
+- objetivos de movimiento
+- transiciones del estado del partido
+
+También existen actores de prueba específicos para remates al arquero y acciones aéreas.
+
+Estas herramientas son importantes porque muchos errores de un juego de fútbol aparecen por la interacción entre navegación, reglas, física, animación e IA.
+
+---
+
+## Tecnologías
+
+- Unreal Engine 4.27
+- C++
+- Visual Studio 2022 como entorno de desarrollo
+- Unreal Navigation / NavMesh
+- Animation Blueprints y Montages
+- Unreal Data Assets
+- Unreal SaveGame
+- Blender
+- flujo de personajes/animaciones basado en Mixamo
+- Git LFS para archivos `.uasset` y `.umap`
+
+---
+
+## Estructura del repositorio
+
+La mayor parte del código se encuentra en:
+
+```text
+Source/ThirdPersonCpp/
+```
+
+Algunos componentes:
+
+```text
+SoccerMatchManager.*              coordinación del partido
+SoccerAIController.*              decisiones de IA
+SoccerCharacterBase.*             sistemas compartidos de jugadores
+SoccerBall.*                      comportamiento de pelota
+SoccerField.*                     geometría/world transform
+SoccerFieldDimensions.h           dimensiones centralizadas
+
+Soccer*ConfigurationState.*       configuración de reanudaciones
+Soccer*PreparationState.*         preparación
+Soccer*ExecutionState.*           ejecución
+
+SoccerFormation*.*                formaciones / UI
+SoccerCoach*.*                    perfiles y planificación del DT
+SoccerTacticalPreset*.*           presets tácticos persistentes
+SoccerPlayerProfile*.*            identidad y atributos
+SoccerInstantReplayManager.*      grabación/reproducción del replay
+
+SoccerDebugManager.*              controles centralizados de debug
+```
+
+---
+
+## Ejecutar el proyecto
+
+### Requisitos
+
+- Unreal Engine **4.27**
+- herramientas de compilación C++ / Visual Studio
+- Git LFS
+
+Clonar:
+
+```bash
+git lfs install
+git clone https://github.com/SurvilaDeveloper/futbol7.git
+cd futbol7
+git lfs pull
+```
+
+Abrir:
+
+```text
+ThirdPersonCpp.uproject
+```
+
+Si Unreal solicita recompilar el módulo C++, permitir la compilación.
+
+Para trabajar desde Visual Studio se pueden generar los project files desde el `.uproject` y compilar el target del Editor antes de abrir el proyecto.
+
+> El módulo interno de Unreal todavía se llama `ThirdPersonCpp`.
 
 ---
 
 ## Estado del proyecto
 
-Este es un proyecto **experimental y en evolución activa**.
+Futbol7 se encuentra en desarrollo activo.
 
-Muchos sistemas ya funcionan durante el gameplay, pero se siguen probando y ajustando a medida que nuevas interacciones revelan casos límite. La refactorización forma una parte importante del desarrollo porque una misma situación de fútbol puede involucrar al mismo tiempo IA, navegación, física, reglas, animaciones e input del jugador.
+Muchos sistemas ya funcionan, pero continúan siendo probados y refactorizados a medida que nuevas interacciones exponen casos límite.
 
-Por eso el repositorio debe considerarse una captura del desarrollo actual y no un producto terminado.
+El fútbol es especialmente exigente porque una misma situación puede involucrar simultáneamente:
+
+```text
+reglas
+IA
+navegación
+física
+animaciones
+input
+táctica colectiva
+estado del partido
+```
+
+Por eso el repositorio debe evaluarse principalmente como un **proyecto de ingeniería de gameplay e IA**, no como un producto visual terminado.
+
+Actualmente no existe un release público empaquetado del juego en este repositorio.
 
 ---
 
-## Dirección del desarrollo
+## Dirección de desarrollo
 
-El trabajo futuro continuará enfocado en:
+Trabajo actual y futuro:
 
-- Mejorar la IA táctica
-- Refinar las decisiones del arquero
-- Ampliar las interacciones aéreas y defensivas
-- Mejorar las reanudaciones
-- Refinar la sincronización entre animación y gameplay
-- Reducir casos límite relacionados con navegación e interacciones físicas
-- Continuar la refactorización de los estados del partido
-- Avanzar hacia un partido de fútbol cada vez más completo y jugable
+- seguir separando sistemas grandes en módulos más claros
+- mejorar decisiones tácticas
+- refinar el comportamiento de arqueros
+- mejorar interacción física jugador/pelota
+- ampliar pruebas reproducibles de gameplay
+- mejorar juego aéreo
+- continuar sincronización animación/gameplay
+- profundizar sistemas de gestión de equipo
+- continuar pulido visual y variantes de personajes
+- preparar la arquitectura para trabajo futuro de multijugador
 
 ---
 
-## Notas
+## Autor
 
-Futbol7 se desarrolla principalmente como un entorno de aprendizaje y experimentación sobre **programación de gameplay, inteligencia artificial, integración de animaciones y simulación de sistemas de fútbol**.
+**Gabriel Survila**
 
-El código cambia con frecuencia a medida que los sistemas son probados, corregidos y rediseñados.
+GitHub: [SurvilaDeveloper](https://github.com/SurvilaDeveloper)

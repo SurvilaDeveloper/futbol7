@@ -8,6 +8,8 @@
 #include "SoccerBall.generated.h"
 
 class UStaticMeshComponent;
+class ASoccerCharacterBase;
+class ASoccerMatchManager;
 
 UCLASS()
 class THIRDPERSONCPP_API ASoccerBall : public AActor
@@ -162,6 +164,82 @@ private:
             FVector NormalImpulse,
             const FHitResult& Hit
         );
+
+    // ============================================================
+    // CONTINUOUS PASSIVE CHARACTER BODY CONTACT
+    // ============================================================
+
+    /*
+     * The ball intentionally ignores Pawn/PhysicsBody collision so authored
+     * kicks, controls, tackles and saves remain gameplay-owned. This sweep is
+     * the passive-body fallback for a genuinely free ball: it checks the whole
+     * travelled segment, so a powerful shot cannot skip a wall player between
+     * two frames.
+     */
+    void UpdatePassiveCharacterBodyContact(float DeltaTime);
+
+    void ResetPassiveCharacterBodyContactTracking(
+        bool bSeedFromCurrentLocation
+    );
+
+    ASoccerMatchManager* ResolveMatchManager();
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact")
+        bool bEnablePassiveCharacterBodyContact = true;
+
+    /* Low-speed dribbling/control stays under the existing authored systems. */
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0"))
+        float PassiveCharacterBodyMinimumBallSpeed = 900.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0"))
+        float PassiveCharacterBodyMinimumApproachSpeed = 80.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.50", ClampMax = "1.25"))
+        float PassiveCharacterBodyBallRadiusScale = 0.92f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+        float PassiveCharacterBodyNormalVelocityRetention = 0.28f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+        float PassiveCharacterBodyTangentialVelocityRetention = 0.78f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+        float PassiveCharacterBodyPlayerVelocityTransfer = 0.30f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+        float PassiveCharacterBodyAngularVelocityRetention = 0.60f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0"))
+        float PassiveCharacterBodyMinimumOutgoingNormalSpeed = 80.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "1.0"))
+        float PassiveCharacterBodyMaximumOutgoingSpeedMultiplier = 1.05f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+        float PassiveCharacterBodyContactSkin = 1.5f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+        float PassiveCharacterBodySamePlayerCooldown = 0.10f;
+
+    /* Rejects discontinuous placement/reset movement without limiting shots. */
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "1.0"))
+        float PassiveCharacterBodySweepTravelMultiplier = 2.75f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact", meta = (ClampMin = "0.0"))
+        float PassiveCharacterBodyTeleportSlack = 75.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Character Body Contact|Debug")
+        bool bDebugPassiveCharacterBodyContact = false;
+
+    UPROPERTY(Transient)
+        ASoccerMatchManager* CachedMatchManager = nullptr;
+
+    UPROPERTY(Transient)
+        ASoccerCharacterBase* LastPassiveCharacterBodyContact = nullptr;
+
+    FVector PreviousPassiveCharacterBodyBallLocation = FVector::ZeroVector;
+    bool bHasPreviousPassiveCharacterBodyBallLocation = false;
+    float LastPassiveCharacterBodyContactWorldTime = -1000.0f;
 
     // ============================================================
 // GLOBAL BALL LAUNCH TUNING

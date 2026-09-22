@@ -14779,6 +14779,7 @@ void ASoccerMatchManager::ClearAttackState()
 	bHasLastTouchTeam = false;
 	LastTouchCharacter = nullptr;
 	LastTouchLocation = FVector::ZeroVector;
+	bHasPassiveDeflectionTacticalAttackTeam = false;
 	ClearAttackRunRelease();
 	ClearPendingOffsideSnapshot();
 
@@ -21701,8 +21702,13 @@ bool ASoccerMatchManager::HasActiveAttack() const
 
 ESoccerTeam ASoccerMatchManager::GetCurrentAttackingTeam() const
 {
-	return IsRestartContextActive()
-		? ActiveRestartTeam
+	if (IsRestartContextActive())
+	{
+		return ActiveRestartTeam;
+	}
+
+	return bHasPassiveDeflectionTacticalAttackTeam
+		? PassiveDeflectionTacticalAttackTeam
 		: LastTouchTeam;
 }
 
@@ -21714,6 +21720,109 @@ ESoccerTeam ASoccerMatchManager::GetCurrentDefendingTeam() const
 ASoccerCharacterBase* ASoccerMatchManager::GetLastTouchCharacter() const
 {
 	return LastTouchCharacter;
+}
+
+bool ASoccerMatchManager::RegisterPassiveBallDeflection(
+	ASoccerCharacterBase* DeflectingCharacter,
+	const FVector& ContactLocation
+)
+{
+	if (
+		!IsValid(DeflectingCharacter) ||
+		!IsValid(SoccerBall) ||
+		IsBallOutOfPlayDelayActive() ||
+		MatchPlayState != ESoccerMatchPlayState::Playing ||
+		IsRestartContextActive() ||
+		IsValid(PossessingCharacter) ||
+		!CanCharacterTouchBallNow(DeflectingCharacter)
+		)
+	{
+		return false;
+	}
+
+	const bool bHadTacticalAttackingTeam = HasActiveAttack();
+	const ESoccerTeam TacticalAttackingTeamBeforeDeflection =
+		bHadTacticalAttackingTeam
+		? GetCurrentAttackingTeam()
+		: DeflectingCharacter->GetTeam();
+
+	/*
+	 * A legal touch by anybody else releases the taker's no-retouch lock. A
+	 * same-player touch was rejected above by CanCharacterTouchBallNow().
+	 */
+	if (bNoRetouchRestrictionActive)
+	{
+		if (
+			!IsValid(NoRetouchRestrictedCharacter) ||
+			DeflectingCharacter != NoRetouchRestrictedCharacter
+			)
+		{
+			ClearNoRetouchRestriction();
+		}
+	}
+
+	if (
+		ActiveHumanPassRequestType != ESoccerHumanPassRequestType::None &&
+		DeflectingCharacter == ActiveHumanPassRequestingHuman
+		)
+	{
+		ClearActiveHumanPassRequest(
+			TEXT("Pedido de pase desactivado: el humano desvio la pelota"),
+			FLinearColor(0.55f, 0.85f, 1.0f, 1.0f),
+			true
+		);
+	}
+
+	ClearOpenPlayPassIntent();
+
+	/*
+	 * A rebound from an opponent (for example a defensive wall) does not reset
+	 * an already pending offside position. A passive contact by the attacking
+	 * side still counts as a new teammate touch and uses the normal evaluator.
+	 */
+	const bool bPreserveOpponentDeflectionOffsideSnapshot =
+		bHasPendingOffsideSnapshot &&
+		DeflectingCharacter->GetTeam() != PendingOffsideAttackingTeam;
+
+	if (
+		!bPreserveOpponentDeflectionOffsideSnapshot &&
+		TryHandlePendingOffsideTouch(DeflectingCharacter)
+		)
+	{
+		return true;
+	}
+
+	bHasLastTouchTeam = true;
+	LastTouchTeam = DeflectingCharacter->GetTeam();
+	LastTouchCharacter = DeflectingCharacter;
+	LastTouchLocation = ContactLocation.ContainsNaN()
+		? DeflectingCharacter->GetActorLocation()
+		: ContactLocation;
+
+	bHasPassiveDeflectionTacticalAttackTeam =
+		bHadTacticalAttackingTeam;
+	PassiveDeflectionTacticalAttackTeam =
+		TacticalAttackingTeamBeforeDeflection;
+
+	if (!bPreserveOpponentDeflectionOffsideSnapshot)
+	{
+		RefreshPendingOffsideSnapshotForTouch(DeflectingCharacter);
+	}
+
+	ClearFreeBallChaserMemory();
+	ClearAssignedAI();
+	MatchStateUpdateAccumulator = 0.0f;
+
+	if (HasActiveAttack())
+	{
+		AssignAttackDefenseRoles();
+	}
+	else
+	{
+		AssignFreeBallRoles();
+	}
+
+	return true;
 }
 
 bool ASoccerMatchManager::RegisterGoalkeeperReboundTouch(
@@ -21970,6 +22079,7 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 		return false;
 	}
 
+	bHasPassiveDeflectionTacticalAttackTeam = false;
 	bHasLastTouchTeam = true;
 	LastTouchTeam = TouchingCharacter->GetTeam();
 	LastTouchCharacter = TouchingCharacter;

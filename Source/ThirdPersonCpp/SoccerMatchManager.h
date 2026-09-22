@@ -246,6 +246,14 @@ public:
 		ASoccerCharacterBase* TouchingCharacter
 	);
 
+	// Records a physical body deflection without treating it as deliberate
+	// play. This updates restart ownership while preserving an opponent's
+	// pending offside snapshot, as required for rebounds from a defensive wall.
+	bool RegisterPassiveBallDeflection(
+		ASoccerCharacterBase* DeflectingCharacter,
+		const FVector& ContactLocation
+	);
+
 	// A goalkeeper deflection/body rebound is an intentional touch but the ball
 	// remains loose. Besides recording the rules touch, clear stale possession and
 	// refresh open-play roles immediately so defenders react in the same frame.
@@ -2982,6 +2990,13 @@ bool IsPenaltyMatchStateActive() const;
 		bool bHasLastTouchTeam = false;
 
 	ESoccerTeam LastTouchTeam = ESoccerTeam::PlayerTeam;
+
+	// A passive rebound changes restart ownership, but by itself it does not
+	// transfer tactical control. Keep the pre-impact attacking side until the
+	// next deliberate touch/controlled possession.
+	bool bHasPassiveDeflectionTacticalAttackTeam = false;
+	ESoccerTeam PassiveDeflectionTacticalAttackTeam =
+		ESoccerTeam::PlayerTeam;
 
 	// Intencion temporal del pase de juego abierto. No representa posesion:
 	// solo evita que la IA trate inmediatamente el pase como una pelota
