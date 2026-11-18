@@ -23,6 +23,11 @@
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Components/EditableTextBox.h"
+#include "Components/PanelWidget.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "GameFramework/PlayerController.h"
 #include "InputCoreTypes.h"
@@ -73,7 +78,9 @@ namespace SoccerSquadViewerUI
 void USoccerSquadViewerWidget::NativeOnInitialized()
 {
     Super::NativeOnInitialized();
+    LoadStyle();
     BuildWidgetTree();
+    ApplyViewerStyle();
 }
 
 void USoccerSquadViewerWidget::NativeDestruct()
@@ -142,6 +149,17 @@ FReply USoccerSquadViewerWidget::NativeOnPreviewKeyDown(
     const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
     const FKey Key = InKeyEvent.GetKey();
+	// En modo UIOnly el viewport no recibe F11. Atenderlo aqui permite
+	// alternar pantalla completa sin habilitar controles de gameplay.
+	if (Key == EKeys::F11)
+	{
+		if (APlayerController* PlayerController = GetOwningPlayer())
+		{
+			PlayerController->ConsoleCommand(TEXT("fullscreen"), true);
+		}
+		return FReply::Handled();
+	}
+
     if (Key == EKeys::Escape || Key == EKeys::Gamepad_FaceButton_Right)
     {
         HandleClose();
@@ -343,14 +361,15 @@ void USoccerSquadViewerWidget::RebuildPlayerButtons()
         Button->SetPlayerId(Profile->Identity.PlayerId);
         Button->OnPlayerIdClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandlePlayerClicked);
         UBorder* Card = WidgetTree->ConstructWidget<UBorder>();
-        Card->SetPadding(FMargin(8.0f, 7.0f));
-        Card->SetBrushColor(FLinearColor(0.09f, 0.13f, 0.17f, 1.0f));
+        Card->SetPadding(FMargin(LiveStyle.CardPadding, 7.0f));
+        Card->SetBrushColor(LiveStyle.PlayerCard);
         Card->AddChild(SoccerSquadViewerUI::MakeText(WidgetTree, FString::Printf(TEXT("%02d  %s"),
             Profile->Identity.ShirtNumber, *GetPlayerDisplayName(Profile)), 15));
         Button->AddChild(Card);
         SoccerSquadViewerUI::AddVertical(PlayerButtonColumn, Button, 5.0f);
         PlayerBorders.Add(Profile->Identity.PlayerId, Card);
     }
+    ApplyViewerStyle();
 }
 
 void USoccerSquadViewerWidget::SelectPlayerIndex(int32 Index)
@@ -366,8 +385,8 @@ void USoccerSquadViewerWidget::SelectPlayerIndex(int32 Index)
         {
             Pair.Value->SetBrushColor(
                 CurrentPlayers[Index]->Identity.PlayerId == Pair.Key
-                    ? FLinearColor(0.07f, 0.45f, 0.29f, 1.0f)
-                    : FLinearColor(0.09f, 0.13f, 0.17f, 1.0f));
+                    ? LiveStyle.SelectedCard
+                    : LiveStyle.PlayerCard);
         }
     }
     RefreshSelectedPlayer();
@@ -409,6 +428,10 @@ void USoccerSquadViewerWidget::RefreshSelectedPlayer()
         return;
     }
     AttributeColumn->ClearChildren();
+    StatLabelBoxes.Reset();
+    StatMeterBoxes.Reset();
+    AccentTextNodes.Reset();
+    SecondaryTextNodes.Reset();
     FString Foot = TEXT("Derecho");
     if (Profile->Identity.PreferredFoot == ESoccerPreferredFoot::Left) Foot = TEXT("Izquierdo");
     else if (Profile->Identity.PreferredFoot == ESoccerPreferredFoot::Both) Foot = TEXT("Ambos");
@@ -474,13 +497,15 @@ void USoccerSquadViewerWidget::RefreshSelectedPlayer()
         AddStat(TEXT("Estirada"), GK.Diving);
         AddStat(TEXT("Distribución"), GK.Distribution);
     }
+    ApplyViewerStyle();
 }
 
 void USoccerSquadViewerWidget::AddDetail(const FString& Text)
 {
     if (!AttributeColumn) return;
     UTextBlock* Line = SoccerSquadViewerUI::MakeText(WidgetTree, Text, 14);
-    Line->SetColorAndOpacity(FSlateColor(FLinearColor(0.73f, 0.82f, 0.85f)));
+    Line->SetColorAndOpacity(FSlateColor(LiveStyle.SecondaryText));
+    SecondaryTextNodes.Add(Line);
     SoccerSquadViewerUI::AddVertical(AttributeColumn, Line, 4.0f);
 }
 
@@ -488,7 +513,8 @@ void USoccerSquadViewerWidget::AddStatGroup(const FString& GroupName)
 {
     if (!AttributeColumn) return;
     UTextBlock* Heading = SoccerSquadViewerUI::MakeText(WidgetTree, GroupName, 18);
-    Heading->SetColorAndOpacity(FSlateColor(FLinearColor(0.44f, 0.88f, 0.67f)));
+    Heading->SetColorAndOpacity(FSlateColor(LiveStyle.Accent));
+    AccentTextNodes.Add(Heading);
     UVerticalBoxSlot* HeadingSlot = SoccerSquadViewerUI::AddVertical(AttributeColumn, Heading, 6.0f);
     HeadingSlot->SetPadding(FMargin(0, 14.0f, 0, 6.0f));
 }
@@ -498,15 +524,17 @@ void USoccerSquadViewerWidget::AddStat(const FString& Label, int32 Rating)
     if (!AttributeColumn) return;
     UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
     USizeBox* LabelSize = WidgetTree->ConstructWidget<USizeBox>();
-    LabelSize->SetWidthOverride(181.0f);
+    LabelSize->SetWidthOverride(LiveStyle.StatLabelWidth);
+    StatLabelBoxes.Add(LabelSize);
     LabelSize->AddChild(SoccerSquadViewerUI::MakeText(WidgetTree, Label, 14));
     Row->AddChildToHorizontalBox(LabelSize);
 
     USizeBox* MeterSize = WidgetTree->ConstructWidget<USizeBox>();
-    MeterSize->SetWidthOverride(105.0f);
+    MeterSize->SetWidthOverride(LiveStyle.StatMeterWidth);
+    StatMeterBoxes.Add(MeterSize);
     UProgressBar* Meter = WidgetTree->ConstructWidget<UProgressBar>();
     Meter->SetPercent(FMath::Clamp(Rating, 0, 100) / 100.0f);
-    Meter->SetFillColorAndOpacity(FLinearColor(0.20f, 0.70f, 0.43f));
+    Meter->SetFillColorAndOpacity(LiveStyle.Meter);
     MeterSize->AddChild(Meter);
     UHorizontalBoxSlot* MeterSlot = Row->AddChildToHorizontalBox(MeterSize);
     MeterSlot->SetPadding(FMargin(6.0f, 2.0f));
@@ -574,7 +602,8 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     UCanvasPanel* Root = WidgetTree->ConstructWidget<UCanvasPanel>();
     WidgetTree->RootWidget = Root;
     UBorder* Dim = WidgetTree->ConstructWidget<UBorder>();
-    Dim->SetBrushColor(FLinearColor(0.015f, 0.02f, 0.03f, 0.97f));
+    MainDim = Dim;
+    Dim->SetBrushColor(LiveStyle.Backdrop);
     UCanvasPanelSlot* DimSlot = Root->AddChildToCanvas(Dim);
     DimSlot->SetAnchors(FAnchors(0, 0, 1, 1));
     DimSlot->SetOffsets(FMargin(0));
@@ -586,12 +615,14 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     ScaleSlot->SetOffsets(FMargin(12.0f));
 
     USizeBox* PanelSize = WidgetTree->ConstructWidget<USizeBox>();
-    PanelSize->SetWidthOverride(SoccerSquadViewerUI::PanelWidth);
-    PanelSize->SetHeightOverride(SoccerSquadViewerUI::PanelHeight);
+    MainSizeBox = PanelSize;
+    PanelSize->SetWidthOverride(LiveStyle.PanelWidth);
+    PanelSize->SetHeightOverride(LiveStyle.PanelHeight);
     Scale->AddChild(PanelSize);
     UBorder* Panel = WidgetTree->ConstructWidget<UBorder>();
-    Panel->SetPadding(FMargin(22));
-    Panel->SetBrushColor(FLinearColor(0.05f, 0.075f, 0.11f));
+    MainPanel = Panel;
+    Panel->SetPadding(FMargin(LiveStyle.PanelPadding));
+    Panel->SetBrushColor(LiveStyle.Panel);
     PanelSize->AddChild(Panel);
     UVerticalBox* Page = WidgetTree->ConstructWidget<UVerticalBox>();
     Panel->AddChild(Page);
@@ -601,6 +632,9 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     UTextBlock* Title = SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("PLANTELES Y JUGADORES"), 27);
     UHorizontalBoxSlot* TitleSlot = Header->AddChildToHorizontalBox(Title);
     TitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+    UButton* StyleButton = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("ESTILOS"), 15);
+    StyleButton->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleToggleStyleEditor);
+    SoccerSquadViewerUI::AddButton(Header, StyleButton);
     CloseButton = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("VOLVER"));
     CloseButton->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleClose);
     SoccerSquadViewerUI::AddButton(Header, CloseButton);
@@ -626,12 +660,14 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     ColumnsSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
     USizeBox* ListSize = WidgetTree->ConstructWidget<USizeBox>();
-    ListSize->SetWidthOverride(265.0f);
+    ListSizeBox = ListSize;
+    ListSize->SetWidthOverride(LiveStyle.ListWidth);
     UHorizontalBoxSlot* ListSlot = Columns->AddChildToHorizontalBox(ListSize);
-    ListSlot->SetPadding(FMargin(0, 0, 14.0f, 0));
-    UBorder* ListPanel = WidgetTree->ConstructWidget<UBorder>();
-    ListPanel->SetPadding(FMargin(10));
-    ListPanel->SetBrushColor(FLinearColor(0.07f, 0.11f, 0.15f));
+    ListColumnSlot = ListSlot;
+    ListSlot->SetPadding(FMargin(0, 0, LiveStyle.ColumnGap, 0));
+    ListPanel = WidgetTree->ConstructWidget<UBorder>();
+    ListPanel->SetPadding(FMargin(LiveStyle.ListPadding));
+    ListPanel->SetBrushColor(LiveStyle.ListPanel);
     ListSize->AddChild(ListPanel);
     UVerticalBox* LeftColumn = WidgetTree->ConstructWidget<UVerticalBox>();
     ListPanel->AddChild(LeftColumn);
@@ -643,12 +679,14 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     PlayersScroll->AddChild(PlayerButtonColumn);
 
     USizeBox* CenterSize = WidgetTree->ConstructWidget<USizeBox>();
-    CenterSize->SetWidthOverride(408.0f);
+    CenterSizeBox = CenterSize;
+    CenterSize->SetWidthOverride(LiveStyle.CenterWidth);
     UHorizontalBoxSlot* CenterSlot = Columns->AddChildToHorizontalBox(CenterSize);
-    CenterSlot->SetPadding(FMargin(0, 0, 14, 0));
-    UBorder* CenterPanel = WidgetTree->ConstructWidget<UBorder>();
+    CenterColumnSlot = CenterSlot;
+    CenterSlot->SetPadding(FMargin(0, 0, LiveStyle.ColumnGap, 0));
+    CenterPanel = WidgetTree->ConstructWidget<UBorder>();
     CenterPanel->SetPadding(FMargin(8));
-    CenterPanel->SetBrushColor(FLinearColor(0.045f, 0.08f, 0.11f));
+    CenterPanel->SetBrushColor(LiveStyle.CenterPanel);
     CenterSize->AddChild(CenterPanel);
     UVerticalBox* CenterColumn = WidgetTree->ConstructWidget<UVerticalBox>();
     CenterPanel->AddChild(CenterColumn);
@@ -657,7 +695,8 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     PlayerCounterText = SoccerSquadViewerUI::MakeText(WidgetTree, TEXT(""), 13, true);
     SoccerSquadViewerUI::AddVertical(CenterColumn, PlayerCounterText, 4.0f);
     USizeBox* ImageSize = WidgetTree->ConstructWidget<USizeBox>();
-    ImageSize->SetHeightOverride(370.0f);
+    PreviewSizeBox = ImageSize;
+    ImageSize->SetHeightOverride(LiveStyle.PreviewHeight);
     UVerticalBoxSlot* ImageSlot = CenterColumn->AddChildToVerticalBox(ImageSize);
     ImageSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
     UScaleBox* ImageScale = WidgetTree->ConstructWidget<UScaleBox>();
@@ -691,12 +730,13 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     SoccerSquadViewerUI::AddButton(PlayerNav, NextPlayer);
 
     USizeBox* StatsSize = WidgetTree->ConstructWidget<USizeBox>();
-    StatsSize->SetWidthOverride(400.0f);
+    StatsSizeBox = StatsSize;
+    StatsSize->SetWidthOverride(LiveStyle.StatsWidth);
     UHorizontalBoxSlot* StatsSlot = Columns->AddChildToHorizontalBox(StatsSize);
     StatsSlot->SetPadding(FMargin(0));
-    UBorder* StatsPanel = WidgetTree->ConstructWidget<UBorder>();
-    StatsPanel->SetPadding(FMargin(12));
-    StatsPanel->SetBrushColor(FLinearColor(0.07f, 0.11f, 0.15f));
+    StatsPanel = WidgetTree->ConstructWidget<UBorder>();
+    StatsPanel->SetPadding(FMargin(LiveStyle.StatsPadding));
+    StatsPanel->SetBrushColor(LiveStyle.StatsPanel);
     StatsSize->AddChild(StatsPanel);
     UVerticalBox* StatsContainer = WidgetTree->ConstructWidget<UVerticalBox>();
     StatsPanel->AddChild(StatsContainer);
@@ -710,4 +750,387 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     SoccerSquadViewerUI::AddVertical(Page, SoccerSquadViewerUI::MakeText(WidgetTree,
         TEXT("Consulta de planteles · No modifica la alineación ni el rival seleccionado"),
         13, true), 0.0f);
+
+    BuildStyleEditor(Root);
 }
+
+// These are the variables exposed in the temporary in-game CSS-like drawer.
+// Each entry is reused for reading/writing the INI and building the controls.
+#define SOCCER_SQUAD_STYLE_NUMBERS(X) \
+    X(PanelWidth,       TEXT("Ancho total"),      650.f, 2000.f) \
+    X(PanelHeight,      TEXT("Alto total"),       400.f, 1300.f) \
+    X(ListWidth,        TEXT("Ancho lista"),      130.f, 700.f) \
+    X(CenterWidth,      TEXT("Ancho visor 3D"),   200.f, 900.f) \
+    X(StatsWidth,       TEXT("Ancho atributos"),  200.f, 800.f) \
+    X(PreviewHeight,    TEXT("Alto malla 3D"),    160.f, 800.f) \
+    X(PanelPadding,     TEXT("Padding general"),    0.f, 65.f) \
+    X(ColumnGap,        TEXT("Separar columnas"),  0.f, 55.f) \
+    X(ListPadding,      TEXT("Padding lista"),     0.f, 45.f) \
+    X(StatsPadding,     TEXT("Padding atributos"), 0.f, 45.f) \
+    X(CardPadding,      TEXT("Padding jugadores"), 0.f, 35.f) \
+    X(FontScale,        TEXT("Escala fuentes"),    .65f, 1.65f) \
+    X(StatLabelWidth,   TEXT("Ancho etiquetas"),  90.f, 350.f) \
+    X(StatMeterWidth,   TEXT("Ancho barras"),     40.f, 280.f)
+
+#define SOCCER_SQUAD_STYLE_COLORS(X) \
+    X(Backdrop,       TEXT("Fondo externo")) \
+    X(Panel,          TEXT("Panel principal")) \
+    X(ListPanel,      TEXT("Panel lista")) \
+    X(CenterPanel,    TEXT("Panel malla")) \
+    X(StatsPanel,     TEXT("Panel atributos")) \
+    X(PlayerCard,     TEXT("Jugador normal")) \
+    X(SelectedCard,   TEXT("Jugador elegido")) \
+    X(Accent,         TEXT("Titulos seccion")) \
+    X(Text,           TEXT("Texto general")) \
+    X(SecondaryText,  TEXT("Texto secundario")) \
+    X(Meter,          TEXT("Barras atributos")) \
+    X(ButtonTint,     TEXT("Tint botones"))
+
+namespace SoccerSquadViewerStyleIO
+{
+    bool TryParseHexColor(const FString& Input, FLinearColor& Output)
+    {
+        FString Hex = Input.TrimStartAndEnd();
+        Hex.RemoveFromStart(TEXT("#"));
+        if (Hex.Len() != 6 && Hex.Len() != 8)
+        {
+            return false;
+        }
+        const FString Digits(TEXT("0123456789abcdefABCDEF"));
+        for (int32 Index = 0; Index < Hex.Len(); ++Index)
+        {
+            if (!Digits.Contains(FString::Chr(Hex[Index])))
+            {
+                return false;
+            }
+        }
+        Output = FLinearColor::FromSRGBColor(FColor::FromHex(TEXT("#") + Hex));
+        return true;
+    }
+
+    FString ToHex(const FLinearColor& Color)
+    {
+        return TEXT("#") + Color.ToFColor(true).ToHex();
+    }
+}
+
+FString USoccerSquadViewerWidget::StyleConfigPath() const
+{
+    return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("SoccerUI"),
+                           TEXT("SquadViewerStyle.ini"));
+}
+
+void USoccerSquadViewerWidget::LoadStyle()
+{
+    LiveStyle = FSoccerSquadViewerStyleSettings();
+    FString Ini;
+    if (!FFileHelper::LoadFileToString(Ini, *StyleConfigPath()))
+    {
+        return; // Start with the original hard-coded appearance.
+    }
+    TArray<FString> Lines;
+    Ini.ParseIntoArrayLines(Lines, true);
+    for (const FString& Line : Lines)
+    {
+        FString Key, Value;
+        if (!Line.Split(TEXT("="), &Key, &Value))
+        {
+            continue;
+        }
+        Key.TrimStartAndEndInline();
+        Value.TrimStartAndEndInline();
+#define LOAD_STYLE_NUMBER(Name, Caption, MinVal, MaxVal) \
+        if (Key == TEXT(#Name) && Value.IsNumeric()) \
+        { \
+            const float Parsed = FCString::Atof(*Value); \
+            if (FMath::IsFinite(Parsed)) LiveStyle.Name = FMath::Clamp(Parsed, MinVal, MaxVal); \
+        }
+        SOCCER_SQUAD_STYLE_NUMBERS(LOAD_STYLE_NUMBER)
+#undef LOAD_STYLE_NUMBER
+#define LOAD_STYLE_COLOR(Name, Caption) \
+        if (Key == TEXT(#Name)) \
+        { \
+            FLinearColor Parsed; \
+            if (SoccerSquadViewerStyleIO::TryParseHexColor(Value, Parsed)) LiveStyle.Name = Parsed; \
+        }
+        SOCCER_SQUAD_STYLE_COLORS(LOAD_STYLE_COLOR)
+#undef LOAD_STYLE_COLOR
+    }
+}
+
+bool USoccerSquadViewerWidget::SaveStyle() const
+{
+    const FString Path = StyleConfigPath();
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+    FString Ini = TEXT("; Temporary style configuration - Planteles y jugadores\n");
+    Ini += TEXT("; Editable from the ESTILOS drawer in Unreal Engine 4.27\n");
+    Ini += TEXT("[SquadViewerStyle]\n");
+#define SAVE_STYLE_NUMBER(Name, Caption, MinVal, MaxVal) \
+    Ini += FString::Printf(TEXT("%s=%s\n"), TEXT(#Name), *FString::SanitizeFloat(LiveStyle.Name));
+    SOCCER_SQUAD_STYLE_NUMBERS(SAVE_STYLE_NUMBER)
+#undef SAVE_STYLE_NUMBER
+#define SAVE_STYLE_COLOR(Name, Caption) \
+    Ini += FString::Printf(TEXT("%s=%s\n"), TEXT(#Name), \
+                           *SoccerSquadViewerStyleIO::ToHex(LiveStyle.Name));
+    SOCCER_SQUAD_STYLE_COLORS(SAVE_STYLE_COLOR)
+#undef SAVE_STYLE_COLOR
+    return FFileHelper::SaveStringToFile(Ini, *Path);
+}
+
+void USoccerSquadViewerWidget::AddStyleField(
+    UVerticalBox* Parent, const TCHAR* Key, const TCHAR* Caption,
+    const FString& CurrentValue)
+{
+    if (!Parent || !WidgetTree) return;
+    UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+    SoccerSquadViewerUI::AddVertical(Parent, Row, 6.f);
+    USizeBox* LabelWidth = WidgetTree->ConstructWidget<USizeBox>();
+    LabelWidth->SetWidthOverride(178.f);
+    LabelWidth->AddChild(SoccerSquadViewerUI::MakeText(WidgetTree, Caption, 13));
+    UHorizontalBoxSlot* LabelSlot = Row->AddChildToHorizontalBox(LabelWidth);
+    LabelSlot->SetVerticalAlignment(VAlign_Center);
+    USizeBox* InputWidth = WidgetTree->ConstructWidget<USizeBox>();
+    InputWidth->SetWidthOverride(156.f);
+    UEditableTextBox* Edit = WidgetTree->ConstructWidget<UEditableTextBox>();
+    Edit->SetText(FText::FromString(CurrentValue));
+    InputWidth->AddChild(Edit);
+    Row->AddChildToHorizontalBox(InputWidth);
+    StyleEditors.Add(FName(Key), Edit);
+}
+
+void USoccerSquadViewerWidget::BuildStyleEditor(UCanvasPanel* Root)
+{
+    if (!Root || !WidgetTree) return;
+    StyleDrawer = WidgetTree->ConstructWidget<UBorder>();
+    StyleDrawer->SetPadding(FMargin(14.f));
+    StyleDrawer->SetBrushColor(FLinearColor(.07f, .09f, .13f, .99f));
+    StyleDrawer->SetVisibility(ESlateVisibility::Collapsed);
+    UCanvasPanelSlot* DrawerSlot = Root->AddChildToCanvas(StyleDrawer);
+    DrawerSlot->SetAnchors(FAnchors(1.f, 0.f, 1.f, 1.f));
+    DrawerSlot->SetAlignment(FVector2D(1.f, 0.f));
+    DrawerSlot->SetOffsets(FMargin(-10.f, 10.f, 390.f, 10.f));
+    DrawerSlot->SetZOrder(100);
+
+    UVerticalBox* DrawerBody = WidgetTree->ConstructWidget<UVerticalBox>();
+    StyleDrawer->AddChild(DrawerBody);
+    SoccerSquadViewerUI::AddVertical(DrawerBody,
+        SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("EDITOR DE ESTILOS (TEMPORAL)"), 18), 7.f);
+    SoccerSquadViewerUI::AddVertical(DrawerBody,
+        SoccerSquadViewerUI::MakeText(WidgetTree,
+            TEXT("Editar valores y pulsar APLICAR. No es necesario recompilar."), 12), 6.f);
+
+    UScrollBox* Scroll = WidgetTree->ConstructWidget<UScrollBox>();
+    UVerticalBoxSlot* ScrollSlot = DrawerBody->AddChildToVerticalBox(Scroll);
+    ScrollSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+    UVerticalBox* Fields = WidgetTree->ConstructWidget<UVerticalBox>();
+    Scroll->AddChild(Fields);
+    SoccerSquadViewerUI::AddVertical(Fields,
+        SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("DIMENSIONES Y ESPACIOS"), 15), 8.f);
+#define EDIT_STYLE_NUMBER(Name, Caption, MinVal, MaxVal) \
+    AddStyleField(Fields, TEXT(#Name), Caption, FString::SanitizeFloat(LiveStyle.Name));
+    SOCCER_SQUAD_STYLE_NUMBERS(EDIT_STYLE_NUMBER)
+#undef EDIT_STYLE_NUMBER
+    SoccerSquadViewerUI::AddVertical(Fields,
+        SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("COLORES HEX (#RRGGBBAA)"), 15), 8.f);
+#define EDIT_STYLE_COLOR(Name, Caption) \
+    AddStyleField(Fields, TEXT(#Name), Caption, SoccerSquadViewerStyleIO::ToHex(LiveStyle.Name));
+    SOCCER_SQUAD_STYLE_COLORS(EDIT_STYLE_COLOR)
+#undef EDIT_STYLE_COLOR
+
+    StyleStatus = SoccerSquadViewerUI::MakeText(WidgetTree,
+        TEXT("Configuracion solo para este visor"), 12, true);
+    SoccerSquadViewerUI::AddVertical(DrawerBody, StyleStatus, 9.f);
+    UHorizontalBox* Actions = WidgetTree->ConstructWidget<UHorizontalBox>();
+    SoccerSquadViewerUI::AddVertical(DrawerBody, Actions, 6.f);
+    UButton* Apply = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("APLICAR"), 14);
+    UButton* Save = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("GUARDAR"), 14);
+    Apply->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleApplyStyle);
+    Save->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleSaveStyle);
+    SoccerSquadViewerUI::AddButton(Actions, Apply, 5.f);
+    SoccerSquadViewerUI::AddButton(Actions, Save, 5.f);
+    UHorizontalBox* Actions2 = WidgetTree->ConstructWidget<UHorizontalBox>();
+    SoccerSquadViewerUI::AddVertical(DrawerBody, Actions2, 0.f);
+    UButton* Reset = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("RESTAURAR"), 14);
+    UButton* Close = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("CERRAR"), 14);
+    Reset->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleResetStyle);
+    Close->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleToggleStyleEditor);
+    SoccerSquadViewerUI::AddButton(Actions2, Reset, 5.f);
+    SoccerSquadViewerUI::AddButton(Actions2, Close, 5.f);
+}
+
+void USoccerSquadViewerWidget::SyncStyleEditors()
+{
+#define SYNC_STYLE_NUMBER(Name, Caption, MinVal, MaxVal) \
+    if (UEditableTextBox* const* Edit = StyleEditors.Find(FName(TEXT(#Name)))) \
+        if (IsValid(*Edit)) (*Edit)->SetText(FText::FromString(FString::SanitizeFloat(LiveStyle.Name)));
+    SOCCER_SQUAD_STYLE_NUMBERS(SYNC_STYLE_NUMBER)
+#undef SYNC_STYLE_NUMBER
+#define SYNC_STYLE_COLOR(Name, Caption) \
+    if (UEditableTextBox* const* Edit = StyleEditors.Find(FName(TEXT(#Name)))) \
+        if (IsValid(*Edit)) (*Edit)->SetText(FText::FromString(SoccerSquadViewerStyleIO::ToHex(LiveStyle.Name)));
+    SOCCER_SQUAD_STYLE_COLORS(SYNC_STYLE_COLOR)
+#undef SYNC_STYLE_COLOR
+}
+
+void USoccerSquadViewerWidget::HandleToggleStyleEditor()
+{
+    if (!StyleDrawer) return;
+    const bool bShow = StyleDrawer->GetVisibility() != ESlateVisibility::Visible;
+    StyleDrawer->SetVisibility(bShow ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+    if (bShow)
+    {
+        SyncStyleEditors();
+    }
+}
+
+void USoccerSquadViewerWidget::HandleApplyStyle()
+{
+    bool bInvalid = false;
+#define APPLY_STYLE_NUMBER(Name, Caption, MinVal, MaxVal) \
+    if (UEditableTextBox* const* Edit = StyleEditors.Find(FName(TEXT(#Name)))) \
+    { \
+        const FString Value = (*Edit)->GetText().ToString().TrimStartAndEnd(); \
+        if (Value.IsNumeric()) \
+        { \
+            const float Parsed = FCString::Atof(*Value); \
+            if (FMath::IsFinite(Parsed)) LiveStyle.Name = FMath::Clamp(Parsed, MinVal, MaxVal); \
+            else bInvalid = true; \
+        } \
+        else bInvalid = true; \
+    }
+    SOCCER_SQUAD_STYLE_NUMBERS(APPLY_STYLE_NUMBER)
+#undef APPLY_STYLE_NUMBER
+#define APPLY_STYLE_COLOR(Name, Caption) \
+    if (UEditableTextBox* const* Edit = StyleEditors.Find(FName(TEXT(#Name)))) \
+    { \
+        FLinearColor Parsed; \
+        if (SoccerSquadViewerStyleIO::TryParseHexColor((*Edit)->GetText().ToString(), Parsed)) \
+            LiveStyle.Name = Parsed; \
+        else bInvalid = true; \
+    }
+    SOCCER_SQUAD_STYLE_COLORS(APPLY_STYLE_COLOR)
+#undef APPLY_STYLE_COLOR
+    ApplyViewerStyle();
+    if (StyleStatus)
+    {
+        StyleStatus->SetText(FText::FromString(bInvalid
+            ? TEXT("Algunos valores no son validos; se conservaron los anteriores")
+            : TEXT("Aplicado en vivo. GUARDAR mantiene los cambios")));
+    }
+}
+
+void USoccerSquadViewerWidget::HandleSaveStyle()
+{
+    HandleApplyStyle();
+    const bool bSaved = SaveStyle();
+    if (StyleStatus)
+    {
+        StyleStatus->SetText(FText::FromString(bSaved
+            ? TEXT("Guardado en Saved/SoccerUI/SquadViewerStyle.ini")
+            : TEXT("No se pudo escribir el archivo de estilos")));
+    }
+}
+
+void USoccerSquadViewerWidget::HandleResetStyle()
+{
+    LiveStyle = FSoccerSquadViewerStyleSettings();
+    SyncStyleEditors();
+    ApplyViewerStyle();
+    if (StyleStatus)
+    {
+        StyleStatus->SetText(FText::FromString(
+            TEXT("Valores originales. Pulsar GUARDAR para conservarlos")));
+    }
+}
+
+void USoccerSquadViewerWidget::StyleMainWidget(UWidget* Widget)
+{
+    if (!Widget) return;
+    if (UTextBlock* TextNode = Cast<UTextBlock>(Widget))
+    {
+        const TWeakObjectPtr<UTextBlock> Key(TextNode);
+        int32* OriginalSize = DefaultTextSizes.Find(Key);
+        if (!OriginalSize)
+        {
+            DefaultTextSizes.Add(Key, TextNode->Font.Size);
+            OriginalSize = DefaultTextSizes.Find(Key);
+        }
+        if (OriginalSize)
+        {
+            FSlateFontInfo Font = TextNode->Font;
+            Font.Size = FMath::Max(9, FMath::RoundToInt((*OriginalSize) * LiveStyle.FontScale));
+            TextNode->SetFont(Font);
+        }
+        FLinearColor Color = LiveStyle.Text;
+        if (AccentTextNodes.Contains(Key)) Color = LiveStyle.Accent;
+        else if (SecondaryTextNodes.Contains(Key)) Color = LiveStyle.SecondaryText;
+        TextNode->SetColorAndOpacity(FSlateColor(Color));
+    }
+    if (UProgressBar* MeterNode = Cast<UProgressBar>(Widget))
+    {
+        MeterNode->SetFillColorAndOpacity(LiveStyle.Meter);
+    }
+    if (UButton* ButtonNode = Cast<UButton>(Widget))
+    {
+        ButtonNode->SetBackgroundColor(LiveStyle.ButtonTint);
+    }
+    if (UPanelWidget* Container = Cast<UPanelWidget>(Widget))
+    {
+        for (int32 I = 0; I < Container->GetChildrenCount(); ++I)
+        {
+            StyleMainWidget(Container->GetChildAt(I));
+        }
+    }
+}
+
+void USoccerSquadViewerWidget::ApplyViewerStyle()
+{
+    if (MainSizeBox)
+    {
+        MainSizeBox->SetWidthOverride(LiveStyle.PanelWidth);
+        MainSizeBox->SetHeightOverride(LiveStyle.PanelHeight);
+    }
+    if (ListSizeBox) ListSizeBox->SetWidthOverride(LiveStyle.ListWidth);
+    if (CenterSizeBox) CenterSizeBox->SetWidthOverride(LiveStyle.CenterWidth);
+    if (StatsSizeBox) StatsSizeBox->SetWidthOverride(LiveStyle.StatsWidth);
+    if (PreviewSizeBox) PreviewSizeBox->SetHeightOverride(LiveStyle.PreviewHeight);
+    if (MainDim) MainDim->SetBrushColor(LiveStyle.Backdrop);
+    if (MainPanel)
+    {
+        MainPanel->SetBrushColor(LiveStyle.Panel);
+        MainPanel->SetPadding(FMargin(LiveStyle.PanelPadding));
+    }
+    if (ListPanel)
+    {
+        ListPanel->SetBrushColor(LiveStyle.ListPanel);
+        ListPanel->SetPadding(FMargin(LiveStyle.ListPadding));
+    }
+    if (CenterPanel) CenterPanel->SetBrushColor(LiveStyle.CenterPanel);
+    if (StatsPanel)
+    {
+        StatsPanel->SetBrushColor(LiveStyle.StatsPanel);
+        StatsPanel->SetPadding(FMargin(LiveStyle.StatsPadding));
+    }
+    if (ListColumnSlot) ListColumnSlot->SetPadding(FMargin(0, 0, LiveStyle.ColumnGap, 0));
+    if (CenterColumnSlot) CenterColumnSlot->SetPadding(FMargin(0, 0, LiveStyle.ColumnGap, 0));
+    for (USizeBox* LabelBox : StatLabelBoxes)
+    {
+        if (IsValid(LabelBox)) LabelBox->SetWidthOverride(LiveStyle.StatLabelWidth);
+    }
+    for (USizeBox* MeterBox : StatMeterBoxes)
+    {
+        if (IsValid(MeterBox)) MeterBox->SetWidthOverride(LiveStyle.StatMeterWidth);
+    }
+    for (const TPair<FName, UBorder*>& Pair : PlayerBorders)
+    {
+        if (!IsValid(Pair.Value)) continue;
+        const bool bSelected = CurrentPlayers.IsValidIndex(SelectedPlayerIndex) &&
+            CurrentPlayers[SelectedPlayerIndex]->Identity.PlayerId == Pair.Key;
+        Pair.Value->SetPadding(FMargin(LiveStyle.CardPadding, 7.f));
+        Pair.Value->SetBrushColor(bSelected ? LiveStyle.SelectedCard : LiveStyle.PlayerCard);
+    }
+    StyleMainWidget(MainPanel);
+}
+
+#undef SOCCER_SQUAD_STYLE_NUMBERS
+#undef SOCCER_SQUAD_STYLE_COLORS

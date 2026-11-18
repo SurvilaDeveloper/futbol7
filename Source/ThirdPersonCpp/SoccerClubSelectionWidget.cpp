@@ -124,6 +124,17 @@ FReply USoccerClubSelectionWidget::NativeOnPreviewKeyDown(
 )
 {
     const FKey Key = InKeyEvent.GetKey();
+	// En modo UIOnly el viewport no recibe F11. Atenderlo aqui permite
+	// alternar pantalla completa sin habilitar controles de gameplay.
+	if (Key == EKeys::F11)
+	{
+		if (APlayerController* PlayerController = GetOwningPlayer())
+		{
+			PlayerController->ConsoleCommand(TEXT("fullscreen"), true);
+		}
+		return FReply::Handled();
+	}
+
     if (Key == EKeys::Left || Key == EKeys::A || Key == EKeys::Gamepad_DPad_Left)
     {
         CycleOpponent(-1);
