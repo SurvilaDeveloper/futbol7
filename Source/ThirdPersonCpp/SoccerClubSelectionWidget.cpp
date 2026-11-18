@@ -5,6 +5,7 @@
 #include "SoccerGameInstance.h"
 #include "SoccerMatchManager.h"
 #include "SoccerSquadCatalog.h"
+#include "SoccerSquadViewerWidget.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
@@ -451,6 +452,61 @@ void USoccerClubSelectionWidget::HandleConfirmClicked()
     OnSelectionConfirmed.Broadcast();
 }
 
+void USoccerClubSelectionWidget::HandleViewSquadsClicked()
+{
+    OpenSquadViewer();
+}
+
+void USoccerClubSelectionWidget::OpenSquadViewer()
+{
+    APlayerController* PlayerController = GetOwningPlayer();
+    if (!IsValid(SoccerGameInstance) || !PlayerController || !IsInViewport())
+    {
+        return;
+    }
+    if (!IsValid(SquadViewerWidget))
+    {
+        SquadViewerWidget = CreateWidget<USoccerSquadViewerWidget>(
+            PlayerController, USoccerSquadViewerWidget::StaticClass());
+    }
+    if (!IsValid(SquadViewerWidget))
+    {
+        return;
+    }
+    SquadViewerWidget->OnViewerClosed.RemoveDynamic(
+        this, &USoccerClubSelectionWidget::HandleSquadViewerClosed);
+    SquadViewerWidget->OnViewerClosed.AddDynamic(
+        this, &USoccerClubSelectionWidget::HandleSquadViewerClosed);
+    SquadViewerWidget->InitializeForClub(
+        SoccerGameInstance, MatchManager, SoccerGameInstance->GetDefaultHumanClubId());
+    if (!SquadViewerWidget->IsInViewport())
+    {
+        SquadViewerWidget->AddToViewport(150);
+    }
+    SquadViewerWidget->ActivateMenu();
+}
+
+void USoccerClubSelectionWidget::HandleSquadViewerClosed()
+{
+    APlayerController* PlayerController = GetOwningPlayer();
+    if (!PlayerController || !IsInViewport())
+    {
+        return;
+    }
+    // The pre-match screen remains visible and continues to own the pause.
+    FInputModeUIOnly InputMode;
+    if (ConfirmButton)
+    {
+        InputMode.SetWidgetToFocus(ConfirmButton->TakeWidget());
+    }
+    InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    PlayerController->SetInputMode(InputMode);
+    if (ConfirmButton)
+    {
+        ConfirmButton->SetUserFocus(PlayerController);
+    }
+}
+
 void USoccerClubSelectionWidget::CloseMenu()
 {
     APlayerController* PlayerController = GetOwningPlayer();
@@ -531,7 +587,21 @@ void USoccerClubSelectionWidget::BuildWidgetTree()
     UVerticalBoxSlot* StatusSlot = Column->AddChildToVerticalBox(StatusText);
     StatusSlot->SetPadding(FMargin(0.0f, 2.0f, 0.0f, 10.0f));
 
+    // Both actions share the same pre-match footer; viewing squads never
+    // starts a match or changes which opposing club is selected.
+    UHorizontalBox* Footer = WidgetTree->ConstructWidget<UHorizontalBox>();
+    UButton* ViewSquadsButton = MakeClubSelectionButton(
+        WidgetTree, TEXT("VER PLANTELES"));
+    ViewSquadsButton->OnClicked.AddDynamic(
+        this, &USoccerClubSelectionWidget::HandleViewSquadsClicked);
+    UHorizontalBoxSlot* ViewerSlot = Footer->AddChildToHorizontalBox(ViewSquadsButton);
+    ViewerSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+    ViewerSlot->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+
     ConfirmButton = MakeClubSelectionButton(WidgetTree, TEXT("JUGAR PARTIDO"));
     ConfirmButton->OnClicked.AddDynamic(this, &USoccerClubSelectionWidget::HandleConfirmClicked);
-    Column->AddChildToVerticalBox(ConfirmButton);
+    UHorizontalBoxSlot* PlaySlot = Footer->AddChildToHorizontalBox(ConfirmButton);
+    PlaySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+    PlaySlot->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
+    Column->AddChildToVerticalBox(Footer);
 }

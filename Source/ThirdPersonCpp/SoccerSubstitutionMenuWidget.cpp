@@ -558,7 +558,53 @@ void USoccerSubstitutionMenuWidget::ConfirmSubstitution()
 	}
 	else
 	{
-		SetStatus(TEXT("La solicitud fue rechazada. Revisá el banco, el límite y el cambio pendiente."), true);
+		// The match manager is authoritative, but show the player *why* it
+		// rejected this request rather than always blaming the bench/limit.
+		const FSoccerMatchSquadState State = MatchManager->GetMatchSquadState(
+			ESoccerTeam::PlayerTeam
+		);
+		const FName OutgoingId = ActivePlayerIds[SelectedOutgoingIndex];
+		const FName IncomingId = BenchPlayerIds[SelectedIncomingIndex];
+		bool bOutgoingTrackedAsActive = false;
+		for (const TPair<FName, FName>& ActiveEntry : State.ActivePlayerByFormationSlot)
+		{
+			if (ActiveEntry.Value == OutgoingId)
+			{
+				bOutgoingTrackedAsActive = true;
+				break;
+			}
+		}
+
+		FString RejectionReason;
+		if (!State.bInitialized)
+		{
+			RejectionReason = TEXT("El plantel del partido no está inicializado: verificá los 7 titulares en Director Técnico.");
+		}
+		else if (State.SubstitutionHistory.Num() >= State.MaximumSubstitutions)
+		{
+			RejectionReason = TEXT("Ya se alcanzó el límite de sustituciones.");
+		}
+		else if (MatchManager->HasPendingMatchSubstitution(ESoccerTeam::PlayerTeam))
+		{
+			RejectionReason = TEXT("Ya existe un cambio pendiente. Esperá una interrupción o cancelalo.");
+		}
+		else if (!State.AvailableBenchPlayerIds.Contains(IncomingId))
+		{
+			RejectionReason = TEXT("El jugador elegido para entrar ya no está en el banco disponible.");
+		}
+		else if (State.WithdrawnPlayerIds.Contains(IncomingId))
+		{
+			RejectionReason = TEXT("Este jugador ya salió del partido y no puede volver a ingresar.");
+		}
+		else if (!bOutgoingTrackedAsActive)
+		{
+			RejectionReason = TEXT("El titular no figura en la alineación registrada del partido. Revisá perfiles y asignaciones de formación.");
+		}
+		else
+		{
+			RejectionReason = TEXT("Cambio rechazado. Consultá [Substitution] en Output Log para identificar la condición.");
+		}
+		SetStatus(RejectionReason, true);
 		RefreshDisplay();
 	}
 }

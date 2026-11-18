@@ -2496,22 +2496,38 @@ void ASoccerMatchManager::SynchronizeMatchSquadActiveSlotsFromActors(
 
 	const FSoccerFormationDefinition& Formation =
 		SoccerFormationLibrary::GetDefinition(GetFormationSystemForTeam(Team));
-	TMap<FName, FName> SynchronizedLineup;
-	for (const FSoccerFormationSlot& Slot : Formation.Slots)
+	// Keep each *resolved* runtime slot in sync. The old all-or-nothing
+	// condition left every slot stale if even one of the seven characters
+	// temporarily lacked a profile (or had not received an assignment).
+	// Preserve the stored ID only for slots that cannot be resolved right now.
+	int32 ResolvedSlotCount = 0;
+	for (const FSoccerFormationSlot& FormationSlot : Formation.Slots)
 	{
 		ASoccerCharacterBase* Character =
-			GetFormationSlotAssignedCharacter(Team, Slot.SlotId);
-		if (IsValid(Character) && !Character->GetPlayerProfileId().IsNone())
+			GetFormationSlotAssignedCharacter(Team, FormationSlot.SlotId);
+		if (IsValid(Character))
 		{
-			SynchronizedLineup.Add(
-				Slot.SlotId,
-				Character->GetPlayerProfileId()
-			);
+			const FName RuntimePlayerId = Character->GetPlayerProfileId();
+			if (!RuntimePlayerId.IsNone())
+			{
+				State.ActivePlayerByFormationSlot.Add(
+					FormationSlot.SlotId,
+					RuntimePlayerId
+				);
+				++ResolvedSlotCount;
+			}
 		}
 	}
-	if (SynchronizedLineup.Num() == Formation.Slots.Num())
+	if (ResolvedSlotCount < Formation.Slots.Num())
 	{
-		State.ActivePlayerByFormationSlot = MoveTemp(SynchronizedLineup);
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[MatchSquad] Partial actor synchronization team=%d resolved=%d/%d; unresolved slots keep their prior ID."),
+			static_cast<int32>(Team),
+			ResolvedSlotCount,
+			Formation.Slots.Num()
+		);
 	}
 }
 
@@ -3538,10 +3554,17 @@ bool ASoccerMatchManager::RequestMatchSubstitution(
 		UE_LOG(
 			LogTemp,
 			Warning,
-			TEXT("[Substitution] Rejected team=%d outgoing=%s incoming=%s."),
+			TEXT("[Substitution] Rejected team=%d outgoing=%s incoming=%s | initialized=%s used=%d/%d benchContains=%s withdrawn=%s pending=%s activeSlots=%d."),
 			static_cast<int32>(Team),
 			*OutgoingPlayerId.ToString(),
-			*IncomingPlayerId.ToString()
+			*IncomingPlayerId.ToString(),
+			State.bInitialized ? TEXT("YES") : TEXT("NO"),
+			State.SubstitutionHistory.Num(),
+			State.MaximumSubstitutions,
+			State.AvailableBenchPlayerIds.Contains(IncomingPlayerId) ? TEXT("YES") : TEXT("NO"),
+			State.WithdrawnPlayerIds.Contains(IncomingPlayerId) ? TEXT("YES") : TEXT("NO"),
+			HasPendingMatchSubstitution(Team) ? TEXT("YES") : TEXT("NO"),
+			State.ActivePlayerByFormationSlot.Num()
 		);
 		return false;
 	}
@@ -3557,7 +3580,14 @@ bool ASoccerMatchManager::RequestMatchSubstitution(
 	}
 	if (FormationSlotId.IsNone())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Substitution] Player %s is not active."), *OutgoingPlayerId.ToString());
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[Substitution] Player %s is not active in match squad (team=%d, trackedSlots=%d). Check assigned actor profiles and persistent lineup."),
+			*OutgoingPlayerId.ToString(),
+			static_cast<int32>(Team),
+			State.ActivePlayerByFormationSlot.Num()
+		);
 		return false;
 	}
 

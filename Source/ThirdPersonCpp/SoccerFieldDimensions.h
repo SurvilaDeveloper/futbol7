@@ -91,11 +91,25 @@ namespace SoccerFieldDimensions
 	// Áreas
 	// ============================================================
 
-	static constexpr float PenaltyAreaDepthCm = 1300.0f;
-	static constexpr float PenaltyAreaWidthCm = 2000.0f;
+	// Medidas calibradas en el campo de referencia de 60 x 40 m.
+	// Las dimensiones longitudinales escalan con el largo de la cancha,
+	// y las transversales con su ancho. Mantener la geometria y las
+	// reglas de saques/penales sincronizadas usando estas constantes.
+	static constexpr float AuthoredPenaltyAreaDepthCm = 1300.0f;
+	static constexpr float AuthoredPenaltyAreaWidthCm = 2000.0f;
+	static constexpr float AuthoredPenaltySpotDistanceCm = 900.0f;
+
+	static constexpr float PenaltyAreaDepthCm =
+		AuthoredPenaltyAreaDepthCm *
+		(PitchLengthCm / AuthoredReferencePitchLengthCm);
+	static constexpr float PenaltyAreaWidthCm =
+		AuthoredPenaltyAreaWidthCm *
+		(PitchWidthCm / AuthoredReferencePitchWidthCm);
 	static constexpr float PenaltyAreaHalfWidthCm = PenaltyAreaWidthCm * 0.5f;
 
-	static constexpr float PenaltySpotDistanceCm = 900.0f;
+	static constexpr float PenaltySpotDistanceCm =
+		AuthoredPenaltySpotDistanceCm *
+		(PitchLengthCm / AuthoredReferencePitchLengthCm);
 
 	// Distancia longitudinal entre el punto penal y el frente del área. Sirve
 	// para calcular la porción visible del círculo que queda fuera del área.
@@ -118,10 +132,16 @@ namespace SoccerFieldDimensions
 		return FMath::RadiansToDegrees(FMath::Acos(IntersectionRatio));
 	}
 
-	// Area de meta. Mantiene aproximadamente la proporcion reglamentaria
-	// respecto del area penal usada por esta cancha reducida.
-	static constexpr float GoalAreaDepthCm = 430.0f;
-	static constexpr float GoalAreaWidthCm = 900.0f;
+	// Area de meta (area chica). Se escala por eje igual que el area
+	// penal, manteniendo las proporciones relativas al campo de referencia.
+	static constexpr float AuthoredGoalAreaDepthCm = 430.0f;
+	static constexpr float AuthoredGoalAreaWidthCm = 900.0f;
+	static constexpr float GoalAreaDepthCm =
+		AuthoredGoalAreaDepthCm *
+		(PitchLengthCm / AuthoredReferencePitchLengthCm);
+	static constexpr float GoalAreaWidthCm =
+		AuthoredGoalAreaWidthCm *
+		(PitchWidthCm / AuthoredReferencePitchWidthCm);
 	static constexpr float GoalAreaHalfWidthCm = GoalAreaWidthCm * 0.5f;
 
 	static constexpr float LeftGoalAreaFrontX =

@@ -8,6 +8,7 @@ class ASoccerMatchManager;
 class USoccerGameInstance;
 class USoccerClubProfile;
 class USoccerClubIdButton;
+class USoccerSquadViewerWidget;
 class UButton;
 class UBorder;
 class UTextBlock;
@@ -46,6 +47,13 @@ private:
     USoccerClubProfile* GetClubProfile(FName ClubId) const;
     void RefreshCardSelectionStates();
     void CloseMenu();
+    void OpenSquadViewer();
+
+    UFUNCTION()
+    void HandleViewSquadsClicked();
+
+    UFUNCTION()
+    void HandleSquadViewerClosed();
 
     UFUNCTION()
     void HandlePreviousClicked();
@@ -73,6 +81,9 @@ private:
 
     UPROPERTY(Transient)
     UUniformGridPanel* ClubGrid = nullptr;
+
+    UPROPERTY(Transient)
+    USoccerSquadViewerWidget* SquadViewerWidget = nullptr;
 
     UPROPERTY(Transient)
     UTextBlock* StatusText = nullptr;
