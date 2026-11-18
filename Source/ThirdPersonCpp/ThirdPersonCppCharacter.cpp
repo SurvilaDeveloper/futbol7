@@ -2961,6 +2961,7 @@ void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 	GetWorldTimerManager().ClearTimer(KickFinishTimerHandle);
 	ActiveKickTarget = FVector::ZeroVector;
 	ActiveKickHorizontalSpeed = 0.0f;
+	ActiveKickRawChargedHorizontalSpeed = 0.0f;
 	ActiveKickMode = ESoccerPendingKickMode::None;
 	bActiveKickHasImpactedBall = false;
 	bActiveKickPhysicalContactMissed = false;
@@ -6859,6 +6860,38 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 
 	float HorizontalSpeedToUse = TargetKickHorizontalSpeed;
 
+	if (
+		bUseChargedTrajectory &&
+		!bHumanRestartExecution &&
+		!IsChargedKickBallPositionAligned(
+			ControlledBall->GetActorLocation(), PendingKickTarget
+		)
+	)
+	{
+		// Preserve charge/aim and pursue the REAL ball rather than launching
+		// from behind or beside the human. Never stop or teleport the ball.
+		LogHumanPossessionDebugEvent(
+			TEXT("KICK_WAIT"),
+			TEXT("ChargedKickNeedsFootAlignment")
+		);
+		EnterChasingBall();
+		FVector Direction = PendingKickTarget - ControlledBall->GetActorLocation();
+		Direction.Z = 0.0f;
+		Direction = Direction.GetSafeNormal();
+		if (
+			!Direction.IsNearlyZero() &&
+			IsBallWithinHumanFootPhysicalContact(ControlledBall)
+		)
+		{
+			StartHumanDribbleReposition(
+				Direction,
+				ControlledBall->GetActorLocation(),
+				TEXT("ChargedKickFootAlignment")
+			);
+		}
+		return;
+	}
+
 	UAnimMontage* KickMontage = SelectKickMontageForTarget(
 		PendingKickTarget,
 		HorizontalSpeedToUse
@@ -6984,8 +7017,47 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		return;
 	}
 
+	const float AuthoredMontageLength = FMath::Max(
+		0.05f,
+		KickMontage->GetPlayLength()
+	);
+	const float AuthoredImpactDelay = GetKickImpactDelayForMontage(
+		KickMontage,
+		AuthoredMontageLength
+	);
+	const float MontagePlayRate = BuildHumanKickMontagePhysicalPlayRate(
+		ControlledBall,
+		AuthoredImpactDelay,
+		bHumanRestartExecution
+	);
+
+	if (
+		bUseChargedTrajectory &&
+		!bHumanRestartExecution &&
+		!CanHumanChargedKickContactBallAtImpact(
+			ControlledBall,
+			PendingKickTarget,
+			AuthoredImpactDelay / FMath::Max(1.0f, MontagePlayRate)
+		)
+	)
+	{
+		LogHumanPossessionDebugEvent(
+			TEXT("KICK_RISK"),
+			TEXT("ChargedKickPredictedEscapeStillAttemptingContact")
+		);
+		// This is only a warning: the future ball position is an estimate,
+		// not a reason to block the shot forever. We are currently in a
+		// genuine foot-contact zone, so try the animation. The impact callback
+		// will validate the REAL ball position and can re-arm this shot if
+		// the ball escapes before the striking foot arrives.
+	}
+
 	ActiveKickTarget = PendingKickTarget;
 	ActiveKickHorizontalSpeed = HorizontalSpeedToUse;
+	// Keep the ORIGINAL charging value, not the distance-adjusted speed,
+	// so a missed physical impact can be retried without losing power.
+	ActiveKickRawChargedHorizontalSpeed = bUseChargedTrajectory
+		? PendingKickHorizontalSpeedOverride : 0.0f;
 	ActiveKickMode = PendingKickMode;
 	bActiveKickHasImpactedBall = false;
 	bActiveKickPhysicalContactMissed = false;
@@ -7025,19 +7097,6 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		ControlledBall->StopBallKeepingPhysics();
 	}
 
-	const float AuthoredMontageLength = FMath::Max(
-		0.05f,
-		KickMontage->GetPlayLength()
-	);
-	const float AuthoredImpactDelay = GetKickImpactDelayForMontage(
-		KickMontage,
-		AuthoredMontageLength
-	);
-	const float MontagePlayRate = BuildHumanKickMontagePhysicalPlayRate(
-		ControlledBall,
-		AuthoredImpactDelay,
-		bHumanRestartExecution
-	);
 	const float MontagePlayResult = PlayAnimMontage(
 		KickMontage,
 		MontagePlayRate
@@ -7122,15 +7181,47 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 
 	if (
 		!bActiveKickWasHumanRestartExecution &&
-		!IsBallWithinHumanFootPhysicalContact(ControlledBall)
+		(
+			!IsBallWithinHumanFootPhysicalContact(ControlledBall) ||
+			(
+				bActiveKickUsesChargedTrajectory &&
+				!IsChargedKickBallPositionAligned(
+					ControlledBall->GetActorLocation(), ActiveKickTarget
+				)
+			)
+		)
 	)
 	{
+		// A moving ball may leave the strike zone between the animation
+		// starting and its real impact. Never kick a distant ball, but do NOT
+		// silently discard the charged right-click request either.
+		const bool bRetryChargedShot =
+			bActiveKickUsesChargedTrajectory &&
+			!bActiveKickWasHumanRestartExecution &&
+			ActiveKickMode == ESoccerPendingKickMode::KickAndRelease &&
+			!ActiveKickTarget.IsNearlyZero() &&
+			ActiveKickRawChargedHorizontalSpeed > 0.0f &&
+			IsHumanBallActionAllowedNow();
+
 		bActiveKickHasImpactedBall = true;
 		bActiveKickPhysicalContactMissed = true;
 		ReleaseHumanPhysicalPossession(
 			false,
 			TEXT("KickFootContactMissAtImpact")
 		);
+		if (bRetryChargedShot)
+		{
+			PendingKickMode = ESoccerPendingKickMode::KickAndRelease;
+			PendingKickTarget = ActiveKickTarget;
+			bHasPendingKickHorizontalSpeedOverride = true;
+			PendingKickHorizontalSpeedOverride = ActiveKickRawChargedHorizontalSpeed;
+			ActivateHumanBallClaim();
+			ShowReleaseTargetMarker(PendingKickTarget);
+			LogHumanPossessionDebugEvent(
+				TEXT("KICK_RETRY"),
+				TEXT("ChargedShotPreservedAfterMissedContact")
+			);
+		}
 		return;
 	}
 
@@ -7252,15 +7343,29 @@ void AThirdPersonCppCharacter::FinishPendingKickAnimation()
 		bActiveKickWasHumanRestartExecution;
 	const bool bPhysicalContactMissed =
 		bActiveKickPhysicalContactMissed;
+	const bool bRetryPendingChargedShot =
+		bPhysicalContactMissed &&
+		!bFinishedHumanRestartExecution &&
+		PendingKickMode == ESoccerPendingKickMode::KickAndRelease &&
+		bHasPendingKickHorizontalSpeedOverride &&
+		IsValid(ControlledBall) &&
+		IsHumanBallActionAllowedNow();
 
 	ActiveKickMode = ESoccerPendingKickMode::None;
+	ActiveKickRawChargedHorizontalSpeed = 0.0f;
 	ActiveKickHorizontalSpeed = 0.0f;
 	bActiveKickHasImpactedBall = false;
 	bActiveKickPhysicalContactMissed = false;
 	bActiveKickUsesChargedTrajectory = false;
 	bActiveKickWasHumanRestartExecution = false;
 
-	if (bPhysicalContactMissed)
+	if (bRetryPendingChargedShot)
+	{
+		EnterChasingBall();
+		ActivateHumanBallClaim();
+		ArmChaseCancelIgnoreForCurrentMovementInput();
+	}
+	else if (bPhysicalContactMissed)
 	{
 		EnterManualControl();
 	}
@@ -8505,6 +8610,81 @@ bool AThirdPersonCppCharacter::CanHumanDribbleTurnMaintainContactAtImpact(
 	return
 		PredictedForwardDistance >= PredictedMinimumForwardDistance &&
 		PredictedLateralDistance <= PredictedMaximumLateralDistance;
+}
+
+bool AThirdPersonCppCharacter::IsChargedKickBallPositionAligned(
+	const FVector& BallLocation,
+	const FVector& KickTarget,
+	float SafetyMarginCm
+) const
+{
+	// Keep the ball ahead of the striking body and within a compact foot zone.
+	// Checking distance alone allowed balls behind the human to be kicked.
+	FVector KickDirection = KickTarget - BallLocation;
+	KickDirection.Z = 0.0f;
+	KickDirection = KickDirection.GetSafeNormal();
+	if (KickDirection.IsNearlyZero())
+	{
+		KickDirection = GetActorForwardVector();
+		KickDirection.Z = 0.0f;
+		KickDirection = KickDirection.GetSafeNormal();
+	}
+	if (KickDirection.IsNearlyZero())
+	{
+		return false;
+	}
+
+	FVector ToBall = BallLocation - GetActorLocation();
+	ToBall.Z = 0.0f;
+	const float Margin = FMath::Max(0.0f, SafetyMarginCm);
+	const float MaxDistance = FMath::Max(
+		1.0f,
+		FMath::Min(HumanFootContactMaxDistance, ChargedKickAlignedMaxDistance) - Margin
+	);
+	if (ToBall.SizeSquared2D() > FMath::Square(MaxDistance))
+	{
+		return false;
+	}
+
+	const FVector Right = FVector::CrossProduct(
+		FVector::UpVector, KickDirection
+	).GetSafeNormal();
+	const float Forward = FVector::DotProduct(ToBall, KickDirection);
+	const float Lateral = FMath::Abs(FVector::DotProduct(ToBall, Right));
+	return
+		Forward >= -FMath::Max(0.0f, ChargedKickAlignedRearTolerance - Margin) &&
+		Lateral <= FMath::Max(
+			1.0f,
+			FMath::Min(ChargedKickAlignedMaxLateralOffset, MaxDistance) - Margin
+		);
+}
+
+bool AThirdPersonCppCharacter::CanHumanChargedKickContactBallAtImpact(
+	const ASoccerBall* SoccerBall,
+	const FVector& KickTarget,
+	float ImpactDelaySeconds
+) const
+{
+	if (!IsValid(SoccerBall) ||
+		!IsBallWithinHumanFootPhysicalContact(SoccerBall) ||
+		!IsChargedKickBallPositionAligned(
+			SoccerBall->GetActorLocation(), KickTarget))
+	{
+		return false;
+	}
+
+	// Once the montage starts the human stops, whereas the live ball keeps
+	// its velocity. Estimate the contact point BEFORE committing to the kick.
+	FVector BallVelocity = SoccerBall->GetBallPhysicsVelocity();
+	BallVelocity.Z = 0.0f;
+	const float LookAhead = FMath::Clamp(ImpactDelaySeconds, 0.0f, 0.50f);
+	const FVector PredictedBallLocation =
+		SoccerBall->GetActorLocation() + BallVelocity * LookAhead;
+	return IsChargedKickBallPositionAligned(
+		PredictedBallLocation,
+		KickTarget,
+		ChargedKickPredictionSafetyMargin
+	);
 }
 
 float AThirdPersonCppCharacter::BuildHumanKickMontagePhysicalPlayRate(

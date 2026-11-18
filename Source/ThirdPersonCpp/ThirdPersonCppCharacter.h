@@ -298,6 +298,19 @@ protected:
 		const ASoccerBall* SoccerBall,
 		const FVector& IntendedDirection
 	) const;
+	// The right-button shot must have a plausible contact now AND when the
+	// montage reaches the foot strike. Unlike restarts, open play stays physical.
+	bool IsChargedKickBallPositionAligned(
+		const FVector& BallLocation,
+		const FVector& KickTarget,
+		float SafetyMarginCm = 0.0f
+	) const;
+	bool CanHumanChargedKickContactBallAtImpact(
+		const ASoccerBall* SoccerBall,
+		const FVector& KickTarget,
+		float ImpactDelaySeconds
+	) const;
+
 	float BuildHumanKickMontagePhysicalPlayRate(
 		const ASoccerBall* SoccerBall,
 		float AuthoredImpactDelay,
@@ -782,6 +795,9 @@ private:
 
 	float ActiveKickHorizontalSpeed = 0.0f;
 
+	// Saved unadjusted right-click charge for a physical-contact retry.
+	float ActiveKickRawChargedHorizontalSpeed = 0.0f;
+
 	ESoccerPendingKickMode ActiveKickMode = ESoccerPendingKickMode::None;
 
 	bool bActiveKickHasImpactedBall = false;
@@ -813,6 +829,20 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "0.01", ClampMax = "0.20"))
 		float HumanKickMontageMinimumPhysicalImpactDelay = 0.05f;
+
+	// Charged open-play shots only. Unreal units are centimetres.
+	// A normal foot-contact radius (92 cm) is too generous for a visible shot.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "15.0", ClampMax = "120.0"))
+	float ChargedKickAlignedMaxDistance = 76.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "5.0", ClampMax = "100.0"))
+	float ChargedKickAlignedMaxLateralOffset = 55.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "0.0", ClampMax = "60.0"))
+	float ChargedKickAlignedRearTolerance = 12.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "0.0", ClampMax = "30.0"))
+	float ChargedKickPredictionSafetyMargin = 6.0f;
 
 	float SelectedMovementSpeed = 350.0f;
 	

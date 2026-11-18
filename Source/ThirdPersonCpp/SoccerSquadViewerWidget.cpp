@@ -27,7 +27,8 @@
 #include "GameFramework/PlayerController.h"
 #include "InputCoreTypes.h"
 
-namespace
+// Dedicated namespace prevents anonymous-namespace helper collisions in UE4 Unity Builds.
+namespace SoccerSquadViewerUI
 {
     constexpr float PanelWidth = 1180.0f;
     constexpr float PanelHeight = 685.0f;
@@ -344,10 +345,10 @@ void USoccerSquadViewerWidget::RebuildPlayerButtons()
         UBorder* Card = WidgetTree->ConstructWidget<UBorder>();
         Card->SetPadding(FMargin(8.0f, 7.0f));
         Card->SetBrushColor(FLinearColor(0.09f, 0.13f, 0.17f, 1.0f));
-        Card->AddChild(MakeText(WidgetTree, FString::Printf(TEXT("%02d  %s"),
+        Card->AddChild(SoccerSquadViewerUI::MakeText(WidgetTree, FString::Printf(TEXT("%02d  %s"),
             Profile->Identity.ShirtNumber, *GetPlayerDisplayName(Profile)), 15));
         Button->AddChild(Card);
-        AddVertical(PlayerButtonColumn, Button, 5.0f);
+        SoccerSquadViewerUI::AddVertical(PlayerButtonColumn, Button, 5.0f);
         PlayerBorders.Add(Profile->Identity.PlayerId, Card);
     }
 }
@@ -478,17 +479,17 @@ void USoccerSquadViewerWidget::RefreshSelectedPlayer()
 void USoccerSquadViewerWidget::AddDetail(const FString& Text)
 {
     if (!AttributeColumn) return;
-    UTextBlock* Line = MakeText(WidgetTree, Text, 14);
+    UTextBlock* Line = SoccerSquadViewerUI::MakeText(WidgetTree, Text, 14);
     Line->SetColorAndOpacity(FSlateColor(FLinearColor(0.73f, 0.82f, 0.85f)));
-    AddVertical(AttributeColumn, Line, 4.0f);
+    SoccerSquadViewerUI::AddVertical(AttributeColumn, Line, 4.0f);
 }
 
 void USoccerSquadViewerWidget::AddStatGroup(const FString& GroupName)
 {
     if (!AttributeColumn) return;
-    UTextBlock* Heading = MakeText(WidgetTree, GroupName, 18);
+    UTextBlock* Heading = SoccerSquadViewerUI::MakeText(WidgetTree, GroupName, 18);
     Heading->SetColorAndOpacity(FSlateColor(FLinearColor(0.44f, 0.88f, 0.67f)));
-    UVerticalBoxSlot* HeadingSlot = AddVertical(AttributeColumn, Heading, 6.0f);
+    UVerticalBoxSlot* HeadingSlot = SoccerSquadViewerUI::AddVertical(AttributeColumn, Heading, 6.0f);
     HeadingSlot->SetPadding(FMargin(0, 14.0f, 0, 6.0f));
 }
 
@@ -498,7 +499,7 @@ void USoccerSquadViewerWidget::AddStat(const FString& Label, int32 Rating)
     UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
     USizeBox* LabelSize = WidgetTree->ConstructWidget<USizeBox>();
     LabelSize->SetWidthOverride(181.0f);
-    LabelSize->AddChild(MakeText(WidgetTree, Label, 14));
+    LabelSize->AddChild(SoccerSquadViewerUI::MakeText(WidgetTree, Label, 14));
     Row->AddChildToHorizontalBox(LabelSize);
 
     USizeBox* MeterSize = WidgetTree->ConstructWidget<USizeBox>();
@@ -511,10 +512,10 @@ void USoccerSquadViewerWidget::AddStat(const FString& Label, int32 Rating)
     MeterSlot->SetPadding(FMargin(6.0f, 2.0f));
     MeterSlot->SetVerticalAlignment(VAlign_Center);
 
-    UTextBlock* Number = MakeText(WidgetTree, FString::FromInt(Rating), 14);
+    UTextBlock* Number = SoccerSquadViewerUI::MakeText(WidgetTree, FString::FromInt(Rating), 14);
     UHorizontalBoxSlot* NumberSlot = Row->AddChildToHorizontalBox(Number);
     NumberSlot->SetPadding(FMargin(8.0f, 0.0f));
-    AddVertical(AttributeColumn, Row, 4.0f);
+    SoccerSquadViewerUI::AddVertical(AttributeColumn, Row, 4.0f);
 }
 
 void USoccerSquadViewerWidget::CycleClub(int32 Direction)
@@ -585,8 +586,8 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     ScaleSlot->SetOffsets(FMargin(12.0f));
 
     USizeBox* PanelSize = WidgetTree->ConstructWidget<USizeBox>();
-    PanelSize->SetWidthOverride(PanelWidth);
-    PanelSize->SetHeightOverride(PanelHeight);
+    PanelSize->SetWidthOverride(SoccerSquadViewerUI::PanelWidth);
+    PanelSize->SetHeightOverride(SoccerSquadViewerUI::PanelHeight);
     Scale->AddChild(PanelSize);
     UBorder* Panel = WidgetTree->ConstructWidget<UBorder>();
     Panel->SetPadding(FMargin(22));
@@ -596,32 +597,32 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     Panel->AddChild(Page);
 
     UHorizontalBox* Header = WidgetTree->ConstructWidget<UHorizontalBox>();
-    AddVertical(Page, Header, 14.0f);
-    UTextBlock* Title = MakeText(WidgetTree, TEXT("PLANTELES Y JUGADORES"), 27);
+    SoccerSquadViewerUI::AddVertical(Page, Header, 14.0f);
+    UTextBlock* Title = SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("PLANTELES Y JUGADORES"), 27);
     UHorizontalBoxSlot* TitleSlot = Header->AddChildToHorizontalBox(Title);
     TitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-    CloseButton = MakeButton(WidgetTree, TEXT("VOLVER"));
+    CloseButton = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("VOLVER"));
     CloseButton->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleClose);
-    AddButton(Header, CloseButton);
+    SoccerSquadViewerUI::AddButton(Header, CloseButton);
 
     UHorizontalBox* ClubRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-    AddVertical(Page, ClubRow, 12.0f);
-    UButton* PrevClub = MakeButton(WidgetTree, TEXT("< CLUB"));
+    SoccerSquadViewerUI::AddVertical(Page, ClubRow, 12.0f);
+    UButton* PrevClub = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("< CLUB"));
     PrevClub->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandlePreviousClub);
-    AddButton(ClubRow, PrevClub);
-    ClubNameText = MakeText(WidgetTree, TEXT("Club"), 22, true);
+    SoccerSquadViewerUI::AddButton(ClubRow, PrevClub);
+    ClubNameText = SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("Club"), 22, true);
     UHorizontalBoxSlot* NameSlot = ClubRow->AddChildToHorizontalBox(ClubNameText);
     NameSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
     NameSlot->SetVerticalAlignment(VAlign_Center);
-    ClubCounterText = MakeText(WidgetTree, TEXT(""), 14, true);
-    UButton* NextClub = MakeButton(WidgetTree, TEXT("CLUB >"));
+    ClubCounterText = SoccerSquadViewerUI::MakeText(WidgetTree, TEXT(""), 14, true);
+    UButton* NextClub = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("CLUB >"));
     NextClub->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleNextClub);
-    AddButton(ClubRow, NextClub);
+    SoccerSquadViewerUI::AddButton(ClubRow, NextClub);
     // Counter below the row keeps the club name readable on narrow screens.
-    AddVertical(Page, ClubCounterText, 7.0f);
+    SoccerSquadViewerUI::AddVertical(Page, ClubCounterText, 7.0f);
 
     UHorizontalBox* Columns = WidgetTree->ConstructWidget<UHorizontalBox>();
-    UVerticalBoxSlot* ColumnsSlot = AddVertical(Page, Columns, 6.0f);
+    UVerticalBoxSlot* ColumnsSlot = SoccerSquadViewerUI::AddVertical(Page, Columns, 6.0f);
     ColumnsSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 
     USizeBox* ListSize = WidgetTree->ConstructWidget<USizeBox>();
@@ -634,7 +635,7 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     ListSize->AddChild(ListPanel);
     UVerticalBox* LeftColumn = WidgetTree->ConstructWidget<UVerticalBox>();
     ListPanel->AddChild(LeftColumn);
-    AddVertical(LeftColumn, MakeText(WidgetTree, TEXT("JUGADORES"), 19), 8.0f);
+    SoccerSquadViewerUI::AddVertical(LeftColumn, SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("JUGADORES"), 19), 8.0f);
     UScrollBox* PlayersScroll = WidgetTree->ConstructWidget<UScrollBox>();
     UVerticalBoxSlot* PlayersScrollSlot = LeftColumn->AddChildToVerticalBox(PlayersScroll);
     PlayersScrollSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -651,10 +652,10 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     CenterSize->AddChild(CenterPanel);
     UVerticalBox* CenterColumn = WidgetTree->ConstructWidget<UVerticalBox>();
     CenterPanel->AddChild(CenterColumn);
-    PlayerNameText = MakeText(WidgetTree, TEXT("Jugador"), 18, true);
-    AddVertical(CenterColumn, PlayerNameText, 3.0f);
-    PlayerCounterText = MakeText(WidgetTree, TEXT(""), 13, true);
-    AddVertical(CenterColumn, PlayerCounterText, 4.0f);
+    PlayerNameText = SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("Jugador"), 18, true);
+    SoccerSquadViewerUI::AddVertical(CenterColumn, PlayerNameText, 3.0f);
+    PlayerCounterText = SoccerSquadViewerUI::MakeText(WidgetTree, TEXT(""), 13, true);
+    SoccerSquadViewerUI::AddVertical(CenterColumn, PlayerCounterText, 4.0f);
     USizeBox* ImageSize = WidgetTree->ConstructWidget<USizeBox>();
     ImageSize->SetHeightOverride(370.0f);
     UVerticalBoxSlot* ImageSlot = CenterColumn->AddChildToVerticalBox(ImageSize);
@@ -664,30 +665,30 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     ImageSize->AddChild(ImageScale);
     PreviewImage = WidgetTree->ConstructWidget<UImage>();
     ImageScale->AddChild(PreviewImage);
-    PreviewStatusText = MakeText(WidgetTree, TEXT("Vista tridimensional"), 12, true);
-    AddVertical(CenterColumn, PreviewStatusText, 7.0f);
+    PreviewStatusText = SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("Vista tridimensional"), 12, true);
+    SoccerSquadViewerUI::AddVertical(CenterColumn, PreviewStatusText, 7.0f);
     UHorizontalBox* ControlRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-    AddVertical(CenterColumn, ControlRow, 6.0f);
-    UButton* RotateL = MakeButton(WidgetTree, TEXT("< GIRO"), 22);
-    UButton* RotateR = MakeButton(WidgetTree, TEXT("GIRO >"), 22);
-    UButton* ZoomIn = MakeButton(WidgetTree, TEXT("+"), 22);
-    UButton* ZoomOut = MakeButton(WidgetTree, TEXT("-"), 22);
+    SoccerSquadViewerUI::AddVertical(CenterColumn, ControlRow, 6.0f);
+    UButton* RotateL = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("< GIRO"), 22);
+    UButton* RotateR = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("GIRO >"), 22);
+    UButton* ZoomIn = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("+"), 22);
+    UButton* ZoomOut = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("-"), 22);
     RotateL->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleRotateLeft);
     RotateR->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleRotateRight);
     ZoomIn->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleZoomIn);
     ZoomOut->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleZoomOut);
-    AddButton(ControlRow, RotateL);
-    AddButton(ControlRow, RotateR);
-    AddButton(ControlRow, ZoomIn);
-    AddButton(ControlRow, ZoomOut);
+    SoccerSquadViewerUI::AddButton(ControlRow, RotateL);
+    SoccerSquadViewerUI::AddButton(ControlRow, RotateR);
+    SoccerSquadViewerUI::AddButton(ControlRow, ZoomIn);
+    SoccerSquadViewerUI::AddButton(ControlRow, ZoomOut);
     UHorizontalBox* PlayerNav = WidgetTree->ConstructWidget<UHorizontalBox>();
-    AddVertical(CenterColumn, PlayerNav, 0.0f);
-    UButton* PrevPlayer = MakeButton(WidgetTree, TEXT("< ANTERIOR"), 14);
-    UButton* NextPlayer = MakeButton(WidgetTree, TEXT("SIGUIENTE >"), 14);
+    SoccerSquadViewerUI::AddVertical(CenterColumn, PlayerNav, 0.0f);
+    UButton* PrevPlayer = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("< ANTERIOR"), 14);
+    UButton* NextPlayer = SoccerSquadViewerUI::MakeButton(WidgetTree, TEXT("SIGUIENTE >"), 14);
     PrevPlayer->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandlePreviousPlayer);
     NextPlayer->OnClicked.AddDynamic(this, &USoccerSquadViewerWidget::HandleNextPlayer);
-    AddButton(PlayerNav, PrevPlayer);
-    AddButton(PlayerNav, NextPlayer);
+    SoccerSquadViewerUI::AddButton(PlayerNav, PrevPlayer);
+    SoccerSquadViewerUI::AddButton(PlayerNav, NextPlayer);
 
     USizeBox* StatsSize = WidgetTree->ConstructWidget<USizeBox>();
     StatsSize->SetWidthOverride(400.0f);
@@ -699,14 +700,14 @@ void USoccerSquadViewerWidget::BuildWidgetTree()
     StatsSize->AddChild(StatsPanel);
     UVerticalBox* StatsContainer = WidgetTree->ConstructWidget<UVerticalBox>();
     StatsPanel->AddChild(StatsContainer);
-    AddVertical(StatsContainer, MakeText(WidgetTree, TEXT("CARACTERÍSTICAS"), 19), 8.0f);
+    SoccerSquadViewerUI::AddVertical(StatsContainer, SoccerSquadViewerUI::MakeText(WidgetTree, TEXT("CARACTERÍSTICAS"), 19), 8.0f);
     UScrollBox* StatsScroll = WidgetTree->ConstructWidget<UScrollBox>();
     UVerticalBoxSlot* ScrollSlot = StatsContainer->AddChildToVerticalBox(StatsScroll);
     ScrollSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
     AttributeColumn = WidgetTree->ConstructWidget<UVerticalBox>();
     StatsScroll->AddChild(AttributeColumn);
 
-    AddVertical(Page, MakeText(WidgetTree,
+    SoccerSquadViewerUI::AddVertical(Page, SoccerSquadViewerUI::MakeText(WidgetTree,
         TEXT("Consulta de planteles · No modifica la alineación ni el rival seleccionado"),
         13, true), 0.0f);
 }
