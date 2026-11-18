@@ -1053,7 +1053,8 @@ bool ASoccerAICharacter::ReleaseHeldThrowInBallToAirTarget(
 		TargetLocation,
 		HorizontalSpeed,
 		MinTravelTime,
-		MaxTravelTime
+		MaxTravelTime,
+		false // Hand release, not a foot kick
 	);
 
 	return true;
@@ -1090,7 +1091,8 @@ bool ASoccerAICharacter::ReleaseHeldGoalkeeperBallToAirTarget(
 		TargetLocation,
 		HorizontalSpeed,
 		MinTravelTime,
-		MaxTravelTime
+		MaxTravelTime,
+		false // Hand release, not a foot kick
 	);
 
 	return true;
@@ -1192,7 +1194,8 @@ ReleaseHeldGoalkeeperBallForDrop(
 		BallToDrop->Kick(
 			HorizontalDirection,
 			HorizontalSpeed,
-			SafeUpwardSpeed
+			SafeUpwardSpeed,
+			false // Goalkeeper drop from hands
 		);
 	}
 

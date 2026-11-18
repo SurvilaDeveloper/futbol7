@@ -10,6 +10,8 @@
 class UStaticMeshComponent;
 class ASoccerCharacterBase;
 class ASoccerMatchManager;
+class USoundBase;
+class USoundAttenuation;
 
 UCLASS()
 class THIRDPERSONCPP_API ASoccerBall : public AActor
@@ -70,7 +72,7 @@ public:
         const FVector& PlaneNormalOverride = FVector::ZeroVector
     ) const;
 
-    void Kick(const FVector& Direction, float ForwardStrength, float UpwardStrength);
+    void Kick(const FVector& Direction, float ForwardStrength, float UpwardStrength, bool bPlayKickSound = true);
 
     void KickToTarget(
         const FVector& TargetLocation,
@@ -84,11 +86,13 @@ public:
         float HorizontalSpeed
     );
 
+    // bPlayKickSound=false for throw-ins and goalkeeper hand releases.
     void KickToAirTarget(
         const FVector& TargetLocation,
         float HorizontalSpeed,
         float MinTravelTime,
-        float MaxTravelTime
+        float MaxTravelTime,
+        bool bPlayKickSound = true
     );
 
     void ChargedKickToTarget(
@@ -146,6 +150,40 @@ protected:
 private:
     UPROPERTY(VisibleAnywhere, Category = "Ball")
         UStaticMeshComponent* BallMesh;
+
+    // Ball contact audio. Assign imported mono WAVs on the ball Blueprint.
+    // Volume is calculated from the ball to the local human player's pawn;
+    // a built-in spatialization setting provides directional placement.
+    UPROPERTY(EditAnywhere, Category = "Ball|Audio")
+        bool bEnableKickAudio = true;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Audio")
+        USoundBase* ShortKickSound = nullptr;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Audio")
+        USoundBase* StrongKickSound = nullptr;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Audio", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+        float KickAudioVolume = 0.85f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Audio", meta = (ClampMin = "0.0"))
+        float KickAudioNearDistanceCm = 300.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Audio", meta = (ClampMin = "1.0"))
+        float KickAudioMaxDistanceCm = 9000.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Ball|Audio", meta = (ClampMin = "0.0"))
+        float KickAudioStrongSpeedCmPerSec = 2200.0f;
+
+    // Guard against duplicate launch calls in the same simulation instant.
+    UPROPERTY(EditAnywhere, Category = "Ball|Audio", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+        float KickAudioCooldownSeconds = 0.07f;
+
+    UPROPERTY(Transient)
+        USoundAttenuation* KickAudioSpatialization = nullptr;
+
+    float LastKickAudioWorldTime = -1000.0f;
+    void PlayKickAudio(float LaunchSpeedCmPerSec);
 
     UPROPERTY(EditAnywhere, Category = "Ball|Debug")
         bool bDebugBallHitEvents = false;

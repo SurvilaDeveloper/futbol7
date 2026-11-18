@@ -21,8 +21,8 @@ namespace SoccerFieldDimensions
 
 	// Dimensiones actuales del campo. Cambiar solamente estas dos constantes
 	// debe adaptar geometria, referencias authored y shape tactico.
-	static constexpr float PitchLengthCm = 6000.0f;
-	static constexpr float PitchWidthCm = 4000.0f;
+	static constexpr float PitchLengthCm = 9000.0f;
+	static constexpr float PitchWidthCm = 6000.0f;
 
 	static constexpr float HalfPitchLengthCm = PitchLengthCm * 0.5f;
 	static constexpr float HalfPitchWidthCm = PitchWidthCm * 0.5f;

@@ -1054,6 +1054,25 @@ void AGameHUD::DrawMatchClock()
 		Seconds
 	);
 
+	// Show the referee's awarded extra time once regulation has elapsed.
+	// A restart already under way at the limit can still grow the award.
+	if (
+		MatchPeriod == ESoccerMatchPeriod::FirstHalf ||
+		MatchPeriod == ESoccerMatchPeriod::SecondHalf
+	)
+	{
+		const float ExtraSeconds = MatchManager->GetCurrentHalfAddedTimeSeconds();
+		if (MatchManager->IsCurrentHalfInAddedTime() && ExtraSeconds > 0.01f)
+		{
+			const int32 RoundedSeconds = FMath::CeilToInt(ExtraSeconds);
+			ClockText += FString::Printf(
+				TEXT("  (+%d:%02d)"),
+				RoundedSeconds / 60,
+				RoundedSeconds % 60
+			);
+		}
+	}
+
 	if (MatchPeriod == ESoccerMatchPeriod::HalfTime)
 	{
 		ClockText += FString::Printf(

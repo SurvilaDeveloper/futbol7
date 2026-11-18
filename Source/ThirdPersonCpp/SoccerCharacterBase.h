@@ -19,6 +19,7 @@ class USoccerPlayerProfile;
 class USkeletalMesh;
 class USkeletalMeshComponent;
 class ASoccerMatchManager;
+class USoccerFootstepAudioComponent;
 
 UCLASS(Blueprintable)
 class THIRDPERSONCPP_API ASoccerCharacterBase : public ACharacter
@@ -29,6 +30,10 @@ class THIRDPERSONCPP_API ASoccerCharacterBase : public ACharacter
 
 public:
 	ASoccerCharacterBase();
+
+	// Shared audio component inherited by human, AI, and goalkeeper characters.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Soccer")
+	USoccerFootstepAudioComponent* FootstepAudio = nullptr;
 
 	virtual void Tick(float DeltaTime) override;
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -355,6 +360,42 @@ public:
 	// ============================================================
 	// TACKLE - STAGE 1: SHARED PHYSICAL ACTION
 	// ============================================================
+
+	// Assign a SoundWave / SoundCue in the human and AI character Blueprints.
+	// A single notify in the slide montage starts the entire impact+grass-scrape sample.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tackle Slide Audio")
+	class USoundBase* TackleSlideSound = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tackle Slide Audio", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	float TackleSlideVolume = 0.90f;
+
+	// Distances in Unreal centimeters, measured from the local human player.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tackle Slide Audio", meta = (ClampMin = "0.0"))
+	float TackleSlideFullVolumeDistanceCm = 300.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tackle Slide Audio", meta = (ClampMin = "1.0"))
+	float TackleSlideMaxAudibleDistanceCm = 3500.0f;
+
+	// Called only by AnimNotify_SoccerTackleSlide, at the initial grass contact.
+	void PlayTackleSlideAudioFromNotify(USkeletalMeshComponent* MeshComp);
+
+	// Impact of the tackled player against the grass (not the sliding tackler).
+	// Assign any imported SoundWave / SoundCue in the human and AI Blueprints.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tackle Fall Audio")
+	class USoundBase* TackleFallImpactSound = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tackle Fall Audio", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	float TackleFallImpactVolume = 0.95f;
+
+	// Unreal centimeters relative to the locally controlled human player.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tackle Fall Audio", meta = (ClampMin = "0.0"))
+	float TackleFallImpactFullVolumeDistanceCm = 300.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tackle Fall Audio", meta = (ClampMin = "1.0"))
+	float TackleFallImpactMaxAudibleDistanceCm = 3500.0f;
+
+	// Invoked only by AnimNotify_SoccerTackleFallImpact on body/grass contact.
+	void PlayTackleFallImpactAudioFromNotify(USkeletalMeshComponent* MeshComp);
 
 	/*
 	 * Starts an in-place sliding tackle and supplies the horizontal motion from
@@ -1723,6 +1764,18 @@ private:
 	float StableGroundBallPursuitSelectionTime = -1000.0f;
 	float StableGroundBallPursuitLastRefreshTime = -1000.0f;
 	int32 StableBallPursuitTrajectoryRevision = 0;
+
+	// One playback per actual tackle; never a static/global notify cooldown.
+	bool bTackleSlideAudioPlayed = false;
+
+	UPROPERTY(Transient)
+	class USoundAttenuation* TackleSlideSpatialization = nullptr;
+
+	// Reset at the start of every successful victim fall; prevents blend duplicates.
+	bool bTackleFallImpactAudioPlayed = false;
+
+	UPROPERTY(Transient)
+	class USoundAttenuation* TackleFallImpactSpatialization = nullptr;
 
 	ESoccerTacklePhase TacklePhase = ESoccerTacklePhase::Inactive;
 	ESoccerTackleSide ActiveTackleSide = ESoccerTackleSide::LeftLeg;

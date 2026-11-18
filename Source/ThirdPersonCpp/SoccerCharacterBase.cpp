@@ -1,5 +1,6 @@
 //SoccerCharacterBase.cpp
 #include "SoccerCharacterBase.h"
+#include "SoccerFootstepAudioComponent.h"
 #include "SoccerPlayerProfile.h"
 
 #include "Components/SkeletalMeshComponent.h"
@@ -13,6 +14,10 @@
 #include "SoccerAICharacter.h"
 #include "SoccerFieldDimensions.h"
 #include "SoccerField.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+#include "Sound/SoundAttenuation.h"
+#include "Engine/World.h"
 #include "Materials/MaterialInterface.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -240,6 +245,9 @@ ASoccerCharacterBase::ASoccerCharacterBase()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
+	// Notifies drive the timing; this component never ticks or changes movement.
+	FootstepAudio = CreateDefaultSubobject<USoccerFootstepAudioComponent>(TEXT("FootstepAudio"));
+
 	GetCapsuleComponent()->InitCapsuleSize(42.0f, 96.0f);
 
 	GetCapsuleComponent()->SetCollisionResponseToChannel(
@@ -353,6 +361,154 @@ void ASoccerCharacterBase::Tick(float DeltaTime)
 }
 
 
+void ASoccerCharacterBase::PlayTackleSlideAudioFromNotify(USkeletalMeshComponent* MeshComp)
+{
+    UWorld* World = GetWorld();
+    if (!World || !World->IsGameWorld() || !IsValid(MeshComp) ||
+        MeshComp != GetMesh() || !IsValid(TackleSlideSound) ||
+        IsHidden() || IsActorBeingDestroyed() ||
+        TacklePhase != ESoccerTacklePhase::Sliding || bTackleSlideAudioPlayed)
+    {
+        return;
+    }
+
+    // The montage or its source sequence can report the same notify twice
+    // during blending. Mark it per character, not per shared animation asset.
+    bTackleSlideAudioPlayed = true;
+
+    const APawn* HumanPawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (!IsValid(HumanPawn) || !HumanPawn->IsLocallyControlled())
+    {
+        return;
+    }
+
+    const float Near = FMath::Max(0.0f, TackleSlideFullVolumeDistanceCm);
+    const float Far = FMath::Max(Near + 1.0f, TackleSlideMaxAudibleDistanceCm);
+    const float Distance = FVector::Dist2D(
+        GetActorLocation(), HumanPawn->GetActorLocation());
+    if (Distance >= Far)
+    {
+        return;
+    }
+
+    // A fast sliding challenge sounds slightly stronger than a slow one.
+    const float Speed = GetCurrentTackleHorizontalSpeed();
+    const float SpeedAlpha = FMath::Clamp((Speed - 200.0f) / 650.0f, 0.0f, 1.0f);
+    const float DistanceAlpha = FMath::Clamp((Distance - Near) / (Far - Near), 0.0f, 1.0f);
+    const float DistanceGain = FMath::Pow(1.0f - DistanceAlpha, 1.6f);
+    const float Volume = FMath::Clamp(TackleSlideVolume, 0.0f, 2.0f) *
+        FMath::Lerp(0.72f, 1.0f, SpeedAlpha) * DistanceGain;
+    if (Volume <= 0.001f)
+    {
+        return;
+    }
+
+    // Unreal spatializes this sound at the player's contact with the turf;
+    // volume falloff is computed from the human pawn (not the camera).
+    if (!IsValid(TackleSlideSpatialization))
+    {
+        TackleSlideSpatialization = NewObject<USoundAttenuation>(
+            this, TEXT("TackleSlideSpatialization"));
+        if (TackleSlideSpatialization)
+        {
+            TackleSlideSpatialization->Attenuation.bSpatialize = true;
+            TackleSlideSpatialization->Attenuation.bAttenuate = false;
+        }
+    }
+
+    FVector ContactLocation = GetActorLocation();
+    if (const UCapsuleComponent* Capsule = GetCapsuleComponent())
+    {
+        ContactLocation.Z -= FMath::Max(
+            0.0f, Capsule->GetScaledCapsuleHalfHeight() - 10.0f);
+    }
+
+    UGameplayStatics::PlaySoundAtLocation(
+        this,
+        TackleSlideSound,
+        ContactLocation,
+        FRotator::ZeroRotator,
+        Volume,
+        1.0f,
+        0.0f,
+        TackleSlideSpatialization
+    );
+}
+
+void ASoccerCharacterBase::PlayTackleFallImpactAudioFromNotify(USkeletalMeshComponent* MeshComp)
+{
+    UWorld* World = GetWorld();
+    if (!World || !World->IsGameWorld() || !IsValid(MeshComp) ||
+        MeshComp != GetMesh() || !IsValid(TackleFallImpactSound) ||
+        IsHidden() || IsActorBeingDestroyed() ||
+        !IsTackleFallReactionActive() || bTackleFallImpactAudioPlayed)
+    {
+        return;
+    }
+
+    // A sequence and its montage may both report a notify while blending.
+    // One sound per victim fall, with no global cooldown across players.
+    bTackleFallImpactAudioPlayed = true;
+
+    const APawn* HumanPawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (!IsValid(HumanPawn) || !HumanPawn->IsLocallyControlled())
+    {
+        return;
+    }
+
+    const float Near = FMath::Max(0.0f, TackleFallImpactFullVolumeDistanceCm);
+    const float Far = FMath::Max(Near + 1.0f, TackleFallImpactMaxAudibleDistanceCm);
+    const float Distance = FVector::Dist2D(
+        GetActorLocation(), HumanPawn->GetActorLocation());
+    if (Distance >= Far)
+    {
+        return;
+    }
+
+    const float SpeedAlpha = FMath::Clamp(
+        ActiveTackleFallInitialSpeed / 900.0f, 0.0f, 1.0f);
+    const float DistanceAlpha = FMath::Clamp(
+        (Distance - Near) / (Far - Near), 0.0f, 1.0f);
+    const float DistanceGain = FMath::Pow(1.0f - DistanceAlpha, 1.6f);
+    const float Volume = FMath::Clamp(TackleFallImpactVolume, 0.0f, 2.0f) *
+        FMath::Lerp(0.78f, 1.0f, SpeedAlpha) * DistanceGain;
+    if (Volume <= 0.001f)
+    {
+        return;
+    }
+
+    // Position the sound at the grass contact while the human-relative
+    // distance controls loudness, as for tackle sliding and footstep audio.
+    if (!IsValid(TackleFallImpactSpatialization))
+    {
+        TackleFallImpactSpatialization = NewObject<USoundAttenuation>(
+            this, TEXT("TackleFallImpactSpatialization"));
+        if (TackleFallImpactSpatialization)
+        {
+            TackleFallImpactSpatialization->Attenuation.bSpatialize = true;
+            TackleFallImpactSpatialization->Attenuation.bAttenuate = false;
+        }
+    }
+
+    FVector ContactLocation = GetActorLocation();
+    if (const UCapsuleComponent* Capsule = GetCapsuleComponent())
+    {
+        ContactLocation.Z -= FMath::Max(
+            0.0f, Capsule->GetScaledCapsuleHalfHeight() - 10.0f);
+    }
+
+    UGameplayStatics::PlaySoundAtLocation(
+        this,
+        TackleFallImpactSound,
+        ContactLocation,
+        FRotator::ZeroRotator,
+        Volume,
+        1.0f,
+        0.0f,
+        TackleFallImpactSpatialization
+    );
+}
+
 bool ASoccerCharacterBase::TryStartTackle(
     ESoccerTackleSide TackleSide,
     const FVector& DesiredWorldDirection
@@ -448,6 +604,7 @@ bool ASoccerCharacterBase::TryStartTackle(
         return false;
     }
 
+    bTackleSlideAudioPlayed = false;
     ActiveTackleSide = TackleSide;
     ActiveTackleNormalizedTime = 0.0f;
     TacklePhase = ESoccerTacklePhase::Sliding;
@@ -861,6 +1018,9 @@ bool ASoccerCharacterBase::TryStartTackleFallReaction(
         Movement->MaxWalkSpeed,
         ActiveTackleFallInitialSpeed
     );
+
+    // New fall => allow one contact sound. Keep this independent of slide audio.
+    bTackleFallImpactAudioPlayed = false;
 
     const float PlayedDuration = AnimInstance->Montage_Play(Montage, 1.0f);
     if (PlayedDuration <= 0.0f)

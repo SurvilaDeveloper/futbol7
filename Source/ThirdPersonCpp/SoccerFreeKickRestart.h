@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "SoccerRestartState.h"
@@ -63,6 +63,9 @@ public:
 	bool IsCharacterTooClose(const ASoccerMatchManager& Manager, const ASoccerCharacterBase* Character) const;
 	bool ShouldDefendingCharacterFaceBall(const ASoccerAICharacter* SoccerAICharacter) const;
 	bool IsDefensiveWallMember(const ASoccerAICharacter* SoccerAICharacter) const;
+	// True only when this direct free kick actually created a defensive wall.
+	// Exposed read-only for the referee's authorization whistle.
+	bool HasActiveDefensiveWall() const { return bDefensiveWallActive; }
 
 	void RecalculateRunUpGeometry(ASoccerMatchManager& Manager);
 

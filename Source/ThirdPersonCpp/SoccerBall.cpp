@@ -13,6 +13,10 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "PhysicsEngine/BodyInstance.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+#include "Sound/SoundAttenuation.h"
+#include "GameFramework/Pawn.h"
 
 
 namespace
@@ -324,8 +328,97 @@ void ASoccerBall::BeginPlay()
     ResolveMatchManager();
     ResetPassiveCharacterBodyContactTracking(true);
 
+    // Spatialize the kick, but calculate loudness relative to the human
+    // player's actual position (not the third-person camera position).
+    // No extra .uasset is required for distance attenuation.
+    KickAudioSpatialization = NewObject<USoundAttenuation>(
+        this,
+        TEXT("KickAudioSpatialization")
+    );
+    if (KickAudioSpatialization != nullptr)
+    {
+        KickAudioSpatialization->Attenuation.bSpatialize = true;
+        KickAudioSpatialization->Attenuation.bAttenuate = false;
+    }
+
     bPredictionPossessed = !BallMesh->IsSimulatingPhysics();
     MarkTrajectoryChanged();
+}
+
+void ASoccerBall::PlayKickAudio(float LaunchSpeedCmPerSec)
+{
+    if (!bEnableKickAudio || GetWorld() == nullptr)
+    {
+        return;
+    }
+
+    // A throw-in, hand distribution or dribble does not call this helper.
+    const float WorldTime = GetWorld()->GetTimeSeconds();
+    if (WorldTime - LastKickAudioWorldTime <
+        FMath::Max(0.0f, KickAudioCooldownSeconds))
+    {
+        return;
+    }
+
+    const bool bStrongKick =
+        LaunchSpeedCmPerSec >= FMath::Max(0.0f, KickAudioStrongSpeedCmPerSec);
+    USoundBase* SoundToPlay = bStrongKick ? StrongKickSound : ShortKickSound;
+    if (SoundToPlay == nullptr)
+    {
+        SoundToPlay = bStrongKick ? ShortKickSound : StrongKickSound;
+    }
+    if (SoundToPlay == nullptr)
+    {
+        return;
+    }
+
+    const APawn* HumanPawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (HumanPawn == nullptr || !HumanPawn->IsLocallyControlled())
+    {
+        return;
+    }
+
+    const float NearDistance = FMath::Max(0.0f, KickAudioNearDistanceCm);
+    const float MaxDistance = FMath::Max(
+        NearDistance + 1.0f,
+        KickAudioMaxDistanceCm
+    );
+    const float DistanceToHuman = FVector::Dist2D(
+        GetActorLocation(),
+        HumanPawn->GetActorLocation()
+    );
+    if (DistanceToHuman >= MaxDistance)
+    {
+        return;
+    }
+
+    const float NormalizedDistance = FMath::Clamp(
+        (DistanceToHuman - NearDistance) / (MaxDistance - NearDistance),
+        0.0f,
+        1.0f
+    );
+    const float DistanceGain = FMath::Pow(1.0f - NormalizedDistance, 1.6f);
+    const float StrengthAlpha = FMath::Clamp(
+        LaunchSpeedCmPerSec / FMath::Max(1.0f, KickAudioStrongSpeedCmPerSec),
+        0.0f,
+        1.0f
+    );
+    const float Volume =
+        FMath::Clamp(KickAudioVolume, 0.0f, 2.0f) *
+        FMath::Lerp(0.70f, 1.0f, StrengthAlpha) * DistanceGain;
+    const float Pitch = FMath::Lerp(0.95f, 1.03f, StrengthAlpha);
+
+    UGameplayStatics::PlaySoundAtLocation(
+        this,
+        SoundToPlay,
+        GetActorLocation(),
+        FRotator::ZeroRotator,
+        Volume,
+        Pitch,
+        0.0f,
+        KickAudioSpatialization
+    );
+    LastKickAudioWorldTime = WorldTime;
 }
 
 ASoccerMatchManager* ASoccerBall::ResolveMatchManager()
@@ -1951,7 +2044,8 @@ PredictCrossingOfHorizontalPlane(
 void ASoccerBall::Kick(
     const FVector& Direction,
     float ForwardStrength,
-    float UpwardStrength
+    float UpwardStrength,
+    bool bPlayKickSound
 )
 {
     if (BallMesh == nullptr)
@@ -1998,6 +2092,10 @@ void ASoccerBall::Kick(
         NAME_None,
         true
     );
+    if (bPlayKickSound)
+    {
+        PlayKickAudio(Impulse.Size());
+    }
 
     MarkTrajectoryChanged();
 
@@ -2592,6 +2690,7 @@ void ASoccerBall::KickToTarget(
             );
 
         BallMesh->WakeAllRigidBodies();
+        PlayKickAudio(ScaledGroundPassSpeed);
 
         if (GEngine)
         {
@@ -2701,6 +2800,7 @@ void ASoccerBall::KickToTarget(
         );
 
     BallMesh->WakeAllRigidBodies();
+    PlayKickAudio(LaunchVelocity.Size());
 
     if (GEngine)
     {
@@ -2764,6 +2864,7 @@ void ASoccerBall::KickGroundToTarget(
         );
 
     BallMesh->WakeAllRigidBodies();
+    PlayKickAudio(ScaledHorizontalSpeed);
 
     if (GEngine)
     {
@@ -2785,7 +2886,8 @@ void ASoccerBall::KickToAirTarget(
     const FVector& TargetLocation,
     float HorizontalSpeed,
     float MinTravelTime,
-    float MaxTravelTime
+    float MaxTravelTime,
+    bool bPlayKickSound
 )
 {
     if (BallMesh == nullptr)
@@ -2894,6 +2996,10 @@ void ASoccerBall::KickToAirTarget(
 
     BallMesh->WakeAllRigidBodies();
     MarkTrajectoryChanged();
+    if (bPlayKickSound)
+    {
+        PlayKickAudio(LaunchVelocity.Size());
+    }
 
     if (GEngine)
     {
@@ -3006,6 +3112,7 @@ void ASoccerBall::ChargedKickToTarget(
         );
 
     BallMesh->WakeAllRigidBodies();
+    PlayKickAudio(LaunchVelocity.Size());
 
     if (GEngine)
     {

@@ -3233,7 +3233,8 @@ bool AThirdPersonCppCharacter::ReleaseHeldThrowInBallToAirTarget(
 		TargetLocation,
 		HorizontalSpeed,
 		MinTravelTime,
-		MaxTravelTime
+		MaxTravelTime,
+		false // Hand release, not a foot kick
 	);
 
 	HideAutoPassTargetMarker();

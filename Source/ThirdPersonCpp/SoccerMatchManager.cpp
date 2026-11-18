@@ -63,6 +63,7 @@
 #include "EngineUtils.h"
 #include "HAL/PlatformTime.h"
 #include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 #include "TimerManager.h"
 
@@ -131,7 +132,17 @@ void ASoccerMatchManager::ApplyPendingMatchStateTransition()
 		break;
 
 	case ESoccerMatchStateTransition::PenaltyExecution:
-		ActivateMatchState(MakeUnique<FSoccerPenaltyExecutionState>());
+		// The execution state is only reached once the goalkeeper and other
+		// players satisfy the penalty setup checks. Whistle after Enter succeeds.
+		if (ActivateMatchState(MakeUnique<FSoccerPenaltyExecutionState>()) &&
+			bWhistleForPenaltyAuthorization)
+		{
+			PlayRefereeWhistle(
+				RefereeWhistlePenaltyAuthorizationSound != nullptr
+					? RefereeWhistlePenaltyAuthorizationSound
+					: RefereeWhistleStoppageSound
+			);
+		}
 		break;
 
 	case ESoccerMatchStateTransition::OffsidePreparation:
@@ -147,7 +158,18 @@ void ASoccerMatchManager::ApplyPendingMatchStateTransition()
 		break;
 
 	case ESoccerMatchStateTransition::FaultExecution:
-		ActivateMatchState(MakeUnique<FSoccerFaultExecutionState>());
+		// This is a ceremonial direct free kick only when the restart actually
+		// formed a wall. Other free kicks (including offside) stay silent here.
+		if (ActivateMatchState(MakeUnique<FSoccerFaultExecutionState>()) &&
+			bWhistleForFreeKickWallAuthorization &&
+			FreeKickRestart.HasActiveDefensiveWall())
+		{
+			PlayRefereeWhistle(
+				RefereeWhistleFreeKickWallAuthorizationSound != nullptr
+					? RefereeWhistleFreeKickWallAuthorizationSound
+					: RefereeWhistleKickoffSound
+			);
+		}
 		break;
 
 	case ESoccerMatchStateTransition::CornerPreparation:
@@ -179,7 +201,12 @@ void ASoccerMatchManager::ApplyPendingMatchStateTransition()
 		break;
 
 	case ESoccerMatchStateTransition::KickoffExecution:
-		ActivateMatchState(MakeUnique<FSoccerKickoffExecutionState>());
+		if (ActivateMatchState(MakeUnique<FSoccerKickoffExecutionState>()) &&
+			!bRefereeKickoffWhistlePlayedForCurrentKickoff)
+		{
+			bRefereeKickoffWhistlePlayedForCurrentKickoff = true;
+			PlayRefereeWhistle(RefereeWhistleKickoffSound);
+		}
 		break;
 
 	case ESoccerMatchStateTransition::BallOutOfPlayDelay:
@@ -529,6 +556,10 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 	}
 
 	UpdateActiveMatchState(DeltaTime);
+
+	// Decide the final whistle only after the state machine has processed this
+	// frame (including an out-of-play detection or a completed restart).
+	TryEndMatchPeriodIfTimeElapsed();
 }
 
 void ASoccerMatchManager::UpdateGroundBodyContests(float DeltaTime)
@@ -1053,9 +1084,46 @@ void ASoccerMatchManager::InitializeMatchClock()
 	CurrentMatchPeriod = ESoccerMatchPeriod::FirstHalf;
 	CurrentHalfElapsedSeconds = 0.0f;
 	TotalMatchElapsedSeconds = 0.0f;
+	CurrentHalfAddedTimeSeconds = 0.0f;
+	ConsecutiveRestartDelaySeconds = 0.0f;
+	LivePlayAfterLateRestartSeconds = 0.0f;
+	FirstHalfActualElapsedSeconds = 0.0f;
+	bLateRestartRequiresLivePlay = false;
+	bCurrentHalfAddedTimeLocked = false;
 	HalfTimeElapsedSeconds = 0.0f;
 	bCurrentHalfClockStarted = false;
 	SetMatchPeriodHumanMoveLock(false);
+}
+
+bool ASoccerMatchManager::IsBallLiveForPeriodEnd() const
+{
+	return
+		IsValid(SoccerBall) &&
+		ActiveMatchState &&
+		ActiveMatchState->GetStateId() == ESoccerMatchStateId::Playing &&
+		MatchPlayState == ESoccerMatchPlayState::Playing &&
+		!IsRestartContextActive() &&
+		PendingMatchStateTransition == ESoccerMatchStateTransition::None;
+}
+
+float ASoccerMatchManager::GetMaximumAllowedAddedTimeSeconds() const
+{
+	if (!bEnableAddedTimeForRestarts)
+	{
+		return 0.0f;
+	}
+
+	const float SafeHalfDuration = FMath::Max(1.0f, HalfDurationSeconds);
+	return FMath::Min(
+		FMath::Max(0.0f, MaximumAddedTimeSeconds),
+		SafeHalfDuration * FMath::Clamp(MaximumAddedTimeFractionOfHalf, 0.0f, 1.0f)
+	);
+}
+
+float ASoccerMatchManager::GetCurrentHalfEndTimeSeconds() const
+{
+	return FMath::Max(1.0f, HalfDurationSeconds) +
+		GetCurrentHalfAddedTimeSeconds();
 }
 
 void ASoccerMatchManager::UpdateMatchClock(float DeltaTime)
@@ -1123,23 +1191,129 @@ void ASoccerMatchManager::UpdateMatchClock(float DeltaTime)
 		return;
 	}
 
-	const float SafeHalfDuration = FMath::Max(1.0f, HalfDurationSeconds);
-	CurrentHalfElapsedSeconds = FMath::Min(
-		SafeHalfDuration,
-		CurrentHalfElapsedSeconds + SafeDeltaTime
-	);
+	// Credit only the extra delay in preparation/execution of a real restart;
+	// a goal celebration, replay, freeze or out-of-play announcement does not
+	// artificially create added time. Game pauses were filtered above.
+	const bool bTakerWaitingForRestart =
+		bEnableAddedTimeForRestarts &&
+		!bCurrentHalfAddedTimeLocked &&
+		IsRestartContextActive() &&
+		ActiveMatchState &&
+		(
+			ActiveMatchState->GetPhase() == ESoccerStatePhase::Preparation ||
+			ActiveMatchState->GetPhase() == ESoccerStatePhase::Execution
+		);
 
-	const float CompletedHalfTime =
-		CurrentMatchPeriod == ESoccerMatchPeriod::SecondHalf
-		? SafeHalfDuration
-		: 0.0f;
+	if (bTakerWaitingForRestart)
+	{
+		const float PreviousDelay = ConsecutiveRestartDelaySeconds;
+		ConsecutiveRestartDelaySeconds += SafeDeltaTime;
+		const float GraceSeconds = FMath::Max(0.0f, RestartDelayFreeSeconds);
+		const float NewRecoverableDelay =
+			FMath::Max(0.0f, ConsecutiveRestartDelaySeconds - GraceSeconds);
+		const float OldRecoverableDelay =
+			FMath::Max(0.0f, PreviousDelay - GraceSeconds);
+		const float CreditedSeconds =
+			(NewRecoverableDelay - OldRecoverableDelay) *
+			FMath::Clamp(RestartDelayRecoveryFraction, 0.0f, 1.0f);
 
-	TotalMatchElapsedSeconds = FMath::Min(
-		SafeHalfDuration * 2.0f,
-		CompletedHalfTime + CurrentHalfElapsedSeconds
-	);
+		CurrentHalfAddedTimeSeconds = FMath::Min(
+			GetMaximumAllowedAddedTimeSeconds(),
+			CurrentHalfAddedTimeSeconds + CreditedSeconds
+		);
+	}
+	else
+	{
+		ConsecutiveRestartDelaySeconds = 0.0f;
+	}
 
-	if (CurrentHalfElapsedSeconds < SafeHalfDuration)
+	// Preserve the pre-transition ball state: a restart can turn into Playing
+	// later in this same Tick, precisely as the regulation limit is crossed.
+	const bool bBallWasLiveAtStartOfFrame = IsBallLiveForPeriodEnd();
+
+	// Continuous real time, including additional time (no clamp at regulation).
+	CurrentHalfElapsedSeconds += SafeDeltaTime;
+	if (
+		!bBallWasLiveAtStartOfFrame &&
+		CurrentHalfElapsedSeconds >= FMath::Max(1.0f, HalfDurationSeconds)
+	)
+	{
+		bLateRestartRequiresLivePlay = true;
+		LivePlayAfterLateRestartSeconds = 0.0f;
+	}
+
+	TotalMatchElapsedSeconds =
+		(CurrentMatchPeriod == ESoccerMatchPeriod::SecondHalf
+			? FirstHalfActualElapsedSeconds : 0.0f) +
+		CurrentHalfElapsedSeconds;
+
+	// The 5-second protection counts only actual live-ball seconds. A second
+	// stoppage resets the uninterrupted interval; pauses do not advance it.
+	if (bLateRestartRequiresLivePlay)
+	{
+		if (IsBallLiveForPeriodEnd())
+		{
+			LivePlayAfterLateRestartSeconds += SafeDeltaTime;
+		}
+		else
+		{
+			LivePlayAfterLateRestartSeconds = 0.0f;
+		}
+	}
+
+	// TryEndMatchPeriodIfTimeElapsed() runs AFTER the match state ticks, so
+	// no whistle can precede an out-of-play transition in the same frame.
+}
+
+void ASoccerMatchManager::TryEndMatchPeriodIfTimeElapsed()
+{
+	if (!bEnableMatchClock || !bCurrentHalfClockStarted)
+	{
+		return;
+	}
+
+	if (
+		CurrentMatchPeriod != ESoccerMatchPeriod::FirstHalf &&
+		CurrentMatchPeriod != ESoccerMatchPeriod::SecondHalf
+	)
+	{
+		return;
+	}
+
+	// Neither the official clock nor the referee advances during a pause.
+	if (GetWorld() != nullptr && UGameplayStatics::IsGamePaused(GetWorld()))
+	{
+		return;
+	}
+
+	const float RegulationSeconds = FMath::Max(1.0f, HalfDurationSeconds);
+	const bool bLiveBall = IsBallLiveForPeriodEnd();
+
+	// A restart active at regulation can still earn time until play resumes.
+	// Other interruptions after the allowance has been locked do not earn more.
+	if (bLiveBall && CurrentHalfElapsedSeconds >= RegulationSeconds)
+	{
+		bCurrentHalfAddedTimeLocked = true;
+	}
+
+	// Even when added time was earned, passing regulation during a pending
+	// restart guarantees live play after the ball is put back into motion.
+	if (!bLiveBall && CurrentHalfElapsedSeconds >= RegulationSeconds)
+	{
+		bLateRestartRequiresLivePlay = true;
+		LivePlayAfterLateRestartSeconds = 0.0f;
+	}
+
+	if (!bLiveBall || CurrentHalfElapsedSeconds < GetCurrentHalfEndTimeSeconds())
+	{
+		return;
+	}
+
+	if (
+		bLateRestartRequiresLivePlay &&
+		LivePlayAfterLateRestartSeconds <
+			FMath::Max(0.0f, MinimumLivePlayAfterLateRestartSeconds)
+	)
 	{
 		return;
 	}
@@ -1148,10 +1322,26 @@ void ASoccerMatchManager::UpdateMatchClock(float DeltaTime)
 	{
 		BeginHalfTime();
 	}
-	else if (CurrentMatchPeriod == ESoccerMatchPeriod::SecondHalf)
+	else
 	{
 		BeginFullTime();
 	}
+}
+
+void ASoccerMatchManager::PlayRefereeWhistle(USoundBase* SoundToPlay) const
+{
+	if (!bEnableRefereeWhistle || SoundToPlay == nullptr || GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	// Until a physical referee exists, use a consistent non-spatial sound.
+	// Audio is optional: unassigned assets do not affect match state.
+	UGameplayStatics::PlaySound2D(
+		this,
+		SoundToPlay,
+		FMath::Clamp(RefereeWhistleVolume, 0.0f, 2.0f)
+	);
 }
 
 void ASoccerMatchManager::StartCurrentHalfClockIfNeeded()
@@ -1179,13 +1369,13 @@ void ASoccerMatchManager::BeginHalfTime()
 		return;
 	}
 
-	const float SafeHalfDuration = FMath::Max(1.0f, HalfDurationSeconds);
-	CurrentHalfElapsedSeconds = SafeHalfDuration;
-	TotalMatchElapsedSeconds = SafeHalfDuration;
+	FirstHalfActualElapsedSeconds = CurrentHalfElapsedSeconds;
+	TotalMatchElapsedSeconds = FirstHalfActualElapsedSeconds;
 	HalfTimeElapsedSeconds = 0.0f;
 	bCurrentHalfClockStarted = false;
 	CurrentMatchPeriod = ESoccerMatchPeriod::HalfTime;
 
+	PlayRefereeWhistle(RefereeWhistleHalfTimeSound);
 	PrepareForMatchPeriodBreak();
 	InitializeHalfTimeFieldTransition();
 	SetMatchPeriodHumanMoveLock(true);
@@ -1210,6 +1400,12 @@ void ASoccerMatchManager::CompleteHalfTime()
 
 	CurrentMatchPeriod = ESoccerMatchPeriod::SecondHalf;
 	CurrentHalfElapsedSeconds = 0.0f;
+	TotalMatchElapsedSeconds = FirstHalfActualElapsedSeconds;
+	CurrentHalfAddedTimeSeconds = 0.0f;
+	ConsecutiveRestartDelaySeconds = 0.0f;
+	LivePlayAfterLateRestartSeconds = 0.0f;
+	bLateRestartRequiresLivePlay = false;
+	bCurrentHalfAddedTimeLocked = false;
 	HalfTimeElapsedSeconds = 0.0f;
 	bCurrentHalfClockStarted = false;
 
@@ -1233,12 +1429,12 @@ void ASoccerMatchManager::BeginFullTime()
 		return;
 	}
 
-	const float SafeHalfDuration = FMath::Max(1.0f, HalfDurationSeconds);
-	CurrentHalfElapsedSeconds = SafeHalfDuration;
-	TotalMatchElapsedSeconds = SafeHalfDuration * 2.0f;
+	TotalMatchElapsedSeconds = FirstHalfActualElapsedSeconds +
+		CurrentHalfElapsedSeconds;
 	bCurrentHalfClockStarted = false;
 	CurrentMatchPeriod = ESoccerMatchPeriod::FullTime;
 
+	PlayRefereeWhistle(RefereeWhistleFullTimeSound);
 	PrepareForMatchPeriodBreak();
 	SetMatchPeriodHumanMoveLock(true);
 
@@ -1392,6 +1588,32 @@ float ASoccerMatchManager::GetCurrentHalfElapsedSeconds() const
 	return CurrentHalfElapsedSeconds;
 }
 
+float ASoccerMatchManager::GetCurrentHalfAddedTimeSeconds() const
+{
+	const float MaximumAddedSeconds = GetMaximumAllowedAddedTimeSeconds();
+	const float EarnedSeconds = FMath::Clamp(
+		CurrentHalfAddedTimeSeconds, 0.0f, MaximumAddedSeconds
+	);
+	if (EarnedSeconds <= KINDA_SMALL_NUMBER)
+	{
+		return 0.0f;
+	}
+
+	const float RoundingSeconds = FMath::Max(1.0f, AddedTimeRoundingSeconds);
+	const float RoundedSeconds =
+		FMath::CeilToInt((EarnedSeconds - KINDA_SMALL_NUMBER) / RoundingSeconds) *
+		RoundingSeconds;
+	return FMath::Min(MaximumAddedSeconds, RoundedSeconds);
+}
+
+bool ASoccerMatchManager::IsCurrentHalfInAddedTime() const
+{
+	return
+		IsMatchPeriodGameplayActive() &&
+		bCurrentHalfClockStarted &&
+		CurrentHalfElapsedSeconds >= FMath::Max(1.0f, HalfDurationSeconds);
+}
+
 float ASoccerMatchManager::GetTotalMatchElapsedSeconds() const
 {
 	return TotalMatchElapsedSeconds;
@@ -1399,20 +1621,16 @@ float ASoccerMatchManager::GetTotalMatchElapsedSeconds() const
 
 float ASoccerMatchManager::GetCurrentHalfProgress() const
 {
-	const float SafeHalfDuration = FMath::Max(1.0f, HalfDurationSeconds);
-
-	if (CurrentMatchPeriod == ESoccerMatchPeriod::FullTime)
-	{
-		return 1.0f;
-	}
-
-	if (CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime)
+	if (
+		CurrentMatchPeriod == ESoccerMatchPeriod::FullTime ||
+		CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime
+	)
 	{
 		return 1.0f;
 	}
 
 	return FMath::Clamp(
-		CurrentHalfElapsedSeconds / SafeHalfDuration,
+		CurrentHalfElapsedSeconds / GetCurrentHalfEndTimeSeconds(),
 		0.0f,
 		1.0f
 	);
@@ -1420,9 +1638,19 @@ float ASoccerMatchManager::GetCurrentHalfProgress() const
 
 float ASoccerMatchManager::GetMatchProgress() const
 {
-	const float SafeMatchDuration = FMath::Max(2.0f, HalfDurationSeconds * 2.0f);
+	if (CurrentMatchPeriod == ESoccerMatchPeriod::FullTime)
+	{
+		return 1.0f;
+	}
+	if (CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime)
+	{
+		return 0.5f;
+	}
+
+	const float HalfIndex =
+		CurrentMatchPeriod == ESoccerMatchPeriod::SecondHalf ? 1.0f : 0.0f;
 	return FMath::Clamp(
-		TotalMatchElapsedSeconds / SafeMatchDuration,
+		(HalfIndex + GetCurrentHalfProgress()) * 0.5f,
 		0.0f,
 		1.0f
 	);
@@ -6929,6 +7157,7 @@ void ASoccerMatchManager::HandleOffsideOffense(
 			SoccerBall->GetActorLocation().Z;
 	}
 
+	PlayRefereeWhistle(RefereeWhistleStoppageSound);
 	StartOffsideFreezePresentation(
 		RestartTeam,
 		RestartLocation
@@ -7063,9 +7292,12 @@ void ASoccerMatchManager::StartDirectFreeKickRestart(
 	const FVector& RestartLocation
 )
 {
-	ActivateMatchState(
+	if (ActivateMatchState(
 		MakeUnique<FSoccerFaultConfigurationState>(RestartTeam, RestartLocation)
-	);
+	))
+	{
+		PlayRefereeWhistle(RefereeWhistleStoppageSound);
+	}
 }
 
 bool ASoccerMatchManager::IsOffsideRestartActive() const
@@ -7347,12 +7579,17 @@ bool ASoccerMatchManager::BeginPenaltyFoulDelay(
 	const FVector& IncidentLocation
 )
 {
-	return ActivateMatchState(
+	const bool bStarted = ActivateMatchState(
 		MakeUnique<FSoccerPenaltyFoulDelayState>(
 			RestartTeam,
 			IncidentLocation
 		)
 	);
+	if (bStarted)
+	{
+		PlayRefereeWhistle(RefereeWhistleStoppageSound);
+	}
+	return bStarted;
 }
 
 bool ASoccerMatchManager::StartPenaltyKickRestart(
@@ -21303,6 +21540,17 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 	// Esto evita que SoccerGoalTrigger vuelva a contar el mismo gol.
 	MatchPlayState = ESoccerMatchPlayState::GoalScored;
 
+	// Only a validated goal reaches this point. Sound before the goal replay;
+	// the subsequent kickoff keeps its existing, independent authorization.
+	if (bWhistleOnValidatedGoal)
+	{
+		PlayRefereeWhistle(
+			RefereeWhistleGoalSound != nullptr
+				? RefereeWhistleGoalSound
+				: RefereeWhistleKickoffSound
+		);
+	}
+
 	// Cortamos la lógica de posesión/juego, pero NO tocamos la física
 	// ni la posición de la pelota. Queremos verla seguir dentro del arco.
 	PossessionTeam = ESoccerPossessionTeam::None;
@@ -23171,6 +23419,11 @@ float ASoccerMatchManager::GetFormationNeutralDepthAlphaForRole(
 
 void ASoccerMatchManager::StartKickoff(ESoccerTeam TeamTakingKickoff)
 {
+	// Reconfiguring the SAME kickoff does not cause a second whistle.
+	if (!IsKickoffMatchStateActive())
+	{
+		bRefereeKickoffWhistlePlayedForCurrentKickoff = false;
+	}
 	if (!ActivateMatchState(
 		MakeUnique<FSoccerKickoffConfigurationState>(TeamTakingKickoff)
 	))

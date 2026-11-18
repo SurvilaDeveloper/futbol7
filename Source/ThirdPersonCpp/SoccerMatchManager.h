@@ -29,6 +29,7 @@ class AThirdPersonCppCharacter;
 class ASoccerOffsideLineActor;
 class ASoccerRestartRadiusActor;
 class ASoccerInstantReplayManager;
+class USoundBase;
 class UCurveTable;
 class USkeletalMesh;
 class USoccerPlayerAppearanceCatalog;
@@ -304,6 +305,13 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match|Time")
 	float GetCurrentHalfElapsedSeconds() const;
+
+	// Additional seconds awarded for lengthy restarts in the current half.
+	UFUNCTION(BlueprintPure, Category = "Soccer|Match|Time")
+	float GetCurrentHalfAddedTimeSeconds() const;
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Match|Time")
+	bool IsCurrentHalfInAddedTime() const;
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match|Time")
 	float GetTotalMatchElapsedSeconds() const;
@@ -1059,7 +1067,12 @@ bool IsPenaltyMatchStateActive() const;
 
 	void InitializeMatchClock();
 	void UpdateMatchClock(float DeltaTime);
+	void TryEndMatchPeriodIfTimeElapsed();
+	bool IsBallLiveForPeriodEnd() const;
+	float GetMaximumAllowedAddedTimeSeconds() const;
+	float GetCurrentHalfEndTimeSeconds() const;
 	void StartCurrentHalfClockIfNeeded();
+	void PlayRefereeWhistle(USoundBase* SoundToPlay) const;
 	void BeginHalfTime();
 	void CompleteHalfTime();
 	void BeginFullTime();
@@ -3758,6 +3771,34 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time", meta = (ClampMin = "1.0", UIMin = "5.0"))
 	float HalfDurationSeconds = 300.0f;
 
+	// Time wasted while players prepare or execute a restart can be restored.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time|Added Time")
+	bool bEnableAddedTimeForRestarts = true;
+
+	// The first few seconds of each restart are considered normal setup time.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time|Added Time", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float RestartDelayFreeSeconds = 5.0f;
+
+	// How many seconds are credited for each second beyond the free interval.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time|Added Time", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float RestartDelayRecoveryFraction = 1.0f;
+
+	// Official additional time is displayed and awarded in blocks of 10 s.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time|Added Time", meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float AddedTimeRoundingSeconds = 10.0f;
+
+	// Upper bounds; both apply. Defaults: at most 120 s in a 300 s half.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time|Added Time", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float MaximumAddedTimeSeconds = 120.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time|Added Time", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float MaximumAddedTimeFractionOfHalf = 0.40f;
+
+	// When regulation time expires during a dead ball, require this much
+	// uninterrupted live play after the restart before blowing the whistle.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time|Added Time", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float MinimumLivePlayAfterLateRestartSeconds = 5.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float HalfTimeDurationSeconds = 3.0f;
 
@@ -3776,9 +3817,64 @@ bool IsPenaltyMatchStateActive() const;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Soccer|Match|Time", meta = (AllowPrivateAccess = "true"))
 	float TotalMatchElapsedSeconds = 0.0f;
 
+	// Reset at the start of each half. The clock itself always shows real time.
+	float CurrentHalfAddedTimeSeconds = 0.0f;
+	float ConsecutiveRestartDelaySeconds = 0.0f;
+	float LivePlayAfterLateRestartSeconds = 0.0f;
+	float FirstHalfActualElapsedSeconds = 0.0f;
+	bool bLateRestartRequiresLivePlay = false;
+	// Once regulation time is passed in open play, the award cannot increase.
+	// If a restart is already under way, finish measuring it before locking.
+	bool bCurrentHalfAddedTimeLocked = false;
+
 	float HalfTimeElapsedSeconds = 0.0f;
 	bool bCurrentHalfClockStarted = false;
 	bool bMatchPeriodAppliedMoveInputLock = false;
+
+	// ============================================================
+	// REFEREE AUDIO. Set the WAVs (imported as Sound Wave assets) on the
+	// placed SoccerMatchManager or its Blueprint. Unassigned sounds are silent.
+	// ============================================================
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	bool bEnableRefereeWhistle = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.0"))
+	float RefereeWhistleVolume = 0.65f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	USoundBase* RefereeWhistleKickoffSound = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	USoundBase* RefereeWhistleStoppageSound = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	USoundBase* RefereeWhistleHalfTimeSound = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	USoundBase* RefereeWhistleFullTimeSound = nullptr;
+
+	// Extra events. Custom sounds are optional: the original Kickoff/Stoppage
+	// sounds are used when the corresponding override is not assigned.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	bool bWhistleOnValidatedGoal = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	USoundBase* RefereeWhistleGoalSound = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	bool bWhistleForPenaltyAuthorization = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	USoundBase* RefereeWhistlePenaltyAuthorizationSound = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	bool bWhistleForFreeKickWallAuthorization = true;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Audio|Referee")
+	USoundBase* RefereeWhistleFreeKickWallAuthorizationSound = nullptr;
+
+	// Avoid repeated sounds when the same kickoff temporarily re-enters Execution.
+	bool bRefereeKickoffWhistlePlayedForCurrentKickoff = false;
 
 	// ============================================================
 	// HALF-TIME FIELD TRANSITION
