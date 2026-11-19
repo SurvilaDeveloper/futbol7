@@ -958,32 +958,34 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 	BuildTacticsPage(TacticsPage);
 	BuildInstructionsPage(InstructionsPage);
 
-	// Quiet, single-line contextual footer. The close action lives in the header.
-	UHorizontalBox* FooterRow = WidgetTree->ConstructWidget<UHorizontalBox>();
-	AddVerticalChild(MainColumn, FooterRow, FMargin(0.0f, 2.0f, 0.0f, 0.0f));
+	// Stage 4E: two independent, wrapping footer lines. Previously StatusText
+	// (Fill) and ControlHintText (Auto) shared a horizontal row; long hints
+	// consumed the status area and both strings painted over each other.
+	UBorder* CoachFooterBar = WidgetTree->ConstructWidget<UBorder>();
+	CoachFooterBar->SetBrushColor(FLinearColor(0.025f, 0.047f, 0.065f, 0.94f));
+	CoachFooterBar->SetPadding(FMargin(8.0f, 5.0f));
+	AddVerticalChild(MainColumn, CoachFooterBar, FMargin(0.0f, 5.0f, 0.0f, 0.0f));
+	UVerticalBox* CoachFooterColumn = WidgetTree->ConstructWidget<UVerticalBox>();
+	CoachFooterBar->AddChild(CoachFooterColumn);
 
 	StatusText = MakeTextBlock(
 		WidgetTree,
 		TEXT("Listo."),
 		FLinearColor(0.72f, 0.86f, 0.96f, 1.0f),
-		16
+		15
 	);
-	AddHorizontalChild(
-		FooterRow,
-		StatusText,
-		FMargin(0.0f, 0.0f, 30.0f, 0.0f),
-		ESlateSizeRule::Fill,
-		VAlign_Center
-	);
+	StatusText->SetAutoWrapText(true);
+	AddVerticalChild(CoachFooterColumn, StatusText, FMargin(0.0f, 0.0f, 0.0f, 3.0f));
 
 	ControlHintText = MakeTextBlock(
 		WidgetTree,
-		TEXT("Mouse: cambiar   Flechas: navegar/cambiar   PgUp/PgDn: sección   Enter: cambiar   M/Esc: cerrar"),
+		TEXT("Flechas: navegar   Enter: confirmar   PgUp/PgDn: pestaña   Esc: volver"),
 		MutedText,
-		15
+		13
 	);
-	ControlHintText->SetJustification(ETextJustify::Right);
-	AddHorizontalChild(FooterRow, ControlHintText, FMargin(0.0f), ESlateSizeRule::Automatic, VAlign_Center);
+	ControlHintText->SetAutoWrapText(true);
+	ControlHintText->SetJustification(ETextJustify::Left);
+	AddVerticalChild(CoachFooterColumn, ControlHintText);
 
 	// Stage 16D2: destructive preset deletion gets its own modal layer.
 	// The full-screen border blocks mouse interaction with the coach menu below.
@@ -3181,22 +3183,22 @@ void USoccerFormationMenuWidget::RefreshControlHints()
 	{
 		Hint =
 			LastInputDevice == ECoachMenuInputDevice::Gamepad
-			? TEXT("LB/RB: sección   Arr/Ab: jugador   Izq/Der: puesto   A: asignar   Mouse: formación/banco   Menu/Options: cerrar")
-			: TEXT("Mouse: seleccionar/asignar   Arr/Ab: jugador   Izq/Der: puesto   Enter: asignar   PgUp/PgDn: sección   M/Esc: cerrar");
+			? TEXT("LB/RB: pestaña   ↑↓: jugador   ←→: puesto   A: asignar   Menu: cerrar")
+			: TEXT("↑↓: jugador   ←→: puesto   Enter: asignar   PgUp/PgDn: pestaña   Esc/M: cerrar");
 	}
 	else if (ActiveTab == ECoachMenuTab::Presets)
 	{
 		Hint =
 			LastInputDevice == ECoachMenuInputDevice::Gamepad
-			? TEXT("LB/RB: sección   Arr/Ab: juego/usuario/JSON   Izq/Der: elegir   A: aplicar/importar   Menu/Options: cerrar")
-			: TEXT("Mouse: gestionar   Arr/Ab: juego/usuario/JSON   Izq/Der: elegir   Enter: aplicar/importar   PgUp/PgDn: sección   M/Esc: cerrar");
+			? TEXT("LB/RB: pestaña   ↑↓: selector   ←→: elegir   A: aplicar   Menu: cerrar")
+			: TEXT("↑↓: selector   ←→: elegir   Enter: aplicar   PgUp/PgDn: pestaña   Esc/M: cerrar");
 	}
 	else
 	{
 		Hint =
 			LastInputDevice == ECoachMenuInputDevice::Gamepad
-			? TEXT("LB/RB: sección   D-Pad/Stick: navegar/cambiar   A: cambiar   Menu/Options: cerrar")
-			: TEXT("Mouse: cambiar   Flechas: navegar/cambiar   PgUp/PgDn: sección   Enter: cambiar   M/Esc: cerrar");
+			? TEXT("LB/RB: pestaña   Cruceta/Stick: navegar   A: cambiar   Menu: cerrar")
+			: TEXT("Flechas: navegar/cambiar   Enter: confirmar   PgUp/PgDn: pestaña   Esc/M: cerrar");
 	}
 
 	ControlHintText->SetText(FText::FromString(Hint));
@@ -3221,13 +3223,13 @@ void USoccerFormationMenuWidget::SetTabGuidanceMessage()
 	{
 	case ECoachMenuTab::Squad:
 		SetStatusMessage(
-			TEXT("Plantel: elegí futbolistas, formación guardada, titulares y suplentes. Cada cambio se guarda automáticamente.")
+			TEXT("Plantel: elegí jugador y puesto. Los cambios se guardan automáticamente.")
 		);
 		break;
 
 	case ECoachMenuTab::Presets:
 		SetStatusMessage(
-			TEXT("Presets: aplicá o duplicá plantillas DEL JUEGO; administrá MIS PRESETS y copias portables en JSON.")
+			TEXT("Presets: elegí, aplicá o guardá estrategias; también podés importar/exportar JSON.")
 		);
 		break;
 

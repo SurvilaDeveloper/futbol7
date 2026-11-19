@@ -20,6 +20,7 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
+#include "Components/ScrollBox.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "GameFramework/PlayerController.h"
@@ -288,8 +289,12 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
 	PanelSlot->SetAnchors(FAnchors(0.14f, 0.10f, 0.86f, 0.90f));
 	PanelSlot->SetOffsets(FMargin(0.0f));
 
+	// Stage 4E: content scrolls when font scale or a small viewport makes
+	// the panel shorter. All buttons remain reachable rather than overlapping.
+	UScrollBox* MenuContentViewport = WidgetTree->ConstructWidget<UScrollBox>();
+	Panel->AddChild(MenuContentViewport);
 	UVerticalBox* Main = WidgetTree->ConstructWidget<UVerticalBox>();
-	Panel->AddChild(Main);
+	MenuContentViewport->AddChild(Main);
 	UHorizontalBox* Header = WidgetTree->ConstructWidget<UHorizontalBox>();
 	AddVertical(Main, Header, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 	AddHorizontal(Header, MakeText(WidgetTree, TEXT("CAMBIOS"), 30), FMargin(0.0f, 0.0f, 20.0f, 0.0f), ESlateSizeRule::Fill);
@@ -298,6 +303,7 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
 	AddHorizontal(Header, CloseMenuButton);
 
 	SummaryText = MakeText(WidgetTree, TEXT("--"), 18, MutedText);
+	SummaryText->SetAutoWrapText(true);
 	AddVertical(Main, SummaryText, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
 	auto BuildSelector = [this, Main](
@@ -342,8 +348,10 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
     IncomingNextButton = InNext;
 
 	ComparisonText = MakeText(WidgetTree, TEXT("--"), 18, FLinearColor(0.82f, 0.90f, 0.96f, 1.0f));
+	ComparisonText->SetAutoWrapText(true);
 	AddVertical(Main, ComparisonText, FMargin(0.0f, 8.0f, 0.0f, 14.0f));
 	PendingText = MakeText(WidgetTree, TEXT("--"), 17, FLinearColor(1.0f, 0.82f, 0.38f, 1.0f));
+	PendingText->SetAutoWrapText(true);
 	AddVertical(Main, PendingText, FMargin(0.0f, 0.0f, 0.0f, 16.0f));
 
 	UHorizontalBox* Actions = WidgetTree->ConstructWidget<UHorizontalBox>();
@@ -356,6 +364,7 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
 	AddHorizontal(Actions, CancelButton, FMargin(12.0f, 0.0f, 0.0f, 0.0f), ESlateSizeRule::Fill);
 
 	StatusText = MakeText(WidgetTree, TEXT("Listo."), 16, MutedText);
+    StatusText->SetAutoWrapText(true);
 	AddVertical(Main, StatusText, FMargin(0.0f, 0.0f, 0.0f, 8.0f));
 	UTextBlock* Help = MakeText(
 		WidgetTree,

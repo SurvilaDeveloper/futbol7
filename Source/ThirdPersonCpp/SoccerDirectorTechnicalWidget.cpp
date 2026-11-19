@@ -357,6 +357,7 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
         DirectorMuted
     );
     DataSourceText->SetJustification(ETextJustify::Right);
+    DataSourceText->SetAutoWrapText(true);
     AddDirectorHorizontalChild(
         FormationHeader,
         DataSourceText,
@@ -365,13 +366,19 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
         VAlign_Center
     );
 
-    UHorizontalBox* BodyRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+    // Stage 4E: the complete plantel body scrolls within the available
+    // height. The formation pitch and the bench can together exceed the page
+    // height at 720p; the summary below must remain separate and visible.
+    UScrollBox* PlantelBodyViewport = WidgetTree->ConstructWidget<UScrollBox>();
+    PlantelBodyViewport->SetOrientation(Orient_Vertical);
     AddDirectorVerticalChild(
         RootColumn,
-        BodyRow,
+        PlantelBodyViewport,
         FMargin(0.0f),
         ESlateSizeRule::Fill
     );
+    UHorizontalBox* BodyRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+    PlantelBodyViewport->AddChild(BodyRow);
 
     // Left: complete squad list.
     USizeBox* RosterSize = WidgetTree->ConstructWidget<USizeBox>();
@@ -609,18 +616,23 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
         ESlateSizeRule::Fill
     );
 
+    // Own, compact context bar: it is outside the scroll viewport.
+    UBorder* SelectionSummaryBar = WidgetTree->ConstructWidget<UBorder>();
+    SelectionSummaryBar->SetBrushColor(FLinearColor(0.025f, 0.057f, 0.069f, 0.96f));
+    SelectionSummaryBar->SetPadding(FMargin(6.0f, 4.0f));
+    AddDirectorVerticalChild(
+        RootColumn,
+        SelectionSummaryBar,
+        FMargin(0.0f, 5.0f, 0.0f, 0.0f)
+    );
     SelectionSummaryText = MakeDirectorText(
         WidgetTree,
-        TEXT("Seleccioná un futbolista y después un puesto."),
-        14,
+        TEXT("Elegí jugador y puesto; Enter/A para asignar."),
+        13,
         DirectorMuted
     );
     SelectionSummaryText->SetAutoWrapText(true);
-    AddDirectorVerticalChild(
-        RootColumn,
-        SelectionSummaryText,
-        FMargin(0.0f, 8.0f, 0.0f, 0.0f)
-    );
+    SelectionSummaryBar->AddChild(SelectionSummaryText);
 
     StyleEditor = NewObject<USoccerUIStyleEditorController>(this);
     TArray<FSoccerEditableStyleField> EditableStyleFields;
@@ -1478,7 +1490,7 @@ void USoccerDirectorTechnicalWidget::RefreshSelectionSummary()
     SelectionSummaryText->SetText(
         FText::FromString(
             FString::Printf(
-                TEXT("Seleccionado: %s | Puesto objetivo: %s. Click en un puesto (o Enter/A) para asignar; el autosave es inmediato."),
+                TEXT("%s  |  Puesto: %s  |  Enter/A: asignar  |  Guardado automático"),
                 *GetPlayerDisplayName(SelectedPlayerId),
                 FocusedFormationSlotId.IsNone()
                     ? TEXT("--")

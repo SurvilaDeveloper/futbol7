@@ -15,6 +15,7 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
+#include "Components/ScrollBox.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "GameFramework/PlayerController.h"
@@ -307,8 +308,12 @@ void USoccerQuickTacticsWidget::BuildWidgetTree()
 	PanelSlot->SetPosition(FVector2D(-34.0f, 0.0f));
 	PanelSlot->SetSize(FVector2D(430.0f, 390.0f));
 
+	// Stage 4E: a short viewport or large text must never obscure the
+	// final Apply/Cancel actions. Keep the entire panel content scrollable.
+	UScrollBox* QuickMenuViewport = WidgetTree->ConstructWidget<UScrollBox>();
+	Panel->AddChild(QuickMenuViewport);
 	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>();
-	Panel->AddChild(Column);
+	QuickMenuViewport->AddChild(Column);
 
 	UTextBlock* Title = MakeQuickText(
 		WidgetTree,
@@ -333,6 +338,7 @@ void USoccerQuickTacticsWidget::BuildWidgetTree()
 		14,
 		FLinearColor(0.82f, 0.94f, 1.0f, 1.0f)
 	);
+	ActivePresetText->SetAutoWrapText(true);
 	AddQuickVerticalChild(Column, ActivePresetText, FMargin(0.0f, 0.0f, 0.0f, 10.0f));
 
 	QuickSlotButtons.Empty();
@@ -383,7 +389,7 @@ void USoccerQuickTacticsWidget::BuildWidgetTree()
 
 	StatusText = MakeQuickText(
 		WidgetTree,
-		TEXT("Flechas / cruceta / stick: elegir   Enter / A: aplicar   B / Esc: cerrar"),
+		TEXT("Flechas/Cruceta/Stick: elegir   Enter/A: aplicar   Esc/B: cerrar"),
 		12,
 		FLinearColor(0.60f, 0.68f, 0.74f, 1.0f)
 	);
