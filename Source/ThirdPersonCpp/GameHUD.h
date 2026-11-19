@@ -50,6 +50,8 @@ private:
 	void FindMatchManager();
 	void EnsureTacticalPresetManager();
 	void DrawQuickTacticsFeedback();
+	void DrawPlayerStatusPanel();
+	void DrawRightStatusCard(const FString& Message, const FLinearColor& TextColor, float FontScale);
 	void DrawInstantReplayOverlay();
 	void DrawSubstitutionPresentation();
 	FString ResolvePlayerDisplayName(FName PlayerId) const;
@@ -91,6 +93,11 @@ private:
 
 	UPROPERTY()
 		USoccerTacticalPresetManager* TacticalPresetManager = nullptr;
+
+	// Calculated every DrawHUD: keeps overlays separated at different resolutions.
+	float HUDTopBandBottomY = 0.0f;
+	float HUDRightStatusNextY = 0.0f;
+	float HUDMainAnnouncementBottomY = 0.0f;
 
     uint32 ObservedAnnouncementRevision = 0;
     FString MatchAnnouncementTitle;
