@@ -1,6 +1,7 @@
 #include "SoccerUIStyleEditorController.h"
 #include "SoccerUITheme.h"
 #include "SoccerUINavigation.h"
+#include "SoccerSquadViewerWidget.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
@@ -12,6 +13,8 @@
 #include "Components/HorizontalBox.h"
 #include "Components/PanelWidget.h"
 #include "Components/ScrollBox.h"
+#include "Components/SizeBox.h"
+#include "Components/Slider.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -55,6 +58,36 @@ namespace SoccerRuntimeStyleInternal
         Out = FLinearColor(C.R / 255.f, C.G / 255.f, C.B / 255.f, C.A / 255.f);
         return true;
     }
+}
+
+void USoccerUIStyleFieldInputBridge::Initialize(USoccerUIStyleEditorController* InOwner, FName InKey)
+{
+    EditorOwner = InOwner;
+    FieldKey = InKey;
+}
+
+void USoccerUIStyleFieldInputBridge::InitializeViewer(USoccerSquadViewerWidget* InOwner, FName InKey)
+{
+    ViewerOwner = InOwner;
+    FieldKey = InKey;
+}
+
+void USoccerUIStyleFieldInputBridge::HandleSliderChanged(float NewValue)
+{
+    if (EditorOwner) EditorOwner->HandleNumberInput(FieldKey, NewValue);
+    if (ViewerOwner) ViewerOwner->HandleStyleSliderInput(FieldKey, NewValue);
+}
+
+void USoccerUIStyleFieldInputBridge::HandlePaletteChanged(FString Item, ESelectInfo::Type SelectionType)
+{
+    if (EditorOwner) EditorOwner->HandlePaletteInput(FieldKey, Item);
+    if (ViewerOwner) ViewerOwner->HandleStylePaletteInput(FieldKey, Item);
+}
+
+void USoccerUIStyleFieldInputBridge::HandleHexChanged(const FText& NewText)
+{
+    if (EditorOwner) EditorOwner->HandleHexInput(FieldKey, NewText);
+    if (ViewerOwner) ViewerOwner->HandleStyleHexInput(FieldKey, NewText);
 }
 
 FSoccerEditableStyleField FSoccerEditableStyleField::Number(
@@ -102,42 +135,109 @@ FString USoccerUIStyleEditorController::NormalizeValue(
     return FString::SanitizeFloat(FMath::Clamp(Parsed, Field.MinValue, Field.MaxValue));
 }
 
-void USoccerUIStyleEditorController::Load()
+bool USoccerUIStyleEditorController::ReadValues(const FString& FullPath)
 {
-    Values.Reset();
-    for (const FSoccerEditableStyleField& Field : Fields)
-    {
-        Values.Add(Field.Key, Field.DefaultValue);
-    }
-    FString Saved;
-    if (!FFileHelper::LoadFileToString(Saved, *ConfigFilePath())) return;
+    FString SavedText;
+    if (!FFileHelper::LoadFileToString(SavedText, *FullPath)) return false;
     TArray<FString> Lines;
-    Saved.ParseIntoArrayLines(Lines);
+    SavedText.ParseIntoArrayLines(Lines);
     for (const FString& Line : Lines)
     {
         FString Key, Value;
         if (!Line.Split(TEXT("="), &Key, &Value)) continue;
+        Key.TrimStartAndEndInline();
         for (const FSoccerEditableStyleField& Field : Fields)
         {
-            if (Field.Key.ToString() == Key.TrimStartAndEnd())
+            if (Field.Key.ToString() == Key)
             {
                 Values.Add(Field.Key, NormalizeValue(Field, Value));
                 break;
             }
         }
     }
+    return true;
+}
+
+void USoccerUIStyleEditorController::Load()
+{
+    Values.Reset();
+    for (const FSoccerEditableStyleField& Field : Fields)
+        Values.Add(Field.Key, Field.DefaultValue);
+    ReadValues(ConfigFilePath());
+}
+
+bool USoccerUIStyleEditorController::WriteValues(const FString& FullPath) const
+{
+    FString Output = TEXT("; Temporary football UI style values, editable in game.\n");
+    for (const FSoccerEditableStyleField& Field : Fields)
+        Output += Field.Key.ToString() + TEXT("=") + Values.FindRef(Field.Key) + TEXT("\n");
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(FullPath), true);
+    return FFileHelper::SaveStringToFile(Output, *FullPath);
 }
 
 bool USoccerUIStyleEditorController::Save() const
 {
-    FString Output = TEXT("; Temporary football UI style values, editable in game.\n");
-    for (const FSoccerEditableStyleField& Field : Fields)
+    return WriteValues(ConfigFilePath());
+}
+
+bool USoccerUIStyleEditorController::HasSnapshotChanged() const
+{
+    if (!Snapshots.IsValidIndex(SnapshotIndex)) return true;
+    const TMap<FName, FString>& Previous = Snapshots[SnapshotIndex];
+    if (Previous.Num() != Values.Num()) return true;
+    for (const TPair<FName, FString>& Entry : Values)
     {
-        Output += Field.Key.ToString() + TEXT("=") + Values.FindRef(Field.Key) + TEXT("\n");
+        const FString* OldValue = Previous.Find(Entry.Key);
+        if (!OldValue || *OldValue != Entry.Value) return true;
     }
-    const FString Path = ConfigFilePath();
-    IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
-    return FFileHelper::SaveStringToFile(Output, *Path);
+    return false;
+}
+
+void USoccerUIStyleEditorController::PushSnapshot()
+{
+    if (!HasSnapshotChanged()) return;
+    if (SnapshotIndex + 1 < Snapshots.Num())
+        Snapshots.RemoveAt(SnapshotIndex + 1, Snapshots.Num() - SnapshotIndex - 1);
+    Snapshots.Add(Values);
+    if (Snapshots.Num() > 30) Snapshots.RemoveAt(0);
+    SnapshotIndex = Snapshots.Num() - 1;
+}
+
+void USoccerUIStyleEditorController::ApplySnapshot(int32 NewIndex)
+{
+    if (!Snapshots.IsValidIndex(NewIndex)) return;
+    SnapshotIndex = NewIndex;
+    Values = Snapshots[SnapshotIndex];
+    RefreshEditors();
+    OnApplied.Broadcast();
+}
+
+FString USoccerUIStyleEditorController::SelectedPresetPath() const
+{
+    const FString Chosen = LocalPresetChoice ? LocalPresetChoice->GetSelectedOption() : TEXT("A");
+    const FString SafeSlot = Chosen == TEXT("B") ? TEXT("B") : Chosen == TEXT("C") ? TEXT("C") : TEXT("A");
+    return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("SoccerUI"), TEXT("Presets"),
+        FileName + TEXT("_Preset_") + SafeSlot + TEXT(".ini"));
+}
+
+bool USoccerUIStyleEditorController::ExportAllStyles(FString& OutPath)
+{
+    const FString Root = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("SoccerUI"));
+    TArray<FString> FileNames;
+    IFileManager::Get().FindFiles(FileNames, *(FPaths::Combine(Root, TEXT("*.ini"))), true, false);
+    FileNames.Sort();
+    FString AllText = TEXT("; Soccer UI - exportacion para revision (no importar directamente)\n");
+    int32 Count = 0;
+    for (const FString& Entry : FileNames)
+    {
+        FString FileText;
+        if (!FFileHelper::LoadFileToString(FileText, *FPaths::Combine(Root, Entry))) continue;
+        AllText += TEXT("\n========== ") + Entry + TEXT(" ==========\n") + FileText + TEXT("\n");
+        ++Count;
+    }
+    if (Count == 0) return false;
+    OutPath = FPaths::Combine(Root, TEXT("SoccerUIStyles_Export.txt"));
+    return FFileHelper::SaveStringToFile(AllText, *OutPath);
 }
 
 void USoccerUIStyleEditorController::Setup(UWidgetTree* Tree, UCanvasPanel* Canvas,
@@ -147,6 +247,9 @@ void USoccerUIStyleEditorController::Setup(UWidgetTree* Tree, UCanvasPanel* Canv
     FileName = ConfigName;
     Fields = InFields;
     Load();
+    Snapshots.Reset();
+    SnapshotIndex = INDEX_NONE;
+    PushSnapshot();
 
     UButton* Toggle = SoccerRuntimeStyleInternal::Action(Tree, TEXT("ESTILOS"));
     StyleToggleButton = Toggle;
@@ -165,7 +268,7 @@ void USoccerUIStyleEditorController::Setup(UWidgetTree* Tree, UCanvasPanel* Canv
     DrawerCanvasSlot->SetAnchors(FAnchors(1.f, .5f));
     DrawerCanvasSlot->SetAlignment(FVector2D(1.f, .5f));
     DrawerCanvasSlot->SetPosition(FVector2D(-16.f, 0.f));
-    DrawerCanvasSlot->SetSize(FSoccerUITheme::FitPanelToViewport(GetOuter(), FVector2D(345.f, 630.f)));
+    DrawerCanvasSlot->SetSize(FSoccerUITheme::FitPanelToViewport(GetOuter(), FVector2D(405.f, 670.f)));
 
     UVerticalBox* Column = Tree->ConstructWidget<UVerticalBox>();
     Drawer->AddChild(Column);
@@ -192,17 +295,76 @@ void USoccerUIStyleEditorController::Setup(UWidgetTree* Tree, UCanvasPanel* Canv
     ScrollSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
     UVerticalBox* Entries = Tree->ConstructWidget<UVerticalBox>();
     Scroll->AddChild(Entries);
+    InputBindings.Reset();
+    Editors.Reset();
+    Sliders.Reset();
+    ColorPreviews.Reset();
     for (const FSoccerEditableStyleField& Field : Fields)
     {
         UVerticalBox* Entry = Tree->ConstructWidget<UVerticalBox>();
         UVerticalBoxSlot* EntrySlot = Entries->AddChildToVerticalBox(Entry);
-        EntrySlot->SetPadding(FMargin(0.f, 7.f, 0.f, 0.f));
+        EntrySlot->SetPadding(FMargin(0.f, 6.f, 0.f, 4.f));
         Entry->AddChildToVerticalBox(SoccerRuntimeStyleInternal::Text(Tree, Field.Label, 12));
+        USoccerUIStyleFieldInputBridge* Binding = NewObject<USoccerUIStyleFieldInputBridge>(this);
+        Binding->Initialize(this, Field.Key);
+        InputBindings.Add(Binding);
+
+        UHorizontalBox* InputRow = Tree->ConstructWidget<UHorizontalBox>();
+        Entry->AddChildToVerticalBox(InputRow);
         UEditableTextBox* Input = Tree->ConstructWidget<UEditableTextBox>();
         Input->SetText(FText::FromString(Values.FindRef(Field.Key)));
-        Entry->AddChildToVerticalBox(Input);
+        InputRow->AddChildToHorizontalBox(Input);
         Editors.Add(Field.Key, Input);
+
+        if (Field.bColor)
+        {
+            UBorder* ColorSample = Tree->ConstructWidget<UBorder>();
+            ColorSample->SetPadding(FMargin(12.f, 8.f));
+            FLinearColor Parsed;
+            if (SoccerRuntimeStyleInternal::ParseHex(Values.FindRef(Field.Key), Parsed))
+                ColorSample->SetBrushColor(Parsed);
+            InputRow->AddChildToHorizontalBox(ColorSample);
+            ColorPreviews.Add(Field.Key, ColorSample);
+            Input->OnTextChanged.AddDynamic(Binding, &USoccerUIStyleFieldInputBridge::HandleHexChanged);
+
+            UComboBoxString* Palette = Tree->ConstructWidget<UComboBoxString>();
+            for (const TCHAR* Name : { TEXT("Personalizado"), TEXT("Blanco"), TEXT("Negro"),
+                  TEXT("Verde estadio"), TEXT("Azul profesional"), TEXT("Grafito"), TEXT("Transparente") })
+                Palette->AddOption(Name);
+            Palette->SetSelectedOption(TEXT("Personalizado"));
+            Palette->OnSelectionChanged.AddDynamic(Binding, &USoccerUIStyleFieldInputBridge::HandlePaletteChanged);
+            Entry->AddChildToVerticalBox(Palette);
+        }
+        else
+        {
+            USlider* Slider = Tree->ConstructWidget<USlider>();
+            Slider->SetMinValue(Field.MinValue);
+            Slider->SetMaxValue(Field.MaxValue);
+            Slider->SetValue(FMath::Clamp(FCString::Atof(*Values.FindRef(Field.Key)),
+                Field.MinValue, Field.MaxValue));
+            Slider->OnValueChanged.AddDynamic(Binding, &USoccerUIStyleFieldInputBridge::HandleSliderChanged);
+            Entry->AddChildToVerticalBox(Slider);
+            Sliders.Add(Field.Key, Slider);
+        }
     }
+
+    Column->AddChildToVerticalBox(SoccerRuntimeStyleInternal::Text(Tree,
+        TEXT("PRESETS DE ESTA PANTALLA: A / B / C"), 12));
+    LocalPresetChoice = Tree->ConstructWidget<UComboBoxString>();
+    LocalPresetChoice->AddOption(TEXT("A"));
+    LocalPresetChoice->AddOption(TEXT("B"));
+    LocalPresetChoice->AddOption(TEXT("C"));
+    LocalPresetChoice->SetSelectedOption(TEXT("A"));
+    Column->AddChildToVerticalBox(LocalPresetChoice);
+    UHorizontalBox* PresetActions = Tree->ConstructWidget<UHorizontalBox>();
+    Column->AddChildToVerticalBox(PresetActions);
+    UButton* SavePreset = SoccerRuntimeStyleInternal::Action(Tree, TEXT("GUARDAR PRESET"));
+    UButton* LoadPreset = SoccerRuntimeStyleInternal::Action(Tree, TEXT("CARGAR PRESET"));
+    PresetActions->AddChildToHorizontalBox(SavePreset);
+    PresetActions->AddChildToHorizontalBox(LoadPreset);
+    SavePreset->OnClicked.AddDynamic(this, &USoccerUIStyleEditorController::OnSavePresetClicked);
+    LoadPreset->OnClicked.AddDynamic(this, &USoccerUIStyleEditorController::OnLoadPresetClicked);
+
     UHorizontalBox* Buttons = Tree->ConstructWidget<UHorizontalBox>();
     Column->AddChildToVerticalBox(Buttons);
     UButton* Apply = SoccerRuntimeStyleInternal::Action(Tree, TEXT("APLICAR"));
@@ -217,7 +379,18 @@ void USoccerUIStyleEditorController::Setup(UWidgetTree* Tree, UCanvasPanel* Canv
     SaveButton->OnClicked.AddDynamic(this, &USoccerUIStyleEditorController::OnSaveClicked);
     Reset->OnClicked.AddDynamic(this, &USoccerUIStyleEditorController::OnResetClicked);
     Close->OnClicked.AddDynamic(this, &USoccerUIStyleEditorController::OnToggleClicked);
-    Status = SoccerRuntimeStyleInternal::Text(Tree, TEXT("Sin modificar"), 11);
+    UHorizontalBox* ExtraActions = Tree->ConstructWidget<UHorizontalBox>();
+    Column->AddChildToVerticalBox(ExtraActions);
+    UButton* UndoButton = SoccerRuntimeStyleInternal::Action(Tree, TEXT("DESHACER"));
+    UButton* RedoButton = SoccerRuntimeStyleInternal::Action(Tree, TEXT("REHACER"));
+    UButton* ExportButton = SoccerRuntimeStyleInternal::Action(Tree, TEXT("EXPORTAR TODO"));
+    ExtraActions->AddChildToHorizontalBox(UndoButton);
+    ExtraActions->AddChildToHorizontalBox(RedoButton);
+    ExtraActions->AddChildToHorizontalBox(ExportButton);
+    UndoButton->OnClicked.AddDynamic(this, &USoccerUIStyleEditorController::OnUndoClicked);
+    RedoButton->OnClicked.AddDynamic(this, &USoccerUIStyleEditorController::OnRedoClicked);
+    ExportButton->OnClicked.AddDynamic(this, &USoccerUIStyleEditorController::OnExportClicked);
+        Status = SoccerRuntimeStyleInternal::Text(Tree, TEXT("Sin modificar"), 11);
     Column->AddChildToVerticalBox(Status);
     FSoccerUITheme::ApplyButtonStates(Drawer);
 }
@@ -248,10 +421,59 @@ FLinearColor USoccerUIStyleEditorController::GetColor(const TCHAR* Key,
 
 void USoccerUIStyleEditorController::RefreshEditors()
 {
-    for (const TPair<FName, UEditableTextBox*>& Pair : Editors)
+    bRefreshingFields = true;
+    for (const FSoccerEditableStyleField& Field : Fields)
     {
-        if (Pair.Value) Pair.Value->SetText(FText::FromString(Values.FindRef(Pair.Key)));
+        const FString Current = Values.FindRef(Field.Key);
+        if (UEditableTextBox* const* Input = Editors.Find(Field.Key))
+            if (IsValid(*Input)) (*Input)->SetText(FText::FromString(Current));
+        if (USlider* const* Slider = Sliders.Find(Field.Key))
+            if (IsValid(*Slider)) (*Slider)->SetValue(FMath::Clamp(FCString::Atof(*Current), Field.MinValue, Field.MaxValue));
+        if (UBorder* const* Swatch = ColorPreviews.Find(Field.Key))
+        {
+            FLinearColor Color;
+            if (IsValid(*Swatch) && SoccerRuntimeStyleInternal::ParseHex(Current, Color))
+                (*Swatch)->SetBrushColor(Color);
+        }
     }
+    bRefreshingFields = false;
+}
+
+void USoccerUIStyleEditorController::HandleNumberInput(FName Key, float SliderValue)
+{
+    if (bRefreshingFields) return;
+    for (const FSoccerEditableStyleField& Field : Fields)
+    {
+        if (Field.Key != Key || Field.bColor) continue;
+        if (UEditableTextBox* const* Input = Editors.Find(Key))
+            if (IsValid(*Input)) (*Input)->SetText(FText::FromString(
+                FString::SanitizeFloat(FMath::Clamp(SliderValue, Field.MinValue, Field.MaxValue))));
+        break;
+    }
+}
+
+void USoccerUIStyleEditorController::HandlePaletteInput(FName Key, const FString& Choice)
+{
+    const FString Hex = Choice == TEXT("Blanco") ? TEXT("#FFFFFFFF")
+        : Choice == TEXT("Negro") ? TEXT("#000000FF")
+        : Choice == TEXT("Verde estadio") ? TEXT("#21A669FF")
+        : Choice == TEXT("Azul profesional") ? TEXT("#237FCAFF")
+        : Choice == TEXT("Grafito") ? TEXT("#333C45FF")
+        : Choice == TEXT("Transparente") ? TEXT("#00000000") : FString();
+    if (!Hex.IsEmpty())
+    {
+        if (UEditableTextBox* const* Input = Editors.Find(Key))
+            if (IsValid(*Input)) (*Input)->SetText(FText::FromString(Hex));
+    }
+}
+
+void USoccerUIStyleEditorController::HandleHexInput(FName Key, const FText& Value)
+{
+    if (bRefreshingFields) return;
+    FLinearColor Parsed;
+    if (!SoccerRuntimeStyleInternal::ParseHex(Value.ToString(), Parsed)) return;
+    if (UBorder* const* Swatch = ColorPreviews.Find(Key))
+        if (IsValid(*Swatch)) (*Swatch)->SetBrushColor(Parsed);
 }
 
 void USoccerUIStyleEditorController::SetStatus(const FString& Message)
@@ -266,7 +488,7 @@ void USoccerUIStyleEditorController::OnToggleClicked()
     if (bOpening)
     {
         if (DrawerCanvasSlot)
-            DrawerCanvasSlot->SetSize(FSoccerUITheme::FitPanelToViewport(GetOuter(), FVector2D(345.f, 630.f)));
+            DrawerCanvasSlot->SetSize(FSoccerUITheme::FitPanelToViewport(GetOuter(), FVector2D(405.f, 670.f)));
         if (GlobalThemeChoice) GlobalThemeChoice->SetSelectedOption(FSoccerUITheme::GetActiveTheme());
     }
     Drawer->SetVisibility(bOpening ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -291,6 +513,7 @@ void USoccerUIStyleEditorController::OnApplyClicked()
             Values.Add(Field.Key, NormalizeValue(Field, (*Entry)->GetText().ToString()));
         }
     }
+    PushSnapshot();
     RefreshEditors();
     OnApplied.Broadcast();
     SetStatus(TEXT("Cambios aplicados (sin guardar)."));
@@ -308,9 +531,61 @@ void USoccerUIStyleEditorController::OnResetClicked()
     {
         Values.Add(Field.Key, Field.DefaultValue);
     }
+    PushSnapshot();
     RefreshEditors();
     OnApplied.Broadcast();
     SetStatus(TEXT("Valores de fábrica; pulsá GUARDAR para conservarlos."));
+}
+
+void USoccerUIStyleEditorController::OnUndoClicked()
+{
+    if (SnapshotIndex > 0)
+    {
+        ApplySnapshot(SnapshotIndex - 1);
+        SetStatus(TEXT("Deshecho (sin guardar)."));
+    }
+    else SetStatus(TEXT("No hay cambios anteriores."));
+}
+
+void USoccerUIStyleEditorController::OnRedoClicked()
+{
+    if (SnapshotIndex + 1 < Snapshots.Num())
+    {
+        ApplySnapshot(SnapshotIndex + 1);
+        SetStatus(TEXT("Rehecho (sin guardar)."));
+    }
+    else SetStatus(TEXT("No hay cambios posteriores."));
+}
+
+void USoccerUIStyleEditorController::OnSavePresetClicked()
+{
+    OnApplyClicked();
+    SetStatus(WriteValues(SelectedPresetPath())
+        ? TEXT("Preset guardado. Los estilos activos no se modificaron.")
+        : TEXT("No se pudo guardar el preset."));
+}
+
+void USoccerUIStyleEditorController::OnLoadPresetClicked()
+{
+    TMap<FName, FString> Before = Values;
+    if (!ReadValues(SelectedPresetPath()))
+    {
+        Values = Before;
+        SetStatus(TEXT("Ese preset todavía no existe."));
+        return;
+    }
+    PushSnapshot();
+    RefreshEditors();
+    OnApplied.Broadcast();
+    SetStatus(TEXT("Preset cargado (sin guardar como estilo activo)."));
+}
+
+void USoccerUIStyleEditorController::OnExportClicked()
+{
+    FString Path;
+    if (ExportAllStyles(Path))
+        SetStatus(TEXT("Exportado: Saved/SoccerUI/SoccerUIStyles_Export.txt"));
+    else SetStatus(TEXT("Guardá al menos un menú antes de exportar."));
 }
 
 void USoccerUIStyleEditorController::ApplyTextScale(UWidget* Root, float Scale)

@@ -4,6 +4,7 @@
 #include "SoccerUIFeedbackAnimations.h"
 #include "SoccerUINavigation.h"
 #include "Blueprint/UserWidget.h"
+#include "Components/ComboBoxString.h"
 #include "SoccerSquadViewerWidget.generated.h"
 
 class ASoccerMatchManager;
@@ -23,6 +24,8 @@ class UCanvasPanelSlot;
 class UCanvasPanel;
 class UEditableTextBox;
 class UComboBoxString;
+class USlider;
+class USoccerUIStyleFieldInputBridge;
 class UWidget;
 
 // Temporary design-time values for the read-only squad viewer. The in-game
@@ -72,6 +75,10 @@ public:
     void InitializeForClub(USoccerGameInstance* InGameInstance,
                            ASoccerMatchManager* InMatchManager, FName InitialClubId);
     void ActivateMenu();
+    // Called by temporary editor field bindings; UI presentation only.
+    void HandleStyleSliderInput(FName Key, float Value);
+    void HandleStylePaletteInput(FName Key, const FString& Preset);
+    void HandleStyleHexInput(FName Key, const FText& Value);
 
 protected:
     virtual void NativeOnInitialized() override;
@@ -105,6 +112,11 @@ private:
     void SyncStyleEditors();
     void LoadStyle();
     bool SaveStyle() const;
+    bool SaveStyleAtPath(const FString& Path) const;
+    bool LoadStyleAtPath(const FString& Path);
+    void PushStyleSnapshot();
+    void ApplyStyleSnapshot(int32 NewIndex);
+    FString StylePresetPath() const;
     void ApplyViewerStyle();
     void StyleMainWidget(UWidget* Widget);
     FString StyleConfigPath() const;
@@ -114,6 +126,11 @@ private:
     UFUNCTION() void HandleSaveStyle();
     UFUNCTION() void HandleResetStyle();
     UFUNCTION() void HandleApplyGlobalTheme();
+    UFUNCTION() void HandleStyleUndo();
+    UFUNCTION() void HandleStyleRedo();
+    UFUNCTION() void HandleStyleSavePreset();
+    UFUNCTION() void HandleStyleLoadPreset();
+    UFUNCTION() void HandleStyleExport();
 
     UFUNCTION() void HandlePreviousClub();
     UFUNCTION() void HandleNextClub();
@@ -160,6 +177,12 @@ private:
     UPROPERTY(Transient) TArray<USizeBox*> StatLabelBoxes;
     UPROPERTY(Transient) TArray<USizeBox*> StatMeterBoxes;
     UPROPERTY(Transient) TMap<FName, UEditableTextBox*> StyleEditors;
+    UPROPERTY(Transient) TMap<FName, USlider*> StyleSliders;
+    UPROPERTY(Transient) TMap<FName, UBorder*> StyleSwatches;
+    UPROPERTY(Transient) TArray<USoccerUIStyleFieldInputBridge*> StyleInputBindings;
+    UPROPERTY(Transient) UComboBoxString* StylePresetChoice = nullptr;
+    TArray<FSoccerSquadViewerStyleSettings> StyleSnapshots;
+    int32 StyleSnapshotIndex = INDEX_NONE;
 
     TMap<TWeakObjectPtr<UTextBlock>, int32> DefaultTextSizes;
     TArray<TWeakObjectPtr<UTextBlock>> AccentTextNodes;
