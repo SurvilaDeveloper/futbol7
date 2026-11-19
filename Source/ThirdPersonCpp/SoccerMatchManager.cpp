@@ -1,4 +1,4 @@
-//SoccerMatchManager.cpp
+﻿//SoccerMatchManager.cpp
 
 #include "SoccerMatchManager.h"
 #include "SoccerPenaltyKickRestart.h"
@@ -70,6 +70,42 @@
 #include "NavigationSystem.h"
 
 #include <algorithm>
+
+void ASoccerMatchManager::PublishMatchAnnouncement(
+    const FString& Title,
+    const FString& Detail,
+    const FLinearColor& Accent,
+    float DurationSeconds
+)
+{
+    ++LatestMatchAnnouncement.Revision;
+    LatestMatchAnnouncement.Title = Title;
+    LatestMatchAnnouncement.Detail = Detail;
+    LatestMatchAnnouncement.Accent = Accent;
+    LatestMatchAnnouncement.DurationSeconds = FMath::Clamp(DurationSeconds, 1.0f, 8.0f);
+}
+
+FString ASoccerMatchManager::GetAnnouncementClubName(ESoccerTeam Team) const
+{
+    const USoccerClubProfile* Club = GetClubProfileForTeam(Team);
+    if (IsValid(Club))
+    {
+        if (!Club->DisplayName.IsEmpty())
+        {
+            return Club->DisplayName.ToString();
+        }
+        if (!Club->ShortName.IsEmpty())
+        {
+            return Club->ShortName.ToString();
+        }
+        if (!Club->ClubId.IsNone())
+        {
+            return Club->ClubId.ToString();
+        }
+    }
+    return Team == ESoccerTeam::PlayerTeam
+        ? TEXT("CLUB LOCAL") : TEXT("CLUB RIVAL");
+}
 
 bool ASoccerMatchManager::ActivateMatchState(TUniquePtr<ISoccerMatchState> NewState)
 {
@@ -1373,22 +1409,15 @@ void ASoccerMatchManager::BeginHalfTime()
 	TotalMatchElapsedSeconds = FirstHalfActualElapsedSeconds;
 	HalfTimeElapsedSeconds = 0.0f;
 	bCurrentHalfClockStarted = false;
-	CurrentMatchPeriod = ESoccerMatchPeriod::HalfTime;
+    CurrentMatchPeriod = ESoccerMatchPeriod::HalfTime;
+    PublishMatchAnnouncement(TEXT("ENTRETIEMPO"), TEXT("FINAL DEL PRIMER TIEMPO"),
+        FLinearColor(0.98f, 0.80f, 0.28f, 1.0f), 4.0f);
 
 	PlayRefereeWhistle(RefereeWhistleHalfTimeSound);
 	PrepareForMatchPeriodBreak();
 	InitializeHalfTimeFieldTransition();
 	SetMatchPeriodHumanMoveLock(true);
 
-	if (GEngine != nullptr)
-	{
-		GEngine->AddOnScreenDebugMessage(
-			-1,
-			FMath::Max(1.0f, HalfTimeDurationSeconds),
-			FColor::Yellow,
-			TEXT("ENTRETIEMPO")
-		);
-	}
 }
 
 void ASoccerMatchManager::CompleteHalfTime()
@@ -1432,27 +1461,19 @@ void ASoccerMatchManager::BeginFullTime()
 	TotalMatchElapsedSeconds = FirstHalfActualElapsedSeconds +
 		CurrentHalfElapsedSeconds;
 	bCurrentHalfClockStarted = false;
-	CurrentMatchPeriod = ESoccerMatchPeriod::FullTime;
+    CurrentMatchPeriod = ESoccerMatchPeriod::FullTime;
+    PublishMatchAnnouncement(
+        TEXT("FINAL DEL PARTIDO"),
+        FString::Printf(TEXT("%s %d  -  %d %s"),
+            *GetAnnouncementClubName(ESoccerTeam::PlayerTeam), PlayerTeamScore,
+            OpponentTeamScore, *GetAnnouncementClubName(ESoccerTeam::OpponentTeam)),
+        FLinearColor(0.98f, 0.80f, 0.28f, 1.0f), 4.0f
+    );
 
 	PlayRefereeWhistle(RefereeWhistleFullTimeSound);
 	PrepareForMatchPeriodBreak();
 	SetMatchPeriodHumanMoveLock(true);
 
-	if (GEngine != nullptr)
-	{
-		const FString FinalMessage = FString::Printf(
-			TEXT("FINAL - PlayerTeam %d - %d OpponentTeam"),
-			PlayerTeamScore,
-			OpponentTeamScore
-		);
-
-		GEngine->AddOnScreenDebugMessage(
-			-1,
-			5.0f,
-			FColor::Yellow,
-			FinalMessage
-		);
-	}
 }
 
 void ASoccerMatchManager::PrepareForMatchPeriodBreak()
@@ -7193,23 +7214,12 @@ void ASoccerMatchManager::HandleOffsideOffense(
 		RestartLocation
 	);
 
-	if (GEngine)
-	{
-		const FString TeamText =
-			RestartTeam == ESoccerTeam::PlayerTeam
-			? TEXT("PlayerTeam")
-			: TEXT("OpponentTeam");
-
-		GEngine->AddOnScreenDebugMessage(
-			-1,
-			1.8f,
-			FColor::Red,
-			FString::Printf(
-				TEXT("OFFSIDE - Saca %s"),
-				*TeamText
-			)
-		);
-	}
+    PublishMatchAnnouncement(
+        TEXT("FUERA DE JUEGO"),
+        FString::Printf(TEXT("TIRO LIBRE PARA %s"), *GetAnnouncementClubName(RestartTeam)),
+        FLinearColor(1.0f, 0.66f, 0.20f, 1.0f),
+        3.7f
+    );
 }
 
 void ASoccerMatchManager::StartOffsideFreezePresentation(
@@ -7326,7 +7336,13 @@ void ASoccerMatchManager::StartDirectFreeKickRestart(
 		MakeUnique<FSoccerFaultConfigurationState>(RestartTeam, RestartLocation)
 	))
 	{
-		PlayRefereeWhistle(RefereeWhistleStoppageSound);
+        PlayRefereeWhistle(RefereeWhistleStoppageSound);
+        PublishMatchAnnouncement(
+            TEXT("TIRO LIBRE"),
+            FString::Printf(TEXT("PARA %s"), *GetAnnouncementClubName(RestartTeam)),
+            FLinearColor(1.0f, 0.66f, 0.20f, 1.0f),
+            3.7f
+        );
 	}
 }
 
@@ -7630,12 +7646,19 @@ bool ASoccerMatchManager::StartPenaltyKickRestart(
 	PendingPenaltyFoulRestartTeam = ESoccerTeam::PlayerTeam;
 	PendingPenaltyFoulIncidentLocation = FVector::ZeroVector;
 
-	return ActivateMatchState(
-		MakeUnique<FSoccerPenaltyConfigurationState>(
-			RestartTeam,
-			IncidentLocation
-		)
-	);
+    const bool bActivated = ActivateMatchState(
+        MakeUnique<FSoccerPenaltyConfigurationState>(RestartTeam, IncidentLocation)
+    );
+    if (bActivated)
+    {
+        PublishMatchAnnouncement(
+            TEXT("PENAL"),
+            FString::Printf(TEXT("PARA %s"), *GetAnnouncementClubName(RestartTeam)),
+            FLinearColor(1.0f, 0.72f, 0.23f, 1.0f),
+            4.0f
+        );
+    }
+    return bActivated;
 }
 
 void ASoccerMatchManager::CancelPenaltyKickRestart()
@@ -11465,6 +11488,27 @@ void ASoccerMatchManager::BeginBallOutOfPlayDelay(
 	PendingBallOutOfPlayThrowInInwardDirection = RequestedThrowInInwardDirection.GetSafeNormal();
 	PendingBallOutOfPlayGoalLineSign =
 		FMath::IsNearlyZero(GoalLineSign) ? 0.0f : (GoalLineSign > 0.0f ? 1.0f : -1.0f);
+
+    // Announce the referee's decision once, not every preparation/taking state.
+    const FString ClubName = GetAnnouncementClubName(RestartTeam);
+    if (RestartType == ESoccerRestartType::ThrowIn)
+    {
+        PublishMatchAnnouncement(TEXT("SAQUE LATERAL"),
+            FString::Printf(TEXT("PARA %s"), *ClubName),
+            FLinearColor(0.35f, 0.78f, 0.94f, 1.0f));
+    }
+    else if (RestartType == ESoccerRestartType::CornerKick)
+    {
+        PublishMatchAnnouncement(TEXT("CÓRNER"),
+            FString::Printf(TEXT("PARA %s"), *ClubName),
+            FLinearColor(0.35f, 0.78f, 0.94f, 1.0f));
+    }
+    else if (RestartType == ESoccerRestartType::GoalKick)
+    {
+        PublishMatchAnnouncement(TEXT("SAQUE DE ARCO"),
+            FString::Printf(TEXT("PARA %s"), *ClubName),
+            FLinearColor(0.35f, 0.78f, 0.94f, 1.0f));
+    }
 
 	RequestMatchStateTransition(
 		ESoccerMatchStateTransition::BallOutOfPlayDelay
@@ -21568,7 +21612,14 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 
 	// Desde este momento el partido deja de estar en juego.
 	// Esto evita que SoccerGoalTrigger vuelva a contar el mismo gol.
-	MatchPlayState = ESoccerMatchPlayState::GoalScored;
+    MatchPlayState = ESoccerMatchPlayState::GoalScored;
+    PublishMatchAnnouncement(
+        TEXT("¡GOOOOL!"),
+        FString::Printf(TEXT("%s  |  %d - %d"),
+            *GetAnnouncementClubName(ScoringTeam), PlayerTeamScore, OpponentTeamScore),
+        FLinearColor(0.34f, 0.92f, 0.50f, 1.0f),
+        4.0f
+    );
 
 	// Only a validated goal reaches this point. Sound before the goal replay;
 	// the subsequent kickoff keeps its existing, independent authorization.
@@ -21600,22 +21651,6 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 		: 0.0f;
 	const float EffectiveGoalResetDelay =
 		FMath::Max(0.0f, GoalResetDelay) + GoalReplayPostDelay;
-
-	if (GEngine)
-	{
-		const FString ScoreMessage = FString::Printf(
-			TEXT("GOOOL - PlayerTeam %d - %d OpponentTeam"),
-			PlayerTeamScore,
-			OpponentTeamScore
-		);
-
-		GEngine->AddOnScreenDebugMessage(
-			-1,
-			EffectiveGoalResetDelay,
-			FColor::Green,
-			ScoreMessage
-		);
-	}
 
 	if (GetWorld() != nullptr)
 	{
@@ -23454,9 +23489,23 @@ void ASoccerMatchManager::StartKickoff(ESoccerTeam TeamTakingKickoff)
 	{
 		bRefereeKickoffWhistlePlayedForCurrentKickoff = false;
 	}
-	if (!ActivateMatchState(
-		MakeUnique<FSoccerKickoffConfigurationState>(TeamTakingKickoff)
-	))
+    if (ActivateMatchState(
+        MakeUnique<FSoccerKickoffConfigurationState>(TeamTakingKickoff)
+    ))
+    {
+        if (!bCurrentHalfClockStarted &&
+            (CurrentMatchPeriod == ESoccerMatchPeriod::FirstHalf ||
+             CurrentMatchPeriod == ESoccerMatchPeriod::SecondHalf))
+        {
+            PublishMatchAnnouncement(
+                CurrentMatchPeriod == ESoccerMatchPeriod::FirstHalf
+                    ? TEXT("INICIO DEL PARTIDO") : TEXT("SEGUNDO TIEMPO"),
+                FString::Printf(TEXT("SACA %s"), *GetAnnouncementClubName(TeamTakingKickoff)),
+                FLinearColor(0.38f, 0.86f, 0.66f, 1.0f), 3.2f
+            );
+        }
+    }
+    else
 	{
 		EndRestartContext();
 		MatchPlayState = ESoccerMatchPlayState::Playing;

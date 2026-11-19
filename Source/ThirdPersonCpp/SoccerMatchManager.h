@@ -1,4 +1,4 @@
-//SoccerMatchManager.h
+﻿//SoccerMatchManager.h
 
 #pragma once
 
@@ -78,6 +78,17 @@ enum class ESoccerVisualSubstitutionPhase : uint8
 };
 
 
+// The referee's most recent confirmed event. The HUD observes Revision and
+// draws the banner for DurationSeconds using real time (including pauses).
+struct FSoccerMatchAnnouncement
+{
+    uint32 Revision = 0;
+    FString Title;
+    FString Detail;
+    FLinearColor Accent = FLinearColor(0.90f, 0.77f, 0.29f, 1.0f);
+    float DurationSeconds = 3.5f;
+};
+
 UCLASS()
 class THIRDPERSONCPP_API ASoccerMatchManager : public AActor
 {
@@ -114,6 +125,11 @@ class THIRDPERSONCPP_API ASoccerMatchManager : public AActor
 
 public:
 	ASoccerMatchManager();
+
+    const FSoccerMatchAnnouncement& GetLatestMatchAnnouncement() const
+    {
+        return LatestMatchAnnouncement;
+    }
 
 	virtual void Tick(float DeltaTime) override;
 
@@ -1050,6 +1066,15 @@ bool IsPenaltyMatchStateActive() const;
 	bool IsGoalKickMatchStateActive() const;
 	bool IsThrowInMatchStateActive() const;
 	bool IsKickoffMatchStateActive() const;
+
+    void PublishMatchAnnouncement(
+        const FString& Title,
+        const FString& Detail,
+        const FLinearColor& Accent,
+        float DurationSeconds = 3.5f
+    );
+    FString GetAnnouncementClubName(ESoccerTeam Team) const;
+    FSoccerMatchAnnouncement LatestMatchAnnouncement;
 
 	TUniquePtr<ISoccerMatchState> ActiveMatchState;
 	ESoccerMatchStateTransition PendingMatchStateTransition = ESoccerMatchStateTransition::None;

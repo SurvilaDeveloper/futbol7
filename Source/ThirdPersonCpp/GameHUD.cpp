@@ -1,4 +1,4 @@
-//GameHUD.cpp
+﻿//GameHUD.cpp
 #include "GameHUD.h"
 
 #include "ThirdPersonCppCharacter.h"
@@ -532,6 +532,8 @@ void AGameHUD::DrawHUD()
 		FindMatchManager();
 	}
 
+    ObserveMatchAnnouncement();
+
 	ASoccerInstantReplayManager* ReplayManager =
 		IsValid(MatchManager)
 			? MatchManager->GetInstantReplayManager()
@@ -539,12 +541,14 @@ void AGameHUD::DrawHUD()
 
 	if (IsValid(ReplayManager) && ReplayManager->IsReplayPlaying())
 	{
-		DrawInstantReplayOverlay();
+        DrawInstantReplayOverlay();
+        DrawMatchAnnouncement();
 		return;
 	}
 
 	DrawMatchScoreboard();
 	DrawMatchClock();
+    DrawMatchAnnouncement();
 	DrawHumanPassRequestIndicator();
 	DrawHumanJumpHeaderIndicator();
 	DrawQuickTacticsFeedback();
@@ -1474,21 +1478,9 @@ FString AGameHUD::GetMatchStateText() const
 		return FString();
 	}
 
-	if (MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::HalfTime)
-	{
-		return TEXT("ENTRETIEMPO");
-	}
-
-	if (MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime)
-	{
-		return TEXT("FINAL");
-	}
-
+    // Goal / periods are now drawn by the large event banner, not twice.
 	switch (MatchManager->GetMatchPlayState())
 	{
-	case ESoccerMatchPlayState::GoalScored:
-		return TEXT("GOOOL");
-
 	case ESoccerMatchPlayState::Resetting:
 		return TEXT("Reiniciando");
 
@@ -1496,6 +1488,104 @@ FString AGameHUD::GetMatchStateText() const
 	default:
 		return FString();
 	}
+}
+
+void AGameHUD::ObserveMatchAnnouncement()
+{
+    if (!IsValid(MatchManager))
+    {
+        return;
+    }
+
+    const FSoccerMatchAnnouncement& Event = MatchManager->GetLatestMatchAnnouncement();
+    if (Event.Revision == 0 || Event.Revision == ObservedAnnouncementRevision)
+    {
+        return;
+    }
+
+    ObservedAnnouncementRevision = Event.Revision;
+    MatchAnnouncementTitle = Event.Title;
+    MatchAnnouncementDetail = Event.Detail;
+    MatchAnnouncementAccent = Event.Accent;
+    MatchAnnouncementStartRealTime = FPlatformTime::Seconds();
+    MatchAnnouncementExpiryRealTime = MatchAnnouncementStartRealTime + Event.DurationSeconds;
+}
+
+void AGameHUD::DrawMatchAnnouncement()
+{
+    if (Canvas == nullptr || MatchAnnouncementTitle.IsEmpty())
+    {
+        return;
+    }
+
+    const double Now = FPlatformTime::Seconds();
+    const float Remaining = static_cast<float>(MatchAnnouncementExpiryRealTime - Now);
+    if (Remaining <= 0.0f)
+    {
+        return;
+    }
+
+    UFont* TitleFont = GEngine != nullptr ? GEngine->GetMediumFont() : nullptr;
+    UFont* DetailFont = GEngine != nullptr ? GEngine->GetSmallFont() : nullptr;
+    if (TitleFont == nullptr || DetailFont == nullptr)
+    {
+        return;
+    }
+
+    const float FadeIn = FMath::Clamp(
+        static_cast<float>(Now - MatchAnnouncementStartRealTime) / 0.16f, 0.0f, 1.0f);
+    const float FadeOut = FMath::Clamp(Remaining / 0.42f, 0.0f, 1.0f);
+    const float Opacity = FMath::Min(FadeIn, FadeOut);
+    const float ScreenScale = FMath::Clamp(
+        FMath::Min(Canvas->SizeX / 1920.0f, Canvas->SizeY / 1080.0f), 0.72f, 1.15f);
+    const bool bIsGoal = MatchAnnouncementTitle.StartsWith(TEXT("¡GO"));
+
+    float TitleScale = (bIsGoal ? 3.15f : 2.18f) * ScreenScale;
+    float DetailScale = 1.42f * ScreenScale;
+    float TitleWidth = 0.0f;
+    float TitleHeight = 0.0f;
+    float DetailWidth = 0.0f;
+    float DetailHeight = 0.0f;
+    GetTextSize(MatchAnnouncementTitle, TitleWidth, TitleHeight, TitleFont, TitleScale);
+    GetTextSize(MatchAnnouncementDetail, DetailWidth, DetailHeight, DetailFont, DetailScale);
+
+    const float MaxTextWidth = FMath::Max(250.0f, Canvas->SizeX - 110.0f * ScreenScale);
+    if (TitleWidth > MaxTextWidth)
+    {
+        TitleScale *= MaxTextWidth / TitleWidth;
+        GetTextSize(MatchAnnouncementTitle, TitleWidth, TitleHeight, TitleFont, TitleScale);
+    }
+    if (DetailWidth > MaxTextWidth)
+    {
+        DetailScale *= MaxTextWidth / DetailWidth;
+        GetTextSize(MatchAnnouncementDetail, DetailWidth, DetailHeight, DetailFont, DetailScale);
+    }
+
+    const float Gap = 9.0f * ScreenScale;
+    const float PaddingX = 30.0f * ScreenScale;
+    const float PaddingY = 16.0f * ScreenScale;
+    const float BoxWidth = FMath::Min(Canvas->SizeX - 30.0f,
+        FMath::Max(TitleWidth, DetailWidth) + PaddingX * 2.0f);
+    const float BoxHeight = TitleHeight + DetailHeight + Gap + PaddingY * 2.0f;
+    const float X = Canvas->SizeX * 0.5f - BoxWidth * 0.5f;
+    // Below scoreboard and clock; does not cover pass-request HUD.
+    const float Y = FMath::Max(148.0f * ScreenScale, Canvas->SizeY * 0.19f);
+
+    DrawRect(FLinearColor(0.015f, 0.025f, 0.045f, 0.78f * Opacity),
+        X, Y, BoxWidth, BoxHeight);
+    DrawRect(FLinearColor(MatchAnnouncementAccent.R, MatchAnnouncementAccent.G,
+        MatchAnnouncementAccent.B, Opacity),
+        X, Y, 6.0f * ScreenScale, BoxHeight);
+
+    DrawText(MatchAnnouncementTitle,
+        FLinearColor(1.0f, 1.0f, 1.0f, Opacity),
+        Canvas->SizeX * 0.5f - TitleWidth * 0.5f,
+        Y + PaddingY, TitleFont, TitleScale);
+    DrawText(MatchAnnouncementDetail,
+        FLinearColor(MatchAnnouncementAccent.R, MatchAnnouncementAccent.G,
+            MatchAnnouncementAccent.B, Opacity),
+        Canvas->SizeX * 0.5f - DetailWidth * 0.5f,
+        Y + PaddingY + TitleHeight + Gap, DetailFont, DetailScale);
 }
 
 void AGameHUD::DrawMatchScoreboard()

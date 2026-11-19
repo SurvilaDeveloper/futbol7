@@ -54,6 +54,9 @@ private:
 	void DrawSubstitutionPresentation();
 	FString ResolvePlayerDisplayName(FName PlayerId) const;
 
+    void ObserveMatchAnnouncement();
+    void DrawMatchAnnouncement();
+
 	void DrawMatchScoreboard();
 
 	void DrawMatchClock();
@@ -88,6 +91,13 @@ private:
 
 	UPROPERTY()
 		USoccerTacticalPresetManager* TacticalPresetManager = nullptr;
+
+    uint32 ObservedAnnouncementRevision = 0;
+    FString MatchAnnouncementTitle;
+    FString MatchAnnouncementDetail;
+    FLinearColor MatchAnnouncementAccent = FLinearColor::White;
+    double MatchAnnouncementStartRealTime = -1.0;
+    double MatchAnnouncementExpiryRealTime = -1.0;
 
 	FString QuickTacticsFeedbackText;
 	double QuickTacticsFeedbackExpiryRealTime = -1.0;
