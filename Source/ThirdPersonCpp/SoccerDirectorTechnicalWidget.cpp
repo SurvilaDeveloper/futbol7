@@ -1,4 +1,5 @@
 #include "SoccerDirectorTechnicalWidget.h"
+#include "SoccerUITheme.h"
 
 #include "SoccerDirectorTechnicalIdButton.h"
 #include "SoccerFormationLibrary.h"
@@ -6,6 +7,7 @@
 #include "SoccerLineupEvaluationLibrary.h"
 #include "SoccerPlayerProfile.h"
 #include "SoccerSquadCatalog.h"
+#include "SoccerUIStyleEditorController.h"
 
 #include "AssetRegistryModule.h"
 #include "Blueprint/WidgetTree.h"
@@ -153,6 +155,29 @@ namespace
         return Button;
     }
 
+    // Draw the compact formation pitch with the same horizontal orientation as
+    // the Formation tab: the player's goal is at the left, the opponent at right.
+    // Decoration must not capture clicks intended for the position buttons.
+    void AddDirectorPitchLine(
+        UWidgetTree* InWidgetTree,
+        UCanvasPanel* InCanvas,
+        const FVector2D& Position,
+        const FVector2D& Size,
+        const FLinearColor& Color)
+    {
+        if (InWidgetTree == nullptr || InCanvas == nullptr)
+        {
+            return;
+        }
+
+        UBorder* PitchLine = InWidgetTree->ConstructWidget<UBorder>();
+        PitchLine->SetBrushColor(Color);
+        PitchLine->SetVisibility(ESlateVisibility::HitTestInvisible);
+        UCanvasPanelSlot* PitchLineSlot = InCanvas->AddChildToCanvas(PitchLine);
+        PitchLineSlot->SetPosition(Position);
+        PitchLineSlot->SetSize(Size);
+    }
+
     FString GetPreferredFootText(ESoccerPreferredFoot PreferredFoot)
     {
         switch (PreferredFoot)
@@ -184,6 +209,38 @@ namespace
     }
 }
 
+float USoccerDirectorTechnicalWidget::StyleNumber(const TCHAR* Key, float DefaultValue) const
+{
+    return StyleEditor ? StyleEditor->GetNumber(Key, DefaultValue) : DefaultValue;
+}
+
+FLinearColor USoccerDirectorTechnicalWidget::StyleColor(const TCHAR* Key, const FLinearColor& DefaultColor) const
+{
+    return StyleEditor ? StyleEditor->GetColor(Key, DefaultColor) : DefaultColor;
+}
+
+bool USoccerDirectorTechnicalWidget::HasFocusedStyleInput() const
+{
+    return StyleEditor && StyleEditor->HasFocusedInput();
+}
+
+void USoccerDirectorTechnicalWidget::HandleStyleApplied()
+{
+    ApplyLiveStyle();
+}
+
+void USoccerDirectorTechnicalWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+    Super::NativeTick(MyGeometry, InDeltaTime);
+    UIAnimations.Tick(InDeltaTime);
+    const FVector2D LogicalViewport = FSoccerUITheme::GetLogicalViewportSize(this);
+    if (LogicalViewport.X > 1.f && !LastResponsiveViewport.Equals(LogicalViewport, 1.f))
+    {
+        LastResponsiveViewport = LogicalViewport;
+        ApplyLiveStyle();
+    }
+}
+
 void USoccerDirectorTechnicalWidget::NativeOnInitialized()
 {
     Super::NativeOnInitialized();
@@ -194,6 +251,8 @@ void USoccerDirectorTechnicalWidget::NativeConstruct()
 {
     Super::NativeConstruct();
     RefreshFromPersistentTeamSetup(true);
+
+    UIAnimations.StartEntrance(StyleRootBorder, 0.20f);
 }
 
 void USoccerDirectorTechnicalWidget::BuildWidgetTree()
@@ -203,10 +262,15 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
         return;
     }
 
+    UCanvasPanel* StyleCanvas = WidgetTree->ConstructWidget<UCanvasPanel>();
+    WidgetTree->RootWidget = StyleCanvas;
     UBorder* RootBorder = WidgetTree->ConstructWidget<UBorder>();
+    StyleRootBorder = RootBorder;
     RootBorder->SetBrushColor(DirectorPanelBackground);
     RootBorder->SetPadding(FMargin(4.0f));
-    WidgetTree->RootWidget = RootBorder;
+    UCanvasPanelSlot* BodyCanvasSlot = StyleCanvas->AddChildToCanvas(RootBorder);
+    BodyCanvasSlot->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+    BodyCanvasSlot->SetOffsets(FMargin(0.f));
 
     UVerticalBox* RootColumn = WidgetTree->ConstructWidget<UVerticalBox>();
     RootBorder->AddChild(RootColumn);
@@ -311,8 +375,10 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
 
     // Left: complete squad list.
     USizeBox* RosterSize = WidgetTree->ConstructWidget<USizeBox>();
+    StyleRosterSize = RosterSize;
     RosterSize->SetWidthOverride(300.0f);
     UBorder* RosterCard = MakeDirectorCard(WidgetTree);
+    StyleRosterCard = RosterCard;
     RosterSize->AddChild(RosterCard);
     UVerticalBox* RosterColumn = WidgetTree->ConstructWidget<UVerticalBox>();
     RosterCard->AddChild(RosterColumn);
@@ -346,6 +412,7 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
 
     // Center: formation pitch and bench.
     UBorder* FormationCard = MakeDirectorCard(WidgetTree);
+    StyleFormationCard = FormationCard;
     UVerticalBox* FormationColumn = WidgetTree->ConstructWidget<UVerticalBox>();
     FormationCard->AddChild(FormationColumn);
 
@@ -362,6 +429,7 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
     );
 
     USizeBox* PitchSize = WidgetTree->ConstructWidget<USizeBox>();
+    StylePitchSize = PitchSize;
     PitchSize->SetWidthOverride(PitchCanvasWidth);
     PitchSize->SetHeightOverride(PitchCanvasHeight);
     FormationCanvas = WidgetTree->ConstructWidget<UCanvasPanel>();
@@ -380,8 +448,17 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
         FMargin(0.0f, 10.0f, 0.0f, 5.0f)
     );
 
+    // The bench list must not grow with the number of substitutes: scrolling
+    // remains inside this fixed-height viewport, keeping the action buttons
+    // and the parent menu footer in place.
+    USizeBox* BenchScrollViewport = WidgetTree->ConstructWidget<USizeBox>();
+    StyleBenchScrollSize = BenchScrollViewport;
+    BenchScrollViewport->SetHeightOverride(72.0f);
+    BenchScrollBox = WidgetTree->ConstructWidget<UScrollBox>();
+    BenchScrollViewport->AddChild(BenchScrollBox);
     BenchListBox = WidgetTree->ConstructWidget<UVerticalBox>();
-    AddDirectorVerticalChild(FormationColumn, BenchListBox);
+    BenchScrollBox->AddChild(BenchListBox);
+    AddDirectorVerticalChild(FormationColumn, BenchScrollViewport);
 
     UHorizontalBox* BenchActions = WidgetTree->ConstructWidget<UHorizontalBox>();
     AddDirectorVerticalChild(
@@ -442,8 +519,10 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
 
     // Right: selected player portrait / metadata / abilities.
     USizeBox* DetailsSize = WidgetTree->ConstructWidget<USizeBox>();
+    StyleDetailsSize = DetailsSize;
     DetailsSize->SetWidthOverride(430.0f);
     UBorder* DetailsCard = MakeDirectorCard(WidgetTree);
+    StyleDetailsCard = DetailsCard;
     DetailsSize->AddChild(DetailsCard);
     UVerticalBox* DetailsColumn = WidgetTree->ConstructWidget<UVerticalBox>();
     DetailsCard->AddChild(DetailsColumn);
@@ -470,8 +549,10 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
     );
 
     USizeBox* PortraitSize = WidgetTree->ConstructWidget<USizeBox>();
+    StylePortraitSize = PortraitSize;
     PortraitSize->SetHeightOverride(120.0f);
     UBorder* PortraitBorder = WidgetTree->ConstructWidget<UBorder>();
+    StylePortraitBorder = PortraitBorder;
     PortraitBorder->SetBrushColor(FLinearColor(0.06f, 0.08f, 0.10f, 1.0f));
     PortraitBorder->SetHorizontalAlignment(HAlign_Center);
     PortraitBorder->SetVerticalAlignment(VAlign_Center);
@@ -540,6 +621,28 @@ void USoccerDirectorTechnicalWidget::BuildWidgetTree()
         SelectionSummaryText,
         FMargin(0.0f, 8.0f, 0.0f, 0.0f)
     );
+
+    StyleEditor = NewObject<USoccerUIStyleEditorController>(this);
+    TArray<FSoccerEditableStyleField> EditableStyleFields;
+    EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("RosterWidth"), TEXT("Ancho lista jugadores"), 300.f, 180.f, 510.f));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("DetailsWidth"), TEXT("Ancho ficha jugador"), 430.f, 280.f, 680.f));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("PitchWidth"), TEXT("Ancho cancha horizontal"), 700.f, 350.f, 950.f));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("PitchHeight"), TEXT("Alto cancha horizontal"), 320.f, 180.f, 600.f));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("BenchListHeight"), TEXT("Alto lista suplentes (scroll)"), 72.f, 48.f, 160.f));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("PortraitHeight"), TEXT("Alto retrato"), 120.f, 65.f, 270.f));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("CardPadding"), TEXT("Padding de tarjetas"), 14.f, 0.f, 38.f));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("FontScale"), TEXT("Escala textos"), 1.f, .65f, 1.6f));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("PanelColor"), TEXT("Color fondo plantel"), TEXT("#05080BED")));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("CardColor"), TEXT("Color tarjetas"), TEXT("#090D12EB")));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("PortraitColor"), TEXT("Color retrato"), TEXT("#0F141AFF")));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("PitchColor"), TEXT("Color mini cancha"), TEXT("#09251BF0")));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("PlayerNormal"), TEXT("Jugador normal"), TEXT("#131B22F5")));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("PlayerStarter"), TEXT("Jugador titular"), TEXT("#14452EFF")));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("PlayerSelected"), TEXT("Jugador seleccionado"), TEXT("#146B99FF")));
+    EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("SlotFocused"), TEXT("Puesto enfocado"), TEXT("#1A739EFF")));
+    StyleEditor->Setup(WidgetTree, StyleCanvas, TEXT("DirectorTechnicalStyle"), EditableStyleFields);
+    StyleEditor->OnApplied.AddDynamic(this, &USoccerDirectorTechnicalWidget::HandleStyleApplied);
+    ApplyLiveStyle();
 }
 
 void USoccerDirectorTechnicalWidget::ResolveGameInstance()
@@ -820,6 +923,12 @@ void USoccerDirectorTechnicalWidget::RefreshFromPersistentTeamSetup(
     RefreshBenchList();
     RefreshSelectedPlayerDetails();
     RefreshSelectionSummary();
+    if (StyleEditor && StyleRootBorder)
+    {
+        StyleEditor->ApplyTextScale(StyleRootBorder, FSoccerUITheme::GetAdaptiveTextScale(
+            this, StyleNumber(TEXT("FontScale"), 1.f)));
+        FSoccerUITheme::ApplyButtonStates(StyleRootBorder);
+    }
 }
 
 void USoccerDirectorTechnicalWidget::RefreshFormationHeader()
@@ -874,6 +983,7 @@ void USoccerDirectorTechnicalWidget::RefreshRosterList()
     }
 
     RosterScrollBox->ClearChildren();
+    RosterButtonsByPlayerId.Reset();
 
     const TArray<FName> OrderedPlayerIds = GetOrderedAvailablePlayerIds();
     if (OrderedPlayerIds.Num() == 0)
@@ -912,8 +1022,8 @@ void USoccerDirectorTechnicalWidget::RefreshRosterList()
 
         PlayerButton->SetBackgroundColor(
             bSelected
-            ? DirectorSelectedColor
-            : (bStarter ? DirectorStarterColor : DirectorButtonBackground)
+            ? StyleColor(TEXT("PlayerSelected"), DirectorSelectedColor)
+            : (bStarter ? StyleColor(TEXT("PlayerStarter"), DirectorStarterColor) : StyleColor(TEXT("PlayerNormal"), DirectorButtonBackground))
         );
 
         const FString ButtonLabel = FString::Printf(
@@ -931,6 +1041,7 @@ void USoccerDirectorTechnicalWidget::RefreshRosterList()
         );
         PlayerButton->AddChild(PlayerText);
         RosterScrollBox->AddChild(PlayerButton);
+        RosterButtonsByPlayerId.Add(PlayerId, PlayerButton);
     }
 }
 
@@ -944,120 +1055,166 @@ void USoccerDirectorTechnicalWidget::RefreshFormationPitch()
     FormationCanvas->ClearChildren();
 
     UBorder* FieldBackground = WidgetTree->ConstructWidget<UBorder>();
-    FieldBackground->SetBrushColor(FLinearColor(0.035f, 0.145f, 0.105f, 0.94f));
-    UCanvasPanelSlot* FieldSlot = FormationCanvas->AddChildToCanvas(FieldBackground);
-    FieldSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
-    FieldSlot->SetOffsets(FMargin(0.0f));
+    FieldBackground->SetBrushColor(
+        StyleColor(TEXT("PitchColor"), FLinearColor(0.035f, 0.145f, 0.105f, 0.94f)));
+    FieldBackground->SetVisibility(ESlateVisibility::HitTestInvisible);
+    UCanvasPanelSlot* FieldCanvasSlot = FormationCanvas->AddChildToCanvas(FieldBackground);
+    FieldCanvasSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+    FieldCanvasSlot->SetOffsets(FMargin(0.0f));
+
+    // Horizontal pitch markings, mirroring the Formation page.
+    const float PitchLineInset = FMath::Max(5.0f, PitchCanvasHeight * 0.025f);
+    const float PitchLineThickness = 1.5f;
+    const float PitchInnerWidth = FMath::Max(1.0f, PitchCanvasWidth - 2.0f * PitchLineInset);
+    const float PitchInnerHeight = FMath::Max(1.0f, PitchCanvasHeight - 2.0f * PitchLineInset);
+    const FLinearColor PitchLineColor(0.82f, 0.90f, 0.84f, 0.36f);
+
+    AddDirectorPitchLine(WidgetTree, FormationCanvas,
+        FVector2D(PitchLineInset, PitchLineInset),
+        FVector2D(PitchInnerWidth, PitchLineThickness), PitchLineColor);
+    AddDirectorPitchLine(WidgetTree, FormationCanvas,
+        FVector2D(PitchLineInset, PitchCanvasHeight - PitchLineInset - PitchLineThickness),
+        FVector2D(PitchInnerWidth, PitchLineThickness), PitchLineColor);
+    AddDirectorPitchLine(WidgetTree, FormationCanvas,
+        FVector2D(PitchLineInset, PitchLineInset),
+        FVector2D(PitchLineThickness, PitchInnerHeight), PitchLineColor);
+    AddDirectorPitchLine(WidgetTree, FormationCanvas,
+        FVector2D(PitchCanvasWidth - PitchLineInset - PitchLineThickness, PitchLineInset),
+        FVector2D(PitchLineThickness, PitchInnerHeight), PitchLineColor);
+    AddDirectorPitchLine(WidgetTree, FormationCanvas,
+        FVector2D(PitchCanvasWidth * 0.5f, PitchLineInset),
+        FVector2D(PitchLineThickness, PitchInnerHeight), PitchLineColor);
+
+    const float AreaWidth = PitchInnerWidth * (105.0f / 640.0f);
+    const float AreaHeight = PitchInnerHeight * (205.0f / 330.0f);
+    const float AreaTop = (PitchCanvasHeight - AreaHeight) * 0.5f;
+    for (int32 SideIndex = 0; SideIndex < 2; ++SideIndex)
+    {
+        const float AreaEdgeX = SideIndex == 0
+            ? PitchLineInset + AreaWidth
+            : PitchCanvasWidth - PitchLineInset - AreaWidth;
+        AddDirectorPitchLine(WidgetTree, FormationCanvas,
+            FVector2D(AreaEdgeX, AreaTop),
+            FVector2D(PitchLineThickness, AreaHeight), PitchLineColor);
+        const float AreaStartX = SideIndex == 0 ? PitchLineInset : AreaEdgeX;
+        AddDirectorPitchLine(WidgetTree, FormationCanvas,
+            FVector2D(AreaStartX, AreaTop),
+            FVector2D(AreaWidth, PitchLineThickness), PitchLineColor);
+        AddDirectorPitchLine(WidgetTree, FormationCanvas,
+            FVector2D(AreaStartX, AreaTop + AreaHeight),
+            FVector2D(AreaWidth, PitchLineThickness), PitchLineColor);
+    }
+
+    // Goal labels are at the two ends of the pitch, not above/below the players.
+    const float GoalLabelWidth = FMath::Min(110.0f, PitchCanvasWidth * 0.22f);
+    const float GoalLabelHeight = 18.0f;
+    const float GoalLabelY = FMath::Max(0.0f, PitchCanvasHeight - 26.0f);
+    UTextBlock* OwnGoalLabel = MakeDirectorText(
+        WidgetTree, TEXT("ARCO PROPIO"), 10,
+        FLinearColor(0.78f, 0.88f, 0.82f, 0.86f));
+    OwnGoalLabel->SetJustification(ETextJustify::Left);
+    UCanvasPanelSlot* OwnGoalCanvasSlot = FormationCanvas->AddChildToCanvas(OwnGoalLabel);
+    OwnGoalCanvasSlot->SetPosition(FVector2D(PitchLineInset + 7.0f, GoalLabelY));
+    OwnGoalCanvasSlot->SetSize(FVector2D(GoalLabelWidth, GoalLabelHeight));
 
     UTextBlock* OpponentGoalLabel = MakeDirectorText(
-        WidgetTree,
-        TEXT("ARCO RIVAL"),
-        12,
-        FLinearColor(0.78f, 0.88f, 0.82f, 0.85f)
-    );
-    OpponentGoalLabel->SetJustification(ETextJustify::Center);
-    UCanvasPanelSlot* OpponentGoalSlot =
-        FormationCanvas->AddChildToCanvas(OpponentGoalLabel);
-    OpponentGoalSlot->SetPosition(FVector2D(PitchCanvasWidth * 0.5f - 70.0f, 10.0f));
-    OpponentGoalSlot->SetSize(FVector2D(140.0f, 20.0f));
-
-    UTextBlock* OwnGoalLabel = MakeDirectorText(
-        WidgetTree,
-        TEXT("ARCO PROPIO"),
-        12,
-        FLinearColor(0.78f, 0.88f, 0.82f, 0.85f)
-    );
-    OwnGoalLabel->SetJustification(ETextJustify::Center);
-    UCanvasPanelSlot* OwnGoalSlot = FormationCanvas->AddChildToCanvas(OwnGoalLabel);
-    OwnGoalSlot->SetPosition(
-        FVector2D(PitchCanvasWidth * 0.5f - 70.0f, PitchCanvasHeight - 30.0f)
-    );
-    OwnGoalSlot->SetSize(FVector2D(140.0f, 20.0f));
+        WidgetTree, TEXT("ARCO RIVAL"), 10,
+        FLinearColor(0.78f, 0.88f, 0.82f, 0.86f));
+    OpponentGoalLabel->SetJustification(ETextJustify::Right);
+    UCanvasPanelSlot* OpponentGoalCanvasSlot = FormationCanvas->AddChildToCanvas(OpponentGoalLabel);
+    OpponentGoalCanvasSlot->SetPosition(FVector2D(
+        PitchCanvasWidth - PitchLineInset - GoalLabelWidth - 7.0f, GoalLabelY));
+    OpponentGoalCanvasSlot->SetSize(FVector2D(GoalLabelWidth, GoalLabelHeight));
 
     const FSoccerTeamSetup TeamSetup = SoccerGameInstance->GetCurrentTeamSetup();
     const FSoccerFormationDefinition& FormationDefinition =
         SoccerFormationLibrary::GetDefinition(TeamSetup.FormationSystem);
 
-    const float HorizontalTravel = PitchCanvasWidth * 0.68f;
-    const float VerticalTop = 48.0f;
-    const float VerticalBottom = PitchCanvasHeight - 55.0f;
-    const float VerticalTravel = VerticalBottom - VerticalTop;
+    // DepthAlpha goes from goal to attack; LateralAlpha describes field width.
+    // Normalize the existing slot definitions over the usable horizontal area.
+    // Reserve enough room for the GK, 5-defender lines and the goal captions.
+    const float MarginX = FMath::Clamp(PitchCanvasWidth * 0.095f, 32.0f, 78.0f);
+    const float MarginY = FMath::Clamp(PitchCanvasHeight * 0.14f, 25.0f, 50.0f);
+    const float UsableWidth = FMath::Max(1.0f, PitchCanvasWidth - MarginX * 2.0f);
+    const float UsableHeight = FMath::Max(1.0f, PitchCanvasHeight - MarginY * 2.0f);
+    const float ButtonWidth = FMath::Clamp(PitchCanvasWidth * 0.14f, 54.0f, 108.0f);
+    // Some formations have five players on one line (lateral spacing = 0.39).
+    // Size cards to avoid overlap even in a reduced viewport.
+    const float ButtonHeight = FMath::Max(16.0f, FMath::Min(
+        PitchCanvasHeight * 0.13f, UsableHeight * 0.195f - 3.0f));
+    const bool bShowSuitabilityOnPitch = ButtonHeight >= 37.0f && ButtonWidth >= 82.0f;
+    const int32 ButtonFontSize = ButtonHeight < 26.0f ? 8 : (ButtonHeight < 37.0f ? 9 : 10);
+    const int32 MaxNameLength = FMath::Max(5,
+        FMath::FloorToInt((ButtonWidth - 7.0f) / (ButtonFontSize * 0.58f)));
+
+    USoccerPlayerProfile* SelectedProfile = FindProfile(SelectedPlayerId);
 
     for (const FSoccerFormationSlot& FormationSlotDefinition : FormationDefinition.Slots)
     {
         const FName SlotId = FormationSlotDefinition.SlotId;
-        const FName OccupantPlayerId =
-            SoccerGameInstance->GetPlayerInStartingSlot(SlotId);
+        const FName OccupantPlayerId = SoccerGameInstance->GetPlayerInStartingSlot(SlotId);
 
         USoccerDirectorTechnicalIdButton* FormationSlotButton =
             WidgetTree->ConstructWidget<USoccerDirectorTechnicalIdButton>();
         FormationSlotButton->SetIdentifier(SlotId);
         FormationSlotButton->OnIdentifierClicked.AddDynamic(
-            this,
-            &USoccerDirectorTechnicalWidget::HandleFormationSlotClicked
-        );
+            this, &USoccerDirectorTechnicalWidget::HandleFormationSlotClicked);
 
         const bool bFocused = SlotId == FocusedFormationSlotId;
         const bool bSelectedOccupant =
             !SelectedPlayerId.IsNone() && OccupantPlayerId == SelectedPlayerId;
-
         FormationSlotButton->SetBackgroundColor(
             bFocused
-            ? DirectorFocusedSlotColor
-            : (bSelectedOccupant ? DirectorSelectedColor : DirectorButtonBackground)
-        );
+                ? StyleColor(TEXT("SlotFocused"), DirectorFocusedSlotColor)
+                : (bSelectedOccupant
+                    ? StyleColor(TEXT("PlayerSelected"), DirectorSelectedColor)
+                    : StyleColor(TEXT("PlayerNormal"), DirectorButtonBackground)));
 
         FString SuitabilitySuffix;
-        USoccerPlayerProfile* SelectedProfile = FindProfile(SelectedPlayerId);
         if (IsValid(SelectedProfile))
         {
             const FSoccerPlayerSlotSuitability Suitability =
                 USoccerLineupEvaluationLibrary::EvaluatePlayerForFormationSlot(
-                    SelectedProfile,
-                    TeamSetup.FormationSystem,
-                    SlotId
-                );
+                    SelectedProfile, TeamSetup.FormationSystem, SlotId);
             if (Suitability.bValid)
             {
-                SuitabilitySuffix = FString::Printf(
-                    TEXT("\nApt. %d"),
-                    Suitability.OverallScore
-                );
+                SuitabilitySuffix = FString::Printf(TEXT("\nApt. %d"), Suitability.OverallScore);
             }
         }
 
-        const FString OccupantName = OccupantPlayerId.IsNone()
+        const FString FullOccupantName = OccupantPlayerId.IsNone()
             ? TEXT("[ VACÍO ]")
             : GetPlayerDisplayName(OccupantPlayerId);
+        FString ShortOccupantName = FullOccupantName;
+        if (ShortOccupantName.Len() > MaxNameLength)
+        {
+            ShortOccupantName = ShortOccupantName.Left(FMath::Max(1, MaxNameLength - 3)) + TEXT("...");
+        }
 
         const FString ButtonLabel = FString::Printf(
             TEXT("%s\n%s%s"),
-            *SlotId.ToString(),
-            *OccupantName,
-            *SuitabilitySuffix
-        );
-
+            *SlotId.ToString(), *ShortOccupantName,
+            bShowSuitabilityOnPitch ? *SuitabilitySuffix : TEXT(""));
         UTextBlock* SlotText = MakeDirectorText(
-            WidgetTree,
-            ButtonLabel,
-            12,
-            FLinearColor::White
-        );
+            WidgetTree, ButtonLabel, ButtonFontSize, FLinearColor::White);
         SlotText->SetJustification(ETextJustify::Center);
+        SlotText->SetAutoWrapText(false);
         FormationSlotButton->AddChild(SlotText);
+        FormationSlotButton->SetToolTipText(FText::FromString(FString::Printf(
+            TEXT("%s - %s%s"), *SlotId.ToString(), *FullOccupantName, *SuitabilitySuffix)));
 
-        const float CenterX =
-            PitchCanvasWidth * 0.5f +
-            FormationSlotDefinition.LateralAlpha * HorizontalTravel * 0.5f;
-        const float CenterY =
-            VerticalBottom -
-            FMath::Clamp(FormationSlotDefinition.DepthAlpha, 0.0f, 1.0f) * VerticalTravel;
+        const float NormalizedDepth = FMath::Clamp(
+            (FormationSlotDefinition.DepthAlpha - 0.055f) / 0.70f, 0.0f, 1.0f);
+        const float NormalizedLateral = FMath::Clamp(
+            FormationSlotDefinition.LateralAlpha * 0.5f + 0.5f, 0.0f, 1.0f);
+        const float CenterX = MarginX + NormalizedDepth * UsableWidth;
+        const float CenterY = MarginY + NormalizedLateral * UsableHeight;
 
         UCanvasPanelSlot* ButtonCanvasSlot =
             FormationCanvas->AddChildToCanvas(FormationSlotButton);
         ButtonCanvasSlot->SetAlignment(FVector2D(0.5f, 0.5f));
         ButtonCanvasSlot->SetPosition(FVector2D(CenterX, CenterY));
-        ButtonCanvasSlot->SetSize(FVector2D(145.0f, 58.0f));
+        ButtonCanvasSlot->SetSize(FVector2D(ButtonWidth, ButtonHeight));
     }
 }
 
@@ -1068,6 +1225,9 @@ void USoccerDirectorTechnicalWidget::RefreshBenchList()
         return;
     }
 
+    // Preserve the user's scroll position when selection/order/style refreshes
+    // rebuild the list (instead of unexpectedly jumping to the first reserve).
+    const float PreviousBenchOffset = BenchScrollBox ? BenchScrollBox->GetScrollOffset() : 0.0f;
     BenchListBox->ClearChildren();
     const TArray<FName> BenchPlayerIds = SoccerGameInstance->GetBenchPlayerIds();
 
@@ -1080,6 +1240,10 @@ void USoccerDirectorTechnicalWidget::RefreshBenchList()
             DirectorMuted
         );
         AddDirectorVerticalChild(BenchListBox, EmptyBenchText);
+        if (BenchScrollBox)
+        {
+            BenchScrollBox->SetScrollOffset(0.0f);
+        }
         return;
     }
 
@@ -1095,8 +1259,8 @@ void USoccerDirectorTechnicalWidget::RefreshBenchList()
         );
         BenchButton->SetBackgroundColor(
             BenchPlayerId == SelectedPlayerId
-            ? DirectorSelectedColor
-            : DirectorButtonBackground
+            ? StyleColor(TEXT("PlayerSelected"), DirectorSelectedColor)
+            : StyleColor(TEXT("PlayerNormal"), DirectorButtonBackground)
         );
 
         UTextBlock* BenchText = MakeDirectorText(
@@ -1114,6 +1278,10 @@ void USoccerDirectorTechnicalWidget::RefreshBenchList()
             BenchButton,
             FMargin(0.0f, 2.0f)
         );
+    }
+    if (BenchScrollBox)
+    {
+        BenchScrollBox->SetScrollOffset(PreviousBenchOffset);
     }
 }
 
@@ -1536,6 +1704,7 @@ void USoccerDirectorTechnicalWidget::SelectPlayer(FName PlayerId)
     RefreshBenchList();
     RefreshSelectedPlayerDetails();
     RefreshSelectionSummary();
+    UIAnimations.StartPage(StyleDetailsCard);
 }
 
 void USoccerDirectorTechnicalWidget::SelectFormationSlot(FName FormationSlotId)
@@ -1630,6 +1799,8 @@ void USoccerDirectorTechnicalWidget::NavigatePlayer(int32 Direction)
     const int32 Step = Direction >= 0 ? 1 : -1;
     const int32 NewIndex = (CurrentIndex + Step + PlayerIds.Num()) % PlayerIds.Num();
     SelectPlayer(PlayerIds[NewIndex]);
+    FSoccerUINavigation::FocusAndReveal(
+        this, RosterButtonsByPlayerId.FindRef(PlayerIds[NewIndex]), false);
 }
 
 void USoccerDirectorTechnicalWidget::NavigateFormationSlot(int32 Direction)
@@ -1791,4 +1962,81 @@ void USoccerDirectorTechnicalWidget::HandleBenchMoveDownClicked()
         SoccerGameInstance->ReorderBenchPlayer(SelectedPlayerId, CurrentIndex + 1);
     }
     RefreshFromPersistentTeamSetup(false);
+}
+
+void USoccerDirectorTechnicalWidget::ApplyLiveStyle()
+{
+    if (!StyleEditor || !StyleRootBorder) return;
+    StyleRootBorder->SetBrushColor(StyleColor(TEXT("PanelColor"), DirectorPanelBackground));
+    const FLinearColor CardTint = StyleColor(TEXT("CardColor"), DirectorCardBackground);
+    const float CardInnerPadding = StyleNumber(TEXT("CardPadding"), 14.f);
+    UBorder* StyleCards[] = { StyleRosterCard, StyleFormationCard, StyleDetailsCard };
+    for (UBorder* Card : StyleCards)
+    {
+        if (Card)
+        {
+            Card->SetBrushColor(CardTint);
+            Card->SetPadding(FMargin(CardInnerPadding));
+        }
+    }
+    if (StylePortraitBorder)
+    {
+        StylePortraitBorder->SetBrushColor(StyleColor(TEXT("PortraitColor"), FLinearColor(.06f, .08f, .10f, 1.f)));
+    }
+    const float DesiredRosterWidth = StyleNumber(TEXT("RosterWidth"), 300.f);
+    const float DesiredDetailsWidth = StyleNumber(TEXT("DetailsWidth"), 430.f);
+    const float DesiredPitchWidth = StyleNumber(TEXT("PitchWidth"), 700.f);
+    const float RequestedPitchHeight = StyleNumber(TEXT("PitchHeight"), 320.f);
+    // Keep the mini pitch landscape even when an older saved .ini contains the
+    // original portrait PitchHeight. The saved value itself is not overwritten.
+    const float DesiredPitchHeight = FMath::Min(RequestedPitchHeight, DesiredPitchWidth * 0.52f);
+    const FVector2D LogicalViewport = FSoccerUITheme::GetLogicalViewportSize(this);
+    // This widget lives inside the formation menu, which uses percentage anchors.
+    // Reserve space for its parent padding, borders and the three inter-column gaps.
+    const float AvailableBodyWidth = LogicalViewport.X > 1.f
+        ? FMath::Max(440.f, LogicalViewport.X * .88f - 90.f)
+        : DesiredRosterWidth + DesiredDetailsWidth + DesiredPitchWidth + 32.f;
+    const float DesiredBodyWidth = DesiredRosterWidth + DesiredDetailsWidth + DesiredPitchWidth + 32.f;
+    const float WidthScale = FMath::Min(1.f, AvailableBodyWidth / FMath::Max(1.f, DesiredBodyWidth));
+    // Preserve pitch aspect ratio while reserving space for tabs/header on 720p.
+    const float AvailablePitchHeight = LogicalViewport.Y > 1.f
+        ? FMath::Max(260.f, LogicalViewport.Y * .70f - 90.f)
+        : DesiredPitchHeight;
+    const float BodyScale = FMath::Min(WidthScale,
+        FMath::Min(1.f, AvailablePitchHeight / FMath::Max(1.f, DesiredPitchHeight)));
+    if (StyleRosterSize) StyleRosterSize->SetWidthOverride(DesiredRosterWidth * BodyScale);
+    if (StyleDetailsSize) StyleDetailsSize->SetWidthOverride(DesiredDetailsWidth * BodyScale);
+    if (StyleBenchScrollSize)
+    {
+        // Reserve a predictable area for the bench at smaller resolutions.
+        // The stored style value stays intact if the current viewport is short.
+        const float RequestedBenchHeight = StyleNumber(TEXT("BenchListHeight"), 72.f);
+        const float ResponsiveBenchLimit = LogicalViewport.Y > 1.f
+            ? FMath::Max(52.f, LogicalViewport.Y * 0.14f)
+            : 160.f;
+        StyleBenchScrollSize->SetHeightOverride(
+            FMath::Clamp(RequestedBenchHeight, 48.f, ResponsiveBenchLimit));
+    }
+    if (StylePortraitSize)
+    {
+        const float DesiredPortraitHeight = StyleNumber(TEXT("PortraitHeight"), 120.f);
+        StylePortraitSize->SetHeightOverride(FMath::Min(DesiredPortraitHeight,
+            LogicalViewport.Y > 1.f ? FMath::Max(70.f, LogicalViewport.Y * .16f) : DesiredPortraitHeight));
+    }
+    PitchCanvasWidth = DesiredPitchWidth * BodyScale;
+    PitchCanvasHeight = DesiredPitchHeight * BodyScale;
+    if (StylePitchSize)
+    {
+        StylePitchSize->SetWidthOverride(PitchCanvasWidth);
+        StylePitchSize->SetHeightOverride(PitchCanvasHeight);
+    }
+    // Regenerate only presentation buttons/lines, not the persistent lineup.
+    RefreshRosterList();
+    RefreshBenchList();
+    StyleEditor->ApplyTextScale(StyleRootBorder, FSoccerUITheme::GetAdaptiveTextScale(
+        this, StyleNumber(TEXT("FontScale"), 1.f)));
+    // Pitch labels are sized to their responsive cards instead of inheriting
+    // potentially oversized global text scales. Keep them readable without overlap.
+    RefreshFormationPitch();
+    FSoccerUITheme::ApplyButtonStates(StyleRootBorder);
 }

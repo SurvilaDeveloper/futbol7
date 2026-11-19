@@ -8,6 +8,8 @@
 #include "SoccerMatchManager.h"
 #include "SoccerPlayerProfile.h"
 #include "ThirdPersonCppCharacter.h"
+#include "SoccerUIStyleEditorController.h"
+#include "SoccerUITheme.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
@@ -87,10 +89,23 @@ namespace
 	}
 }
 
+void USoccerSubstitutionMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+    Super::NativeTick(MyGeometry, InDeltaTime);
+    UIAnimations.Tick(InDeltaTime);
+    const FVector2D ViewportUnits = FSoccerUITheme::GetLogicalViewportSize(this);
+    if (ViewportUnits.X > 1.f && !LastResponsiveViewport.Equals(ViewportUnits, 1.f))
+    {
+        LastResponsiveViewport = ViewportUnits;
+        ApplyLiveStyle();
+    }
+}
+
 void USoccerSubstitutionMenuWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 	BuildWidgetTree();
+	ApplyLiveStyle();
 }
 
 void USoccerSubstitutionMenuWidget::InitializeForMatchManager(
@@ -127,10 +142,8 @@ void USoccerSubstitutionMenuWidget::ActivateMenu(bool bPauseGame)
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	PlayerController->SetInputMode(InputMode);
 	RefreshPlayerLists(true);
-	if (ConfirmButton != nullptr)
-	{
-		ConfirmButton->SetUserFocus(PlayerController);
-	}
+    UpdateSelectorFocus(true);
+    UIAnimations.StartEntrance(LiveMainPanel);
 }
 
 void USoccerSubstitutionMenuWidget::CloseMenu()
@@ -160,17 +173,14 @@ FReply USoccerSubstitutionMenuWidget::NativeOnPreviewKeyDown(
 )
 {
 	const FKey Key = InKeyEvent.GetKey();
-	// En modo UIOnly el viewport no recibe F11. Atenderlo aqui permite
-	// alternar pantalla completa sin habilitar controles de gameplay.
 	if (Key == EKeys::F11)
 	{
-		if (APlayerController* PlayerController = GetOwningPlayer())
-		{
-			PlayerController->ConsoleCommand(TEXT("fullscreen"), true);
-		}
+		if (APlayerController* PC = GetOwningPlayer()) PC->ConsoleCommand(TEXT("fullscreen"), true);
 		return FReply::Handled();
 	}
-
+    if ((StyleEditor && StyleEditor->HasFocusedInput()) ||
+        FSoccerUINavigation::IsEditingText(WidgetTree))
+        return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 	if (Key == EKeys::N || Key == EKeys::Escape || Key == EKeys::Gamepad_FaceButton_Right)
 	{
 		CloseMenu();
@@ -179,12 +189,14 @@ FReply USoccerSubstitutionMenuWidget::NativeOnPreviewKeyDown(
 	if (Key == EKeys::Up || Key == EKeys::Gamepad_DPad_Up)
 	{
 		FocusedSelectorIndex = 0;
+        UpdateSelectorFocus(true);
 		SetStatus(TEXT("Seleccionando al jugador que sale."));
 		return FReply::Handled();
 	}
 	if (Key == EKeys::Down || Key == EKeys::Gamepad_DPad_Down)
 	{
 		FocusedSelectorIndex = 1;
+        UpdateSelectorFocus(true);
 		SetStatus(TEXT("Seleccionando al suplente que entra."));
 		return FReply::Handled();
 	}
@@ -198,9 +210,14 @@ FReply USoccerSubstitutionMenuWidget::NativeOnPreviewKeyDown(
 		if (FocusedSelectorIndex == 0) CycleOutgoing(1); else CycleIncoming(1);
 		return FReply::Handled();
 	}
-	if (Key == EKeys::Enter || Key == EKeys::SpaceBar || Key == EKeys::Gamepad_FaceButton_Bottom)
+	if (FSoccerUINavigation::IsAccept(Key))
 	{
-		ConfirmSubstitution();
+        if (IsValid(CloseMenuButton) && CloseMenuButton->HasKeyboardFocus())
+            CloseMenu();
+        else if (IsValid(CancelButton) && CancelButton->HasKeyboardFocus())
+            CancelPendingSubstitution();
+        else
+            ConfirmSubstitution();
 		return FReply::Handled();
 	}
 	if (Key == EKeys::BackSpace || Key == EKeys::Delete)
@@ -209,6 +226,42 @@ FReply USoccerSubstitutionMenuWidget::NativeOnPreviewKeyDown(
 		return FReply::Handled();
 	}
 	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
+}
+
+FReply USoccerSubstitutionMenuWidget::NativeOnAnalogValueChanged(
+    const FGeometry& InGeometry, const FAnalogInputEvent& InAnalogInputEvent)
+{
+    if ((StyleEditor && StyleEditor->HasFocusedInput()) ||
+        FSoccerUINavigation::IsEditingText(WidgetTree))
+        return Super::NativeOnAnalogValueChanged(InGeometry, InAnalogInputEvent);
+    int32 X = 0, Y = 0;
+    if (FSoccerUINavigation::ReadStick(InAnalogInputEvent, AnalogNavigation, X, Y))
+    {
+        if (Y) { FocusedSelectorIndex = Y < 0 ? 0 : 1; UpdateSelectorFocus(true); }
+        if (X) { if (FocusedSelectorIndex == 0) CycleOutgoing(X); else CycleIncoming(X); }
+        return FReply::Handled();
+    }
+    return Super::NativeOnAnalogValueChanged(InGeometry, InAnalogInputEvent);
+}
+
+void USoccerSubstitutionMenuWidget::UpdateSelectorFocus(bool bSetKeyboardFocus)
+{
+    const FLinearColor NormalCard = StyleEditor
+        ? StyleEditor->GetColor(TEXT("CardColor"), FLinearColor(.035f, .055f, .075f, .96f))
+        : FLinearColor(.035f, .055f, .075f, .96f);
+    const FLinearColor FocusedCard = FLinearColor::LerpUsingHSV(
+        NormalCard, FLinearColor(.05f, .23f, .30f, .96f), .72f);
+    for (int32 Index = 0; Index < LiveSelectorCards.Num(); ++Index)
+    {
+        if (IsValid(LiveSelectorCards[Index]))
+            LiveSelectorCards[Index]->SetBrushColor(
+                Index == FocusedSelectorIndex ? FocusedCard : NormalCard);
+    }
+    if (bSetKeyboardFocus)
+    {
+        UButton* FocusTarget = FocusedSelectorIndex == 0 ? OutgoingNextButton : IncomingNextButton;
+        FSoccerUINavigation::FocusAndReveal(this, FocusTarget);
+    }
 }
 
 void USoccerSubstitutionMenuWidget::BuildWidgetTree()
@@ -227,9 +280,11 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
 	DimSlot->SetOffsets(FMargin(0.0f));
 
 	UBorder* Panel = WidgetTree->ConstructWidget<UBorder>();
+	LiveMainPanel = Panel;
 	Panel->SetBrushColor(MenuBackground);
 	Panel->SetPadding(FMargin(28.0f));
 	UCanvasPanelSlot* PanelSlot = Root->AddChildToCanvas(Panel);
+	LiveMainCanvasSlot = PanelSlot;
 	PanelSlot->SetAnchors(FAnchors(0.14f, 0.10f, 0.86f, 0.90f));
 	PanelSlot->SetOffsets(FMargin(0.0f));
 
@@ -238,9 +293,9 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
 	UHorizontalBox* Header = WidgetTree->ConstructWidget<UHorizontalBox>();
 	AddVertical(Main, Header, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 	AddHorizontal(Header, MakeText(WidgetTree, TEXT("CAMBIOS"), 30), FMargin(0.0f, 0.0f, 20.0f, 0.0f), ESlateSizeRule::Fill);
-	UButton* CloseButton = MakeButton(WidgetTree, TEXT("VOLVER AL PARTIDO"), 16, FLinearColor(0.11f, 0.16f, 0.21f, 1.0f));
-	CloseButton->OnClicked.AddDynamic(this, &USoccerSubstitutionMenuWidget::HandleCloseClicked);
-	AddHorizontal(Header, CloseButton);
+	CloseMenuButton = MakeButton(WidgetTree, TEXT("VOLVER AL PARTIDO"), 16, FLinearColor(0.11f, 0.16f, 0.21f, 1.0f));
+	CloseMenuButton->OnClicked.AddDynamic(this, &USoccerSubstitutionMenuWidget::HandleCloseClicked);
+	AddHorizontal(Header, CloseMenuButton);
 
 	SummaryText = MakeText(WidgetTree, TEXT("--"), 18, MutedText);
 	AddVertical(Main, SummaryText, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
@@ -253,6 +308,7 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
 	)
 	{
 		UBorder* Card = WidgetTree->ConstructWidget<UBorder>();
+		LiveSelectorCards.Add(Card);
 		Card->SetBrushColor(CardBackground);
 		Card->SetPadding(FMargin(16.0f, 13.0f));
 		AddVertical(Main, Card, FMargin(0.0f, 0.0f, 0.0f, 12.0f));
@@ -276,12 +332,14 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
 	BuildSelector(TEXT("SALE"), OutgoingValueText, OutPrevious, OutNext);
 	OutPrevious->OnClicked.AddDynamic(this, &USoccerSubstitutionMenuWidget::HandleOutgoingPrevious);
 	OutNext->OnClicked.AddDynamic(this, &USoccerSubstitutionMenuWidget::HandleOutgoingNext);
+    OutgoingNextButton = OutNext;
 
 	UButton* InPrevious = nullptr;
 	UButton* InNext = nullptr;
 	BuildSelector(TEXT("ENTRA"), IncomingValueText, InPrevious, InNext);
 	InPrevious->OnClicked.AddDynamic(this, &USoccerSubstitutionMenuWidget::HandleIncomingPrevious);
 	InNext->OnClicked.AddDynamic(this, &USoccerSubstitutionMenuWidget::HandleIncomingNext);
+    IncomingNextButton = InNext;
 
 	ComparisonText = MakeText(WidgetTree, TEXT("--"), 18, FLinearColor(0.82f, 0.90f, 0.96f, 1.0f));
 	AddVertical(Main, ComparisonText, FMargin(0.0f, 8.0f, 0.0f, 14.0f));
@@ -301,11 +359,58 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
 	AddVertical(Main, StatusText, FMargin(0.0f, 0.0f, 0.0f, 8.0f));
 	UTextBlock* Help = MakeText(
 		WidgetTree,
-		TEXT("Mouse o flechas: elegir   Arriba/Abajo: selector   Enter: confirmar   Retroceso: cancelar   N/Esc: cerrar"),
+		TEXT("Flechas / cruceta / stick: elegir   Arriba/Abajo: selector   Enter/A: confirmar   Retroceso: cancelar   N/B/Esc: cerrar"),
 		15,
 		MutedText
 	);
+    Help->SetAutoWrapText(true);
 	AddVertical(Main, Help);
+
+	StyleEditor = NewObject<USoccerUIStyleEditorController>(this);
+	TArray<FSoccerEditableStyleField> Fields;
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("LeftAnchor"), TEXT("Borde izquierdo (0 a 0.4)"), .14f, 0.f, .4f));
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("TopAnchor"), TEXT("Borde superior (0 a 0.3)"), .10f, 0.f, .3f));
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("PanelPadding"), TEXT("Margen panel"), 28.f, 4.f, 65.f));
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("CardPadding"), TEXT("Margen de fichas"), 16.f, 2.f, 40.f));
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("FontScale"), TEXT("Escala de letra"), 1.f, .65f, 1.5f));
+	Fields.Add(FSoccerEditableStyleField::Color(TEXT("PanelColor"), TEXT("Fondo del panel"), TEXT("#04060AF7")));
+	Fields.Add(FSoccerEditableStyleField::Color(TEXT("CardColor"), TEXT("Color de tarjetas"), TEXT("#090E13F5")));
+	StyleEditor->Setup(WidgetTree, Root, TEXT("SubstitutionStyle"), Fields);
+	StyleEditor->OnApplied.AddDynamic(this, &USoccerSubstitutionMenuWidget::HandleStyleApplied);
+}
+
+void USoccerSubstitutionMenuWidget::HandleStyleApplied()
+{
+	ApplyLiveStyle();
+}
+
+void USoccerSubstitutionMenuWidget::ApplyLiveStyle()
+{
+	if (!StyleEditor || !LiveMainPanel || !LiveMainCanvasSlot) return;
+    const FVector2D ViewportUnits = FSoccerUITheme::GetLogicalViewportSize(this);
+    const float RequestedLeft = StyleEditor->GetNumber(TEXT("LeftAnchor"), .14f);
+    const float RequestedTop = StyleEditor->GetNumber(TEXT("TopAnchor"), .10f);
+    const float Left = ViewportUnits.X > 1.f && ViewportUnits.X < 1100.f
+        ? FMath::Min(RequestedLeft, .06f) : RequestedLeft;
+    const float Top = ViewportUnits.Y > 1.f && ViewportUnits.Y < 750.f
+        ? FMath::Min(RequestedTop, .06f) : RequestedTop;
+    LiveMainCanvasSlot->SetAnchors(FAnchors(Left, Top, 1.f - Left, 1.f - Top));
+    const float RequestedPadding = StyleEditor->GetNumber(TEXT("PanelPadding"), 28.f);
+    LiveMainPanel->SetPadding(FMargin(ViewportUnits.X > 1.f
+        ? FMath::Min(RequestedPadding, FMath::Max(8.f, ViewportUnits.X * .025f))
+        : RequestedPadding));
+	LiveMainPanel->SetBrushColor(StyleEditor->GetColor(TEXT("PanelColor"), MenuBackground));
+	for (UBorder* Card : LiveSelectorCards)
+	{
+		if (!Card) continue;
+		Card->SetBrushColor(StyleEditor->GetColor(TEXT("CardColor"), CardBackground));
+		const float Pad = StyleEditor->GetNumber(TEXT("CardPadding"), 16.f);
+		Card->SetPadding(FMargin(Pad, 13.f));
+	}
+    StyleEditor->ApplyTextScale(LiveMainPanel, FSoccerUITheme::GetAdaptiveTextScale(
+        this, StyleEditor->GetNumber(TEXT("FontScale"), 1.f)));
+    FSoccerUITheme::ApplyButtonStates(LiveMainPanel);
+    UpdateSelectorFocus(false);
 }
 
 void USoccerSubstitutionMenuWidget::RefreshPlayerLists(bool bPreserveSelection)
@@ -526,20 +631,32 @@ void USoccerSubstitutionMenuWidget::RefreshDisplay()
 
 void USoccerSubstitutionMenuWidget::CycleOutgoing(int32 Direction)
 {
+    FocusedSelectorIndex = 0;
+    UpdateSelectorFocus(false);
 	if (ActivePlayerIds.Num() <= 0) return;
 	const int32 Step = Direction >= 0 ? 1 : -1;
 	SelectedOutgoingIndex =
 		(SelectedOutgoingIndex + Step + ActivePlayerIds.Num()) % ActivePlayerIds.Num();
 	RefreshDisplay();
+    if (LiveSelectorCards.IsValidIndex(0))
+    {
+        UIAnimations.StartSelection(LiveSelectorCards[0]);
+    }
 }
 
 void USoccerSubstitutionMenuWidget::CycleIncoming(int32 Direction)
 {
+    FocusedSelectorIndex = 1;
+    UpdateSelectorFocus(false);
 	if (BenchPlayerIds.Num() <= 0) return;
 	const int32 Step = Direction >= 0 ? 1 : -1;
 	SelectedIncomingIndex =
 		(SelectedIncomingIndex + Step + BenchPlayerIds.Num()) % BenchPlayerIds.Num();
 	RefreshDisplay();
+    if (LiveSelectorCards.IsValidIndex(1))
+    {
+        UIAnimations.StartSelection(LiveSelectorCards[1]);
+    }
 }
 
 void USoccerSubstitutionMenuWidget::ConfirmSubstitution()

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "SoccerUIFeedbackAnimations.h"
+#include "SoccerUINavigation.h"
 #include "Blueprint/UserWidget.h"
 #include "SoccerQuickTacticsWidget.generated.h"
 
@@ -8,6 +10,9 @@ class UBorder;
 class UButton;
 class UTextBlock;
 class USoccerTacticalPresetManager;
+class USizeBox;
+class USoccerUIStyleEditorController;
+class UCanvasPanelSlot;
 
 /*
  * Compact in-match selector for the four persistent tactical quick slots.
@@ -31,11 +36,14 @@ public:
 
 protected:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual void NativeConstruct() override;
 	virtual FReply NativeOnPreviewKeyDown(
 		const FGeometry& InGeometry,
 		const FKeyEvent& InKeyEvent
 	) override;
+    virtual FReply NativeOnAnalogValueChanged(const FGeometry& InGeometry,
+        const FAnalogInputEvent& InAnalogInputEvent) override;
 
 private:
 	void BuildWidgetTree();
@@ -44,6 +52,8 @@ private:
 	void MoveSelection(int32 Direction);
 	void ApplySelectedQuickSlot();
 	void NotifyHUD(const FString& Message) const;
+	void ApplyLiveStyle();
+	UFUNCTION() void HandleStyleApplied();
 
 	UFUNCTION()
 	void HandleQuickSlot1Clicked();
@@ -58,8 +68,11 @@ private:
 	UFUNCTION()
 	void HandleCloseClicked();
 
-	UPROPERTY()
-	USoccerTacticalPresetManager* TacticalPresetManager = nullptr;
+	UPROPERTY(Transient) USoccerUIStyleEditorController* StyleEditor = nullptr;
+	UPROPERTY(Transient) UBorder* LiveMainPanel = nullptr;
+	UPROPERTY(Transient) UCanvasPanelSlot* LivePanelCanvasSlot = nullptr;
+	UPROPERTY(Transient) TArray<USizeBox*> LiveQuickRows;
+	UPROPERTY() USoccerTacticalPresetManager* TacticalPresetManager = nullptr;
 
 	UPROPERTY()
 	TArray<UButton*> QuickSlotButtons;
@@ -80,5 +93,8 @@ private:
 	UButton* CloseButton = nullptr;
 
 	int32 SelectedQuickSlotIndex = 0;
+    FSoccerMenuAnalogRepeat AnalogNavigation;
 	bool bPreviousMouseCursorVisible = false;
+    FVector2D LastResponsiveViewport = FVector2D::ZeroVector;
+    FSoccerUIFeedbackAnimations UIAnimations;
 };

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "SoccerUIFeedbackAnimations.h"
+#include "SoccerUINavigation.h"
 #include "Blueprint/UserWidget.h"
 #include "SoccerFormationTypes.h"
 #include "SoccerDirectorTechnicalWidget.generated.h"
@@ -15,6 +17,8 @@ class USoccerPlayerProfile;
 class USoccerSquadCatalog;
 class UTextBlock;
 class UVerticalBox;
+class USizeBox;
+class USoccerUIStyleEditorController;
 
 /**
  * Native squad/lineup page embedded in the existing coach menu.
@@ -37,13 +41,19 @@ public:
     void NavigatePlayer(int32 Direction);
     void NavigateFormationSlot(int32 Direction);
     void ConfirmFocusedSlotAssignment();
+    bool HasFocusedStyleInput() const;
 
 protected:
     virtual void NativeOnInitialized() override;
+    virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
     virtual void NativeConstruct() override;
 
 private:
     void BuildWidgetTree();
+    void ApplyLiveStyle();
+    UFUNCTION() void HandleStyleApplied();
+    float StyleNumber(const TCHAR* Key, float DefaultValue) const;
+    FLinearColor StyleColor(const TCHAR* Key, const FLinearColor& DefaultColor) const;
     void ResolveGameInstance();
     void DiscoverPlayerProfiles();
     void SynchronizePersistentSquad();
@@ -94,6 +104,18 @@ private:
     UFUNCTION()
     void HandleBenchMoveDownClicked();
 
+    UPROPERTY(Transient) USoccerUIStyleEditorController* StyleEditor = nullptr;
+    UPROPERTY(Transient) UBorder* StyleRootBorder = nullptr;
+    UPROPERTY(Transient) UBorder* StyleRosterCard = nullptr;
+    UPROPERTY(Transient) UBorder* StyleFormationCard = nullptr;
+    UPROPERTY(Transient) UBorder* StyleDetailsCard = nullptr;
+    UPROPERTY(Transient) UBorder* StylePortraitBorder = nullptr;
+    UPROPERTY(Transient) USizeBox* StyleRosterSize = nullptr;
+    UPROPERTY(Transient) USizeBox* StyleDetailsSize = nullptr;
+    UPROPERTY(Transient) USizeBox* StylePitchSize = nullptr;
+    UPROPERTY(Transient) USizeBox* StylePortraitSize = nullptr;
+    UPROPERTY(Transient) USizeBox* StyleBenchScrollSize = nullptr;
+
     UPROPERTY()
     USoccerGameInstance* SoccerGameInstance = nullptr;
 
@@ -118,8 +140,14 @@ private:
     UPROPERTY()
     UScrollBox* RosterScrollBox = nullptr;
 
+    UPROPERTY(Transient)
+    TMap<FName, UButton*> RosterButtonsByPlayerId;
+
     UPROPERTY()
     UCanvasPanel* FormationCanvas = nullptr;
+
+    UPROPERTY()
+    UScrollBox* BenchScrollBox = nullptr;
 
     UPROPERTY()
     UVerticalBox* BenchListBox = nullptr;
@@ -159,6 +187,8 @@ private:
 
     bool bProfilesDiscovered = false;
 
-    float PitchCanvasWidth = 550.0f;
-    float PitchCanvasHeight = 540.0f;
+    float PitchCanvasWidth = 700.0f;
+    float PitchCanvasHeight = 320.0f;
+    FVector2D LastResponsiveViewport = FVector2D::ZeroVector;
+    FSoccerUIFeedbackAnimations UIAnimations;
 };

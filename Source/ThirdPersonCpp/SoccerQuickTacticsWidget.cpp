@@ -1,8 +1,10 @@
 #include "SoccerQuickTacticsWidget.h"
+#include "SoccerUITheme.h"
 
 #include "GameHUD.h"
 #include "SoccerTacticalPresetManager.h"
 #include "SoccerTacticalPresetTypes.h"
+#include "SoccerUIStyleEditorController.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
@@ -65,10 +67,23 @@ namespace
 	}
 }
 
+void USoccerQuickTacticsWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+    Super::NativeTick(MyGeometry, InDeltaTime);
+    UIAnimations.Tick(InDeltaTime);
+    const FVector2D LogicalViewport = FSoccerUITheme::GetLogicalViewportSize(this);
+    if (LogicalViewport.X > 1.f && !LastResponsiveViewport.Equals(LogicalViewport, 1.f))
+    {
+        LastResponsiveViewport = LogicalViewport;
+        ApplyLiveStyle();
+    }
+}
+
 void USoccerQuickTacticsWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 	BuildWidgetTree();
+	ApplyLiveStyle();
 }
 
 void USoccerQuickTacticsWidget::NativeConstruct()
@@ -147,6 +162,8 @@ void USoccerQuickTacticsWidget::ActivateMenu()
 	{
 		QuickSlotButtons[SelectedQuickSlotIndex]->SetUserFocus(PlayerController);
 	}
+
+    UIAnimations.StartEntrance(LiveMainPanel);
 }
 
 void USoccerQuickTacticsWidget::CloseMenu()
@@ -177,6 +194,9 @@ FReply USoccerQuickTacticsWidget::NativeOnPreviewKeyDown(
 		}
 		return FReply::Handled();
 	}
+    if ((StyleEditor && StyleEditor->HasFocusedInput()) ||
+        FSoccerUINavigation::IsEditingText(WidgetTree))
+        return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 
 
 	if (
@@ -212,13 +232,12 @@ FReply USoccerQuickTacticsWidget::NativeOnPreviewKeyDown(
 		return FReply::Handled();
 	}
 
-	if (
-		Key == EKeys::Enter ||
-		Key == EKeys::SpaceBar ||
-		Key == EKeys::Gamepad_FaceButton_Bottom
-	)
+	if (FSoccerUINavigation::IsAccept(Key))
 	{
-		ApplySelectedQuickSlot();
+        if (IsValid(CloseButton) && CloseButton->HasKeyboardFocus())
+            CloseMenu();
+        else
+            ApplySelectedQuickSlot();
 		return FReply::Handled();
 	}
 
@@ -250,6 +269,22 @@ FReply USoccerQuickTacticsWidget::NativeOnPreviewKeyDown(
 	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 }
 
+FReply USoccerQuickTacticsWidget::NativeOnAnalogValueChanged(
+    const FGeometry& InGeometry, const FAnalogInputEvent& InAnalogInputEvent)
+{
+    if ((StyleEditor && StyleEditor->HasFocusedInput()) ||
+        FSoccerUINavigation::IsEditingText(WidgetTree))
+        return Super::NativeOnAnalogValueChanged(InGeometry, InAnalogInputEvent);
+    int32 X = 0, Y = 0;
+    if (FSoccerUINavigation::ReadStick(InAnalogInputEvent, AnalogNavigation, X, Y))
+    {
+        if (X) MoveSelection(X);
+        if (Y) MoveSelection(Y);
+        return FReply::Handled();
+    }
+    return Super::NativeOnAnalogValueChanged(InGeometry, InAnalogInputEvent);
+}
+
 void USoccerQuickTacticsWidget::BuildWidgetTree()
 {
 	if (WidgetTree == nullptr)
@@ -261,10 +296,12 @@ void USoccerQuickTacticsWidget::BuildWidgetTree()
 	WidgetTree->RootWidget = RootCanvas;
 
 	UBorder* Panel = WidgetTree->ConstructWidget<UBorder>();
+	LiveMainPanel = Panel;
 	Panel->SetBrushColor(QuickPanelBackground);
 	Panel->SetPadding(FMargin(16.0f));
 
 	UCanvasPanelSlot* PanelSlot = RootCanvas->AddChildToCanvas(Panel);
+	LivePanelCanvasSlot = PanelSlot;
 	PanelSlot->SetAnchors(FAnchors(1.0f, 0.5f));
 	PanelSlot->SetAlignment(FVector2D(1.0f, 0.5f));
 	PanelSlot->SetPosition(FVector2D(-34.0f, 0.0f));
@@ -305,6 +342,7 @@ void USoccerQuickTacticsWidget::BuildWidgetTree()
 	{
 		USizeBox* ButtonSize = WidgetTree->ConstructWidget<USizeBox>();
 		ButtonSize->SetHeightOverride(48.0f);
+		LiveQuickRows.Add(ButtonSize);
 
 		UButton* QuickButton = WidgetTree->ConstructWidget<UButton>();
 		QuickButton->SetBackgroundColor(QuickNormalButton);
@@ -345,7 +383,7 @@ void USoccerQuickTacticsWidget::BuildWidgetTree()
 
 	StatusText = MakeQuickText(
 		WidgetTree,
-		TEXT("Flechas/D-Pad: elegir   Enter/A: aplicar"),
+		TEXT("Flechas / cruceta / stick: elegir   Enter / A: aplicar   B / Esc: cerrar"),
 		12,
 		FLinearColor(0.60f, 0.68f, 0.74f, 1.0f)
 	);
@@ -374,6 +412,57 @@ void USoccerQuickTacticsWidget::BuildWidgetTree()
 	UHorizontalBoxSlot* CloseSlot = ActionRow->AddChildToHorizontalBox(CloseButton);
 	CloseSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	CloseSlot->SetPadding(FMargin(4.0f, 0.0f, 0.0f, 0.0f));
+
+	StyleEditor = NewObject<USoccerUIStyleEditorController>(this);
+	TArray<FSoccerEditableStyleField> Fields;
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("PanelWidth"), TEXT("Ancho del panel"), 430.f, 320.f, 780.f));
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("PanelHeight"), TEXT("Alto del panel"), 390.f, 300.f, 730.f));
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("RightOffset"), TEXT("Separación al borde"), 34.f, 0.f, 220.f));
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("PanelPadding"), TEXT("Margen interior"), 16.f, 2.f, 60.f));
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("RowHeight"), TEXT("Alto de botón táctico"), 48.f, 28.f, 110.f));
+	Fields.Add(FSoccerEditableStyleField::Number(TEXT("FontScale"), TEXT("Escala de letra"), 1.f, .65f, 1.6f));
+	Fields.Add(FSoccerEditableStyleField::Color(TEXT("PanelColor"), TEXT("Color panel"), TEXT("#05070AF0")));
+	Fields.Add(FSoccerEditableStyleField::Color(TEXT("NormalColor"), TEXT("Botón normal"), TEXT("#121A24")));
+	Fields.Add(FSoccerEditableStyleField::Color(TEXT("SelectedColor"), TEXT("Botón seleccionado"), TEXT("#215E8A")));
+	Fields.Add(FSoccerEditableStyleField::Color(TEXT("ActiveColor"), TEXT("Táctica activa"), TEXT("#125738")));
+	StyleEditor->Setup(WidgetTree, RootCanvas, TEXT("QuickTacticsStyle"), Fields);
+	StyleEditor->OnApplied.AddDynamic(this, &USoccerQuickTacticsWidget::HandleStyleApplied);
+}
+
+void USoccerQuickTacticsWidget::HandleStyleApplied()
+{
+	ApplyLiveStyle();
+}
+
+void USoccerQuickTacticsWidget::ApplyLiveStyle()
+{
+	if (!StyleEditor || !LiveMainPanel || !LivePanelCanvasSlot) return;
+	LiveMainPanel->SetBrushColor(StyleEditor->GetColor(TEXT("PanelColor"), QuickPanelBackground));
+    const FVector2D ScreenUnits = FSoccerUITheme::GetLogicalViewportSize(this);
+    const float PanelPadding = StyleEditor->GetNumber(TEXT("PanelPadding"), 16.f);
+    LiveMainPanel->SetPadding(FMargin(ScreenUnits.X > 1.f
+        ? FMath::Min(PanelPadding, FMath::Max(8.f, ScreenUnits.X * .025f))
+        : PanelPadding));
+    const float DesiredRightOffset = StyleEditor->GetNumber(TEXT("RightOffset"), 34.f);
+    const FVector2D LogicalViewport = FSoccerUITheme::GetLogicalViewportSize(this);
+    const float RightOffset = LogicalViewport.X > 1.f
+        ? FMath::Min(DesiredRightOffset, FMath::Max(12.f, LogicalViewport.X * .04f))
+        : DesiredRightOffset;
+    const FVector2D FittedSize = FSoccerUITheme::FitPanelToViewport(this, FVector2D(
+        StyleEditor->GetNumber(TEXT("PanelWidth"), 430.f),
+        StyleEditor->GetNumber(TEXT("PanelHeight"), 390.f)), RightOffset + 8.f);
+    LivePanelCanvasSlot->SetSize(FittedSize);
+    LivePanelCanvasSlot->SetPosition(FVector2D(-RightOffset, 0.f));
+    const float DesiredRowHeight = StyleEditor->GetNumber(TEXT("RowHeight"), 48.f);
+    const float AvailableRowHeight = FMath::Max(30.f, (FittedSize.Y - 165.f) / 4.f);
+    for (USizeBox* RowBox : LiveQuickRows)
+    {
+        if (RowBox) RowBox->SetHeightOverride(FMath::Min(DesiredRowHeight, AvailableRowHeight));
+    }
+    StyleEditor->ApplyTextScale(LiveMainPanel, FSoccerUITheme::GetAdaptiveTextScale(
+        this, StyleEditor->GetNumber(TEXT("FontScale"), 1.f)));
+    FSoccerUITheme::ApplyButtonStates(LiveMainPanel);
+	RefreshFromPresetManager();
 }
 
 void USoccerQuickTacticsWidget::RefreshFromPresetManager()
@@ -452,10 +541,10 @@ void USoccerQuickTacticsWidget::RefreshFromPresetManager()
 
 			QuickButton->SetBackgroundColor(
 				bSelected
-				? QuickSelectedButton
+				? (StyleEditor ? StyleEditor->GetColor(TEXT("SelectedColor"), QuickSelectedButton) : QuickSelectedButton)
 				: bActive
-				? QuickActiveButton
-				: QuickNormalButton
+				? (StyleEditor ? StyleEditor->GetColor(TEXT("ActiveColor"), QuickActiveButton) : QuickActiveButton)
+				: (StyleEditor ? StyleEditor->GetColor(TEXT("NormalColor"), QuickNormalButton) : QuickNormalButton)
 			);
 		}
 	}
@@ -478,8 +567,14 @@ void USoccerQuickTacticsWidget::SelectQuickSlot(int32 NewQuickSlotIndex)
 		return;
 	}
 
+	const int32 OldQuickSlotIndex = SelectedQuickSlotIndex;
 	SelectedQuickSlotIndex = FMath::Clamp(NewQuickSlotIndex, 0, SlotCount - 1);
 	RefreshFromPresetManager();
+    if (OldQuickSlotIndex != SelectedQuickSlotIndex &&
+        QuickSlotButtons.IsValidIndex(SelectedQuickSlotIndex))
+    {
+        UIAnimations.StartSelection(QuickSlotButtons[SelectedQuickSlotIndex]);
+    }
 
 	APlayerController* PlayerController = GetOwningPlayer();
 	if (
@@ -487,7 +582,7 @@ void USoccerQuickTacticsWidget::SelectQuickSlot(int32 NewQuickSlotIndex)
 		QuickSlotButtons.IsValidIndex(SelectedQuickSlotIndex)
 	)
 	{
-		QuickSlotButtons[SelectedQuickSlotIndex]->SetUserFocus(PlayerController);
+        FSoccerUINavigation::FocusAndReveal(this, QuickSlotButtons[SelectedQuickSlotIndex]);
 	}
 }
 

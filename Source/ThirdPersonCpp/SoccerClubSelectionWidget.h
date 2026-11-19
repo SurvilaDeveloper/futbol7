@@ -1,6 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "SoccerUIFeedbackAnimations.h"
+#include "SoccerUINavigation.h"
 #include "Blueprint/UserWidget.h"
 #include "SoccerClubSelectionWidget.generated.h"
 
@@ -13,6 +15,9 @@ class UButton;
 class UBorder;
 class UTextBlock;
 class UUniformGridPanel;
+class USizeBox;
+class UCanvasPanelSlot;
+class USoccerUIStyleEditorController;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSoccerClubSelectionConfirmed);
 
@@ -32,10 +37,13 @@ public:
 
 protected:
     virtual void NativeOnInitialized() override;
+    virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
     virtual FReply NativeOnPreviewKeyDown(
         const FGeometry& InGeometry,
         const FKeyEvent& InKeyEvent
     ) override;
+    virtual FReply NativeOnAnalogValueChanged(
+        const FGeometry& InGeometry, const FAnalogInputEvent& InAnalogInputEvent) override;
 
 private:
     void BuildWidgetTree();
@@ -43,10 +51,15 @@ private:
     void RebuildClubGrid();
     void RefreshTexts();
     void CycleOpponent(int32 Direction);
+    void NavigateOpponentGrid(int32 Direction);
+    void FocusSelectedClub();
     FString GetClubDisplayName(FName ClubId) const;
     USoccerClubProfile* GetClubProfile(FName ClubId) const;
     void RefreshCardSelectionStates();
     void CloseMenu();
+    void ApplyLiveStyle();
+
+    UFUNCTION() void HandleStyleApplied();
     void OpenSquadViewer();
 
     UFUNCTION()
@@ -73,8 +86,13 @@ private:
     UPROPERTY(Transient)
     USoccerGameInstance* SoccerGameInstance = nullptr;
 
-    UPROPERTY(Transient)
-    UTextBlock* HumanClubText = nullptr;
+    UPROPERTY(Transient) USoccerUIStyleEditorController* StyleEditor = nullptr;
+    UPROPERTY(Transient) UBorder* LiveBackdrop = nullptr;
+    UPROPERTY(Transient) UBorder* LiveMainPanel = nullptr;
+    UPROPERTY(Transient) USizeBox* LiveMainSize = nullptr;
+    UPROPERTY(Transient) USizeBox* LiveGridViewportSize = nullptr;
+    UPROPERTY(Transient) UCanvasPanelSlot* LivePanelCanvasSlot = nullptr;
+    UPROPERTY(Transient) UTextBlock* HumanClubText = nullptr;
 
     UPROPERTY(Transient)
     UTextBlock* OpponentClubText = nullptr;
@@ -87,6 +105,9 @@ private:
 
     UPROPERTY(Transient)
     UTextBlock* StatusText = nullptr;
+
+    UPROPERTY(Transient)
+    UButton* ViewSquadsButton = nullptr;
 
     UPROPERTY(Transient)
     UButton* ConfirmButton = nullptr;
@@ -111,6 +132,10 @@ private:
 
     TArray<FName> SelectableOpponentClubIds;
     int32 SelectedOpponentIndex = INDEX_NONE;
+    int32 RenderedGridColumnCount = 1;
+    FSoccerMenuAnalogRepeat AnalogNavigation;
     bool bAppliedGamePause = false;
     bool bPreviousMouseCursorVisible = false;
+    FVector2D LastResponsiveViewport = FVector2D::ZeroVector;
+    FSoccerUIFeedbackAnimations UIAnimations;
 };

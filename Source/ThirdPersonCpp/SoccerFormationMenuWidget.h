@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "SoccerUIFeedbackAnimations.h"
 #include "Blueprint/UserWidget.h"
 #include "SoccerFormationTypes.h"
 #include "SoccerTacticTypes.h"
@@ -18,6 +19,8 @@ class USizeBox;
 class UTextBlock;
 class UVerticalBox;
 class UWidgetSwitcher;
+class USoccerUIStyleEditorController;
+class UHorizontalBox;
 
 /*
  * Native coach menu for the human-controlled team.
@@ -47,6 +50,7 @@ public:
 
 protected:
 	virtual void NativeOnInitialized() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual void NativeConstruct() override;
 	virtual FReply NativeOnPreviewKeyDown(
 		const FGeometry& InGeometry,
@@ -87,6 +91,8 @@ private:
 	};
 
 	void BuildWidgetTree();
+	void ApplyLiveStyle();
+	UFUNCTION() void HandleStyleApplied();
 	void BuildPresetsPage(UVerticalBox* PageRoot);
 	void BuildFormationPage(UVerticalBox* PageRoot);
 	void BuildTacticsPage(UVerticalBox* PageRoot);
@@ -288,6 +294,13 @@ private:
 	UFUNCTION()
 	void HandleCloseClicked();
 
+	// Temporary runtime authoring, independent of the team's match setup.
+	UPROPERTY(Transient) USoccerUIStyleEditorController* StyleEditor = nullptr;
+	UPROPERTY(Transient) UBorder* StyleMenuBorder = nullptr;
+	UPROPERTY(Transient) UBorder* StylePageBorder = nullptr;
+	UPROPERTY(Transient) UBorder* StyleDimBorder = nullptr;
+	UPROPERTY(Transient) UHorizontalBox* StyleTabRow = nullptr;
+	UPROPERTY(Transient) USizeBox* StyleCloseSizeBox = nullptr;
 	UPROPERTY()
 	ASoccerMatchManager* MatchManager = nullptr;
 
@@ -447,4 +460,6 @@ private:
 
 	float PreviewWidth = 1220.0f;
 	float PreviewHeight = 500.0f;
+    FVector2D LastResponsiveViewport = FVector2D::ZeroVector;
+    FSoccerUIFeedbackAnimations UIAnimations;
 };

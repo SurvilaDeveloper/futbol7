@@ -1,6 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "SoccerUIFeedbackAnimations.h"
+#include "SoccerUINavigation.h"
 #include "Blueprint/UserWidget.h"
 #include "SoccerSquadViewerWidget.generated.h"
 
@@ -20,6 +22,7 @@ class UHorizontalBoxSlot;
 class UCanvasPanelSlot;
 class UCanvasPanel;
 class UEditableTextBox;
+class UComboBoxString;
 class UWidget;
 
 // Temporary design-time values for the read-only squad viewer. The in-game
@@ -73,8 +76,11 @@ public:
 protected:
     virtual void NativeOnInitialized() override;
     virtual void NativeDestruct() override;
+    virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
     virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry,
                                            const FKeyEvent& InKeyEvent) override;
+    virtual FReply NativeOnAnalogValueChanged(const FGeometry& InGeometry,
+        const FAnalogInputEvent& InAnalogInputEvent) override;
 
 private:
     void BuildWidgetTree();
@@ -107,6 +113,7 @@ private:
     UFUNCTION() void HandleApplyStyle();
     UFUNCTION() void HandleSaveStyle();
     UFUNCTION() void HandleResetStyle();
+    UFUNCTION() void HandleApplyGlobalTheme();
 
     UFUNCTION() void HandlePreviousClub();
     UFUNCTION() void HandleNextClub();
@@ -131,11 +138,13 @@ private:
     UPROPERTY(Transient) UTextBlock* PlayerCounterText = nullptr;
     UPROPERTY(Transient) UTextBlock* PreviewStatusText = nullptr;
     UPROPERTY(Transient) UVerticalBox* PlayerButtonColumn = nullptr;
+    UPROPERTY(Transient) TMap<FName, UButton*> PlayerButtonsById;
     UPROPERTY(Transient) UVerticalBox* AttributeColumn = nullptr;
     UPROPERTY(Transient) UImage* PreviewImage = nullptr;
     UPROPERTY(Transient) UButton* CloseButton = nullptr;
     UPROPERTY(Transient) UBorder* StyleDrawer = nullptr;
     UPROPERTY(Transient) UTextBlock* StyleStatus = nullptr;
+    UPROPERTY(Transient) UComboBoxString* GlobalThemeChoice = nullptr;
     UPROPERTY(Transient) UBorder* MainPanel = nullptr;
     UPROPERTY(Transient) UBorder* MainDim = nullptr;
     UPROPERTY(Transient) UBorder* ListPanel = nullptr;
@@ -156,8 +165,12 @@ private:
     TArray<TWeakObjectPtr<UTextBlock>> AccentTextNodes;
     TArray<TWeakObjectPtr<UTextBlock>> SecondaryTextNodes;
     FSoccerSquadViewerStyleSettings LiveStyle;
+    FSoccerSquadViewerStyleSettings EffectiveStyle;
 
     TArray<FName> AvailableClubIds;
     int32 SelectedClubIndex = INDEX_NONE;
     int32 SelectedPlayerIndex = INDEX_NONE;
+    FVector2D LastResponsiveViewport = FVector2D::ZeroVector;
+    FSoccerUIFeedbackAnimations UIAnimations;
+    FSoccerMenuAnalogRepeat AnalogNavigation;
 };

@@ -1,4 +1,6 @@
 #include "SoccerFormationMenuWidget.h"
+#include "SoccerUINavigation.h"
+#include "SoccerUITheme.h"
 
 #include "SoccerFormationLibrary.h"
 #include "SoccerDirectorTechnicalWidget.h"
@@ -7,6 +9,7 @@
 #include "SoccerTacticalPresetManager.h"
 #include "SoccerCharacterBase.h"
 #include "SoccerTeamTypes.h"
+#include "SoccerUIStyleEditorController.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
@@ -352,6 +355,18 @@ namespace
 	}
 }
 
+void USoccerFormationMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+    Super::NativeTick(MyGeometry, InDeltaTime);
+    UIAnimations.Tick(InDeltaTime);
+    const FVector2D LogicalViewport = FSoccerUITheme::GetLogicalViewportSize(this);
+    if (LogicalViewport.X > 1.f && !LastResponsiveViewport.Equals(LogicalViewport, 1.f))
+    {
+        LastResponsiveViewport = LogicalViewport;
+        ApplyLiveStyle();
+    }
+}
+
 void USoccerFormationMenuWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
@@ -456,6 +471,13 @@ FReply USoccerFormationMenuWidget::NativeOnPreviewKeyDown(
 		}
 
 		return FReply::Handled();
+	}
+
+	// Editing style values must not trigger formation/coach hotkeys.
+	if ((StyleEditor && StyleEditor->HasFocusedInput()) ||
+		(IsValid(DirectorTechnicalWidget) && DirectorTechnicalWidget->HasFocusedStyleInput()))
+	{
+		return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 	}
 
 	// Once a text field exists, ordinary letters, arrows, space and Enter must
@@ -585,6 +607,11 @@ FReply USoccerFormationMenuWidget::NativeOnAnalogValueChanged(
 	const FAnalogInputEvent& InAnalogInputEvent
 )
 {
+    if ((StyleEditor && StyleEditor->HasFocusedInput()) ||
+        (IsValid(DirectorTechnicalWidget) && DirectorTechnicalWidget->HasFocusedStyleInput()) ||
+        FSoccerUINavigation::IsEditingText(WidgetTree))
+        return Super::NativeOnAnalogValueChanged(InGeometry, InAnalogInputEvent);
+    if (bPresetDeleteConfirmationOpen) return FReply::Handled();
 	SetLastInputDevice(ECoachMenuInputDevice::Gamepad);
 
 	const FKey Key = InAnalogInputEvent.GetKey();
@@ -745,6 +772,8 @@ void USoccerFormationMenuWidget::ActivateMenu(bool bPauseGame)
 	RefreshFocusVisuals();
 	RefreshControlHints();
 	SetTabGuidanceMessage();
+
+    UIAnimations.StartEntrance(StyleMenuBorder);
 }
 
 void USoccerFormationMenuWidget::CloseMenu()
@@ -800,6 +829,7 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 
 	UBorder* ScreenDim = WidgetTree->ConstructWidget<UBorder>();
 	ScreenDim->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.22f));
+	StyleDimBorder = ScreenDim;
 	UCanvasPanelSlot* DimSlot = RootCanvas->AddChildToCanvas(ScreenDim);
 	DimSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
 	DimSlot->SetOffsets(FMargin(0.0f));
@@ -807,6 +837,7 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 	UBorder* MenuBorder = WidgetTree->ConstructWidget<UBorder>();
 	MenuBorder->SetBrushColor(MenuBackground);
 	MenuBorder->SetPadding(FMargin(30.0f, 24.0f));
+	StyleMenuBorder = MenuBorder;
 
 	UCanvasPanelSlot* MenuCanvasSlot = RootCanvas->AddChildToCanvas(MenuBorder);
 	// Percentage anchors make the menu occupy almost all of the usable viewport
@@ -856,16 +887,18 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 	);
 
 	USizeBox* CloseSizeBox = WidgetTree->ConstructWidget<USizeBox>();
+	StyleCloseSizeBox = CloseSizeBox;
 	CloseSizeBox->SetWidthOverride(230.0f);
 	CloseSizeBox->SetHeightOverride(46.0f);
 	CloseButton = MakeButton(WidgetTree, TEXT("VOLVER AL PARTIDO"), 16);
 	CloseButton->SetBackgroundColor(FLinearColor(0.11f, 0.16f, 0.21f, 0.92f));
 	CloseButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleCloseClicked);
 	CloseSizeBox->AddChild(CloseButton);
-	AddHorizontalChild(HeaderRow, CloseSizeBox, FMargin(0.0f), ESlateSizeRule::Automatic, VAlign_Center);
+	AddHorizontalChild(HeaderRow, CloseSizeBox, FMargin(0.0f, 0.0f, 125.0f, 0.0f), ESlateSizeRule::Automatic, VAlign_Center);
 
 	// Tabs
 	UHorizontalBox* TabRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+	StyleTabRow = TabRow;
 	AddVerticalChild(MainColumn, TabRow, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 
 	SquadTabButton = MakeButton(WidgetTree, TEXT("PLANTEL"), 19);
@@ -889,6 +922,7 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 	// Page area
 	UBorder* PageBorder = MakeCard(WidgetTree, FLinearColor(0.028f, 0.043f, 0.060f, 0.34f));
 	PageBorder->SetPadding(FMargin(26.0f));
+	StylePageBorder = PageBorder;
 	AddVerticalChild(
 		MainColumn,
 		PageBorder,
@@ -1045,6 +1079,30 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 		ESlateSizeRule::Fill
 	);
 
+	// Separate style file for the coach menu shell (not the lineup editor).
+	StyleEditor = NewObject<USoccerUIStyleEditorController>(this);
+	TArray<FSoccerEditableStyleField> EditableStyleFields;
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("MarginHorizontalPct"), TEXT("Margen lateral (%)"), 2.5f, 0.f, 15.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("MarginVerticalPct"), TEXT("Margen arriba/abajo (%)"), 3.5f, 0.f, 15.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("PanelPaddingX"), TEXT("Padding horizontal"), 30.f, 4.f, 65.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("PanelPaddingY"), TEXT("Padding vertical"), 24.f, 4.f, 65.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("PagePadding"), TEXT("Padding de paginas"), 26.f, 0.f, 65.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("TabSpacing"), TEXT("Separacion de pestañas"), 8.f, 0.f, 28.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("CloseWidth"), TEXT("Ancho boton volver"), 230.f, 140.f, 340.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("CloseHeight"), TEXT("Alto boton volver"), 46.f, 28.f, 80.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("PresetPreviewWidth"), TEXT("Ancho preview preset"), 570.f, 240.f, 900.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("PresetPreviewHeight"), TEXT("Alto preview preset"), 180.f, 100.f, 360.f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Number(TEXT("FontScale"), TEXT("Escala textos"), 1.f, .65f, 1.6f));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("PanelColor"), TEXT("Color fondo panel"), TEXT("#05080CC2")));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("PageColor"), TEXT("Color panel paginas"), TEXT("#070B0F57")));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("DimColor"), TEXT("Oscurecer fondo"), TEXT("#00000038")));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("TabSelected"), TEXT("Pestaña activa"), TEXT("#33B8F2")));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("TabNormal"), TEXT("Pestaña inactiva"), TEXT("#141C26D1")));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("SelectorNormal"), TEXT("Selector normal"), TEXT("#0E131ADC")));
+	EditableStyleFields.Add(FSoccerEditableStyleField::Color(TEXT("SelectorFocused"), TEXT("Selector enfocado"), TEXT("#13577AF5")));
+	StyleEditor->Setup(WidgetTree, RootCanvas, TEXT("FormationMenuStyle"), EditableStyleFields);
+	StyleEditor->OnApplied.AddDynamic(this, &USoccerFormationMenuWidget::HandleStyleApplied);
+	ApplyLiveStyle();
 	RefreshTabVisuals();
 	RefreshFocusVisuals();
 	RefreshControlHints();
@@ -2168,8 +2226,8 @@ void USoccerFormationMenuWidget::RefreshPresetsPage(
 			RefreshFormationPreviewCanvas(
 				PresetFormationPreviewCanvas,
 				SelectedPreset->FormationSystem,
-				PresetPreviewWidth,
-				PresetPreviewHeight,
+				StyleEditor ? StyleEditor->GetNumber(TEXT("PresetPreviewWidth"), PresetPreviewWidth) : PresetPreviewWidth,
+				StyleEditor ? StyleEditor->GetNumber(TEXT("PresetPreviewHeight"), PresetPreviewHeight) : PresetPreviewHeight,
 				true
 			);
 		}
@@ -2974,40 +3032,40 @@ void USoccerFormationMenuWidget::RefreshTabVisuals()
 	{
 		SquadTabButton->SetBackgroundColor(
 			ActiveTab == ECoachMenuTab::Squad
-			? Accent
-			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
+			? (StyleEditor ? StyleEditor->GetColor(TEXT("TabSelected"), Accent) : Accent)
+			: (StyleEditor ? StyleEditor->GetColor(TEXT("TabNormal"), FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)) : FLinearColor(0.08f, 0.11f, 0.15f, 0.82f))
 		);
 	}
 	if (PresetsTabButton != nullptr)
 	{
 		PresetsTabButton->SetBackgroundColor(
 			ActiveTab == ECoachMenuTab::Presets
-			? Accent
-			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
+			? (StyleEditor ? StyleEditor->GetColor(TEXT("TabSelected"), Accent) : Accent)
+			: (StyleEditor ? StyleEditor->GetColor(TEXT("TabNormal"), FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)) : FLinearColor(0.08f, 0.11f, 0.15f, 0.82f))
 		);
 	}
 	if (FormationTabButton != nullptr)
 	{
 		FormationTabButton->SetBackgroundColor(
 			ActiveTab == ECoachMenuTab::Formation
-			? Accent
-			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
+			? (StyleEditor ? StyleEditor->GetColor(TEXT("TabSelected"), Accent) : Accent)
+			: (StyleEditor ? StyleEditor->GetColor(TEXT("TabNormal"), FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)) : FLinearColor(0.08f, 0.11f, 0.15f, 0.82f))
 		);
 	}
 	if (TacticsTabButton != nullptr)
 	{
 		TacticsTabButton->SetBackgroundColor(
 			ActiveTab == ECoachMenuTab::Tactics
-			? Accent
-			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
+			? (StyleEditor ? StyleEditor->GetColor(TEXT("TabSelected"), Accent) : Accent)
+			: (StyleEditor ? StyleEditor->GetColor(TEXT("TabNormal"), FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)) : FLinearColor(0.08f, 0.11f, 0.15f, 0.82f))
 		);
 	}
 	if (InstructionsTabButton != nullptr)
 	{
 		InstructionsTabButton->SetBackgroundColor(
 			ActiveTab == ECoachMenuTab::Instructions
-			? Accent
-			: FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)
+			? (StyleEditor ? StyleEditor->GetColor(TEXT("TabSelected"), Accent) : Accent)
+			: (StyleEditor ? StyleEditor->GetColor(TEXT("TabNormal"), FLinearColor(0.08f, 0.11f, 0.15f, 0.82f)) : FLinearColor(0.08f, 0.11f, 0.15f, 0.82f))
 		);
 	}
 }
@@ -3044,7 +3102,7 @@ void USoccerFormationMenuWidget::RefreshFocusVisuals()
 
 		if (Row->Border != nullptr)
 		{
-			Row->Border->SetBrushColor(SelectorBackground);
+			Row->Border->SetBrushColor(StyleEditor ? StyleEditor->GetColor(TEXT("SelectorNormal"), SelectorBackground) : SelectorBackground);
 		}
 
 		if (Row->LabelText != nullptr)
@@ -3082,7 +3140,7 @@ void USoccerFormationMenuWidget::RefreshFocusVisuals()
 		{
 			if (FocusedRow->Border != nullptr)
 			{
-				FocusedRow->Border->SetBrushColor(SelectorFocused);
+				FocusedRow->Border->SetBrushColor(StyleEditor ? StyleEditor->GetColor(TEXT("SelectorFocused"), SelectorFocused) : SelectorFocused);
 			}
 
 			if (FocusedRow->LabelText != nullptr)
@@ -3198,6 +3256,7 @@ void USoccerFormationMenuWidget::SetActiveTab(
 	bool bResetFocus
 )
 {
+	const bool bTabChanged = ActiveTab != NewTab;
 	ActiveTab = NewTab;
 	if (bResetFocus)
 	{
@@ -3222,6 +3281,20 @@ void USoccerFormationMenuWidget::SetActiveTab(
 		DirectorTechnicalWidget->RefreshFromPersistentTeamSetup(false);
 	}
 
+	if (bTabChanged && PageSwitcher)
+	{
+		UIAnimations.StartPage(PageSwitcher->GetActiveWidget());
+		UButton* SelectedTabButton = nullptr;
+		switch (ActiveTab)
+		{
+		case ECoachMenuTab::Squad: SelectedTabButton = SquadTabButton; break;
+		case ECoachMenuTab::Presets: SelectedTabButton = PresetsTabButton; break;
+		case ECoachMenuTab::Formation: SelectedTabButton = FormationTabButton; break;
+		case ECoachMenuTab::Tactics: SelectedTabButton = TacticsTabButton; break;
+		case ECoachMenuTab::Instructions: SelectedTabButton = InstructionsTabButton; break;
+		}
+		UIAnimations.StartSelection(SelectedTabButton);
+	}
 	RefreshTabVisuals();
 	RefreshFocusVisuals();
 	RefreshControlHints();
@@ -3249,6 +3322,11 @@ void USoccerFormationMenuWidget::MoveFocus(int32 Direction)
 	const int32 Step = Direction >= 0 ? 1 : -1;
 	FocusedControlIndex =
 		(FocusedControlIndex + Step + Rows.Num()) % Rows.Num();
+    // Keep the active selector inside any scroll container; no focus stealing
+    // from the coach menu's existing keyboard/gamepad handling.
+    if (Rows.IsValidIndex(FocusedControlIndex) && Rows[FocusedControlIndex])
+        FSoccerUINavigation::FocusAndReveal(
+            this, Rows[FocusedControlIndex]->Border, false);
 
 	// In PRESETS, moving focus between DEL JUEGO and MIS PRESETS also changes
 	// which preset feeds the preview, but never applies it to the team.
@@ -4409,4 +4487,74 @@ SOCCER_CYCLE_HANDLER(HandleMarkingTargetNext, CycleMarkingTarget, 1)
 void USoccerFormationMenuWidget::HandleCloseClicked()
 {
 	CloseMenu();
+}
+
+// No WidgetTree rebuild: tab, selected preset, lineup and focus remain intact.
+void USoccerFormationMenuWidget::HandleStyleApplied()
+{
+	ApplyLiveStyle();
+}
+
+void USoccerFormationMenuWidget::ApplyLiveStyle()
+{
+	if (!StyleEditor || !StyleMenuBorder || !StylePageBorder) return;
+	if (UCanvasPanelSlot* PanelSlot = Cast<UCanvasPanelSlot>(StyleMenuBorder->Slot))
+	{
+		const float Side = StyleEditor->GetNumber(TEXT("MarginHorizontalPct"), 2.5f) / 100.f;
+		const float Vertical = StyleEditor->GetNumber(TEXT("MarginVerticalPct"), 3.5f) / 100.f;
+		PanelSlot->SetAnchors(FAnchors(Side, Vertical, 1.f - Side, 1.f - Vertical));
+		PanelSlot->SetOffsets(FMargin(0.f));
+	}
+    const FVector2D LogicalSize = FSoccerUITheme::GetLogicalViewportSize(this);
+    const float DesiredPaddingX = StyleEditor->GetNumber(TEXT("PanelPaddingX"), 30.f);
+    const float DesiredPaddingY = StyleEditor->GetNumber(TEXT("PanelPaddingY"), 24.f);
+    StyleMenuBorder->SetPadding(FMargin(
+        LogicalSize.X > 1.f ? FMath::Min(DesiredPaddingX, FMath::Max(10.f, LogicalSize.X * .026f)) : DesiredPaddingX,
+        LogicalSize.Y > 1.f ? FMath::Min(DesiredPaddingY, FMath::Max(9.f, LogicalSize.Y * .027f)) : DesiredPaddingY));
+	StyleMenuBorder->SetBrushColor(StyleEditor->GetColor(TEXT("PanelColor"), MenuBackground));
+    const float DesiredPagePadding = StyleEditor->GetNumber(TEXT("PagePadding"), 26.f);
+    StylePageBorder->SetPadding(FMargin(LogicalSize.X > 1.f
+        ? FMath::Min(DesiredPagePadding, FMath::Max(8.f, LogicalSize.X * .023f))
+        : DesiredPagePadding));
+	StylePageBorder->SetBrushColor(StyleEditor->GetColor(TEXT("PageColor"), FLinearColor(.028f, .043f, .060f, .34f)));
+	if (StyleDimBorder) StyleDimBorder->SetBrushColor(StyleEditor->GetColor(TEXT("DimColor"), FLinearColor(0.f, 0.f, 0.f, .22f)));
+	if (StyleCloseSizeBox)
+	{
+        const float DesiredCloseWidth = StyleEditor->GetNumber(TEXT("CloseWidth"), 230.f);
+        StyleCloseSizeBox->SetWidthOverride(LogicalSize.X > 1.f
+            ? FMath::Min(DesiredCloseWidth, FMath::Max(125.f, LogicalSize.X * .24f))
+            : DesiredCloseWidth);
+		StyleCloseSizeBox->SetHeightOverride(StyleEditor->GetNumber(TEXT("CloseHeight"), 46.f));
+	}
+	if (StyleTabRow)
+	{
+        const float DesiredGap = StyleEditor->GetNumber(TEXT("TabSpacing"), 8.f);
+        const float Gap = LogicalSize.X > 1.f
+            ? FMath::Min(DesiredGap, FMath::Max(1.f, LogicalSize.X * .006f))
+            : DesiredGap;
+		for (int32 TabIndex = 0; TabIndex < StyleTabRow->GetChildrenCount(); ++TabIndex)
+		{
+			if (UHorizontalBoxSlot* TabSlot = Cast<UHorizontalBoxSlot>(StyleTabRow->GetChildAt(TabIndex)->Slot))
+			{
+				TabSlot->SetPadding(FMargin(TabIndex == 0 ? 0.f : Gap, 0.f, TabIndex == 4 ? 0.f : Gap, 0.f));
+			}
+		}
+	}
+	if (PresetFormationPreviewSizeBox)
+	{
+        const float DesiredPreviewWidth = StyleEditor->GetNumber(TEXT("PresetPreviewWidth"), 570.f);
+        const float DesiredPreviewHeight = StyleEditor->GetNumber(TEXT("PresetPreviewHeight"), 180.f);
+        const FVector2D ViewportUnits = LogicalSize;
+        const float MaxPreviewWidth = ViewportUnits.X > 1.f
+            ? FMath::Max(220.f, ViewportUnits.X * .43f) : DesiredPreviewWidth;
+        const float PreviewScale = FMath::Min(1.f, MaxPreviewWidth / FMath::Max(1.f, DesiredPreviewWidth));
+        PresetFormationPreviewSizeBox->SetWidthOverride(DesiredPreviewWidth * PreviewScale);
+        PresetFormationPreviewSizeBox->SetHeightOverride(DesiredPreviewHeight * PreviewScale);
+		if (IsValid(TacticalPresetManager)) RefreshPresetsPage(false);
+	}
+    StyleEditor->ApplyTextScale(StyleMenuBorder, FSoccerUITheme::GetAdaptiveTextScale(
+        this, StyleEditor->GetNumber(TEXT("FontScale"), 1.f)));
+    FSoccerUITheme::ApplyButtonStates(StyleMenuBorder);
+	RefreshTabVisuals();
+	RefreshFocusVisuals();
 }
