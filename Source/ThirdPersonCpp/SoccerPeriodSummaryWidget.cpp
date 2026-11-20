@@ -139,12 +139,16 @@ void USoccerPeriodSummaryWidget::BuildScreen5F()
     UHorizontalBox* SummaryTabs5G = WidgetTree->ConstructWidget<UHorizontalBox>();
     TeamTabButton5G = WidgetTree->ConstructWidget<UButton>();
     PlayerTabButton5G = WidgetTree->ConstructWidget<UButton>();
+    TimelineTabButton5I = WidgetTree->ConstructWidget<UButton>();
     TeamTabButton5G->AddChild(NewText(WidgetTree, TEXT("EQUIPOS"), 17, White));
-    PlayerTabButton5G->AddChild(NewText(WidgetTree, TEXT("FUTBOLISTAS"), 17, White));
+    PlayerTabButton5G->AddChild(NewText(WidgetTree, TEXT("FUTBOLISTAS"), 16, White));
+    TimelineTabButton5I->AddChild(NewText(WidgetTree, TEXT("CRONOLOGÍA"), 16, White));
     TeamTabButton5G->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::ShowTeamStatistics5G);
     PlayerTabButton5G->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::ShowPlayerStatistics5G);
+    TimelineTabButton5I->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::ShowTimeline5I);
     AddColumn(SummaryTabs5G, TeamTabButton5G, 1.0f);
     AddColumn(SummaryTabs5G, PlayerTabButton5G, 1.0f);
+    AddColumn(SummaryTabs5G, TimelineTabButton5I, 1.0f);
     AddVertical(Content, SummaryTabs5G, FMargin(10.0f, 0.0f, 10.0f, 8.0f));
 
     // Second level of navigation keeps both individual tables readable at 720p.
@@ -215,9 +219,14 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
 
     if (IsValid(TeamTabButton5G) && IsValid(PlayerTabButton5G))
     {
-        TeamTabButton5G->SetBackgroundColor(bShowingPlayers5G ?
-            FLinearColor(0.12f, 0.25f, 0.30f, 1.0f) : Green);
+        TeamTabButton5G->SetBackgroundColor(!bShowingPlayers5G && !bShowingTimeline5I ?
+            Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
         PlayerTabButton5G->SetBackgroundColor(bShowingPlayers5G ?
+            Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
+    }
+    if (IsValid(TimelineTabButton5I))
+    {
+        TimelineTabButton5I->SetBackgroundColor(bShowingTimeline5I ?
             Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
     }
     if (IsValid(IndividualPages5H))
@@ -239,6 +248,11 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
     if (bShowingPlayers5G)
     {
         RefreshPlayerStatistics5G();
+        return;
+    }
+    if (bShowingTimeline5I)
+    {
+        RefreshTimeline5I();
         return;
     }
 
@@ -284,9 +298,74 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
 
 void USoccerPeriodSummaryWidget::ChangeSummaryTab5G(bool bPlayers)
 {
-    if (bShowingPlayers5G == bPlayers) return;
+    if (bShowingPlayers5G == bPlayers && !bShowingTimeline5I) return;
+    bShowingTimeline5I = false;
     bShowingPlayers5G = bPlayers;
     RefreshStatistics5F();
+}
+
+void USoccerPeriodSummaryWidget::ShowTimeline5I()
+{
+    if (bShowingTimeline5I) return;
+    bShowingPlayers5G = false;
+    bShowingTimeline5I = true;
+    RefreshStatistics5F();
+}
+
+void USoccerPeriodSummaryWidget::RefreshTimeline5I()
+{
+    if (!IsValid(MatchManager) || !IsValid(StatisticsScroll) || !WidgetTree) return;
+    using namespace SoccerPeriodSummary5F;
+    StatisticsScroll->ClearChildren();
+
+    const TArray<FSoccerMatchTimelineEvent5I>& Events = MatchManager->GetMatchTimeline5I();
+    if (Events.Num() == 0)
+    {
+        StatisticsScroll->AddChild(NewText(WidgetTree,
+            TEXT("Todavía no hay acontecimientos registrados."), 16, Muted));
+        return;
+    }
+
+    StatisticsScroll->AddChild(NewText(WidgetTree,
+        TEXT("ACONTECIMIENTOS EN ORDEN CRONOLÓGICO"), 13, Muted));
+
+    for (int32 EventIndex5I = 0; EventIndex5I < Events.Num(); ++EventIndex5I)
+    {
+        const FSoccerMatchTimelineEvent5I& Event5I = Events[EventIndex5I];
+        const int32 Seconds5I = FMath::Max(0, FMath::FloorToInt(Event5I.MatchSeconds));
+        const TCHAR* PeriodLabel5I = TEXT("1T");
+        if (Event5I.Period == ESoccerMatchPeriod::SecondHalf) PeriodLabel5I = TEXT("2T");
+        else if (Event5I.Period == ESoccerMatchPeriod::HalfTime) PeriodLabel5I = TEXT("ET");
+        else if (Event5I.Period == ESoccerMatchPeriod::FullTime) PeriodLabel5I = TEXT("FT");
+        const FString Clock5I = FString::Printf(TEXT("%s %02d:%02d"),
+            PeriodLabel5I, Seconds5I / 60, Seconds5I % 60);
+        const FString TeamName5I = Event5I.bHasTeam
+            ? GetClubName(MatchManager, Event5I.Team) : TEXT("PARTIDO");
+        const FLinearColor TeamColor5I = !Event5I.bHasTeam ? Muted
+            : Event5I.Team == ESoccerTeam::PlayerTeam ? Green : Cyan;
+
+        UBorder* Background5I = WidgetTree->ConstructWidget<UBorder>();
+        Background5I->SetBrushColor(EventIndex5I % 2 == 0
+            ? FLinearColor(0.065f, 0.115f, 0.145f, 1.0f)
+            : FLinearColor(0.042f, 0.085f, 0.110f, 1.0f));
+        Background5I->SetPadding(FMargin(10.0f, 7.0f));
+        UHorizontalBox* Row5I = WidgetTree->ConstructWidget<UHorizontalBox>();
+        Background5I->SetContent(Row5I);
+        AddColumn(Row5I, NewText(WidgetTree, Clock5I, 14, Muted), 1.25f);
+        AddColumn(Row5I, NewText(WidgetTree, TeamName5I, 14, TeamColor5I), 1.8f);
+
+        UVerticalBox* DescriptionBox5I = WidgetTree->ConstructWidget<UVerticalBox>();
+        AddVertical(DescriptionBox5I, NewText(WidgetTree,
+            Event5I.Title, 16, White, ETextJustify::Left), FMargin(0.0f));
+        if (!Event5I.Detail.IsEmpty())
+        {
+            AddVertical(DescriptionBox5I, NewText(WidgetTree,
+                Event5I.Detail, 12, Muted, ETextJustify::Left), FMargin(0.0f));
+        }
+        AddColumn(Row5I, DescriptionBox5I, 4.3f);
+        StatisticsScroll->AddChild(Background5I);
+    }
+    StatisticsScroll->ScrollToStart();
 }
 
 void USoccerPeriodSummaryWidget::ChangeIndividualPage5H(bool bDefensive)
@@ -550,6 +629,11 @@ FReply USoccerPeriodSummaryWidget::NativeOnPreviewKeyDown(
     if (Key == EKeys::Two || Key == EKeys::Gamepad_RightShoulder)
     {
         ChangeSummaryTab5G(true);
+        return FReply::Handled();
+    }
+    if (Key == EKeys::Five || Key == EKeys::Gamepad_FaceButton_Top)
+    {
+        ShowTimeline5I();
         return FReply::Handled();
     }
     if (bShowingPlayers5G &&

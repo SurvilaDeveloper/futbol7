@@ -36,6 +36,9 @@ private:
     void RefreshPlayerStatistics5G();
     void AddPlayerStatisticsRow5G(const FSoccerPlayerMatchStatistics5G& Row, int32 RowIndex);
     void ChangeSummaryTab5G(bool bPlayers);
+    void RefreshTimeline5I();
+    UFUNCTION()
+    void ShowTimeline5I();
     void ChangeIndividualPage5H(bool bDefensive);
     UFUNCTION()
     void ShowAttackIndividual5H();
@@ -70,6 +73,9 @@ private:
     UButton* TeamTabButton5G = nullptr;
     UPROPERTY(Transient)
     UButton* PlayerTabButton5G = nullptr;
+    UPROPERTY(Transient)
+    UButton* TimelineTabButton5I = nullptr;
+    bool bShowingTimeline5I = false;
     bool bShowingPlayers5G = false;
     bool bShowingDefense5H = false;
     UPROPERTY(Transient)

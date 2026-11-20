@@ -85,6 +85,23 @@ void ASoccerMatchManager::PublishMatchAnnouncement(
     LatestMatchAnnouncement.DurationSeconds = FMath::Clamp(DurationSeconds, 1.0f, 8.0f);
 }
 
+// The same match clock used by the HUD is sampled only on an actual event.
+// Period is stored separately, so the break and full-time remain distinguishable.
+void ASoccerMatchManager::AppendMatchTimeline5I(
+    const FString& Title, const FString& Detail,
+    bool bHasTeam, ESoccerTeam Team)
+{
+    MatchTimeline5I.AddDefaulted();
+    FSoccerMatchTimelineEvent5I& Entry = MatchTimeline5I.Last();
+    Entry.Sequence = MatchTimeline5I.Num();
+    Entry.MatchSeconds = FMath::Max(0.0f, TotalMatchElapsedSeconds);
+    Entry.Period = CurrentMatchPeriod;
+    Entry.bHasTeam = bHasTeam;
+    Entry.Team = Team;
+    Entry.Title = Title;
+    Entry.Detail = Detail;
+}
+
 // Stage 5D: counter updates belong to the confirmed referee decision, not to
 // HUD text. Restart state transitions cannot duplicate these statistics.
 void ASoccerMatchManager::RecordConfirmedDecision5D(
@@ -117,6 +134,39 @@ void ASoccerMatchManager::RecordConfirmedDecision5D(
         break;
     case ESoccerConfirmedDecision5D::GoalKick:
         ++Beneficiary.GoalKicksWon;
+        break;
+    }
+
+    // Each referee call reaches this method exactly once, before the
+    // preparation/animation states can repeat. Offside belongs to the
+    // offending side, whereas the other decisions name the beneficiary.
+    switch (DecisionType)
+    {
+    case ESoccerConfirmedDecision5D::Offside:
+        AppendMatchTimeline5I(TEXT("FUERA DE JUEGO"),
+            FString::Printf(TEXT("TIRO LIBRE PARA %s"),
+                *GetAnnouncementClubName(BenefitingTeam)),
+            true, GetOppositeTeam(BenefitingTeam));
+        break;
+    case ESoccerConfirmedDecision5D::FreeKick:
+        AppendMatchTimeline5I(TEXT("TIRO LIBRE"), TEXT("FALTA SANCIONADA"),
+            true, BenefitingTeam);
+        break;
+    case ESoccerConfirmedDecision5D::Penalty:
+        AppendMatchTimeline5I(TEXT("PENAL"), TEXT("PENAL CONCEDIDO"),
+            true, BenefitingTeam);
+        break;
+    case ESoccerConfirmedDecision5D::Corner:
+        AppendMatchTimeline5I(TEXT("CÓRNER"), TEXT("SAQUE DE ESQUINA"),
+            true, BenefitingTeam);
+        break;
+    case ESoccerConfirmedDecision5D::ThrowIn:
+        AppendMatchTimeline5I(TEXT("SAQUE LATERAL"), TEXT("BALÓN FUERA"),
+            true, BenefitingTeam);
+        break;
+    case ESoccerConfirmedDecision5D::GoalKick:
+        AppendMatchTimeline5I(TEXT("SAQUE DE ARCO"), TEXT("BALÓN FUERA"),
+            true, BenefitingTeam);
         break;
     }
 }
@@ -1392,6 +1442,7 @@ void ASoccerMatchManager::UpdateGroundBodyContests(float DeltaTime)
 void ASoccerMatchManager::InitializeMatchClock()
 {
 	MatchStatistics5D = FSoccerMatchStatistics5D();
+    MatchTimeline5I.Empty();
     PlayerStatistics5G.Empty();
     bHasPreviousControllerTeam5H = false;
     PreviousController5H.Reset();
@@ -1713,6 +1764,7 @@ void ASoccerMatchManager::BeginHalfTime()
 	HalfTimeElapsedSeconds = 0.0f;
 	bCurrentHalfClockStarted = false;
     CurrentMatchPeriod = ESoccerMatchPeriod::HalfTime;
+    AppendMatchTimeline5I(TEXT("ENTRETIEMPO"), TEXT("FINAL DEL PRIMER TIEMPO"));
     PublishMatchAnnouncement(TEXT("ENTRETIEMPO"), TEXT("FINAL DEL PRIMER TIEMPO"),
         FLinearColor(0.98f, 0.80f, 0.28f, 1.0f), 4.0f);
 
@@ -1732,6 +1784,7 @@ void ASoccerMatchManager::CompleteHalfTime()
 
 	bHalfTimeContinueRequested5F = false;
 	CurrentMatchPeriod = ESoccerMatchPeriod::SecondHalf;
+    AppendMatchTimeline5I(TEXT("SEGUNDO TIEMPO"), TEXT("SE REANUDA EL ENCUENTRO"));
 	CurrentHalfElapsedSeconds = 0.0f;
 	TotalMatchElapsedSeconds = FirstHalfActualElapsedSeconds;
 	CurrentHalfAddedTimeSeconds = 0.0f;
@@ -1766,6 +1819,9 @@ void ASoccerMatchManager::BeginFullTime()
 		CurrentHalfElapsedSeconds;
 	bCurrentHalfClockStarted = false;
     CurrentMatchPeriod = ESoccerMatchPeriod::FullTime;
+    AppendMatchTimeline5I(TEXT("FINAL DEL PARTIDO"),
+        FString::Printf(TEXT("RESULTADO: %d - %d"),
+            PlayerTeamScore, OpponentTeamScore));
     PublishMatchAnnouncement(
         TEXT("FINAL DEL PARTIDO"),
         FString::Printf(TEXT("%s %d  -  %d %s"),
@@ -4307,6 +4363,26 @@ bool ASoccerMatchManager::ExecuteMatchSubstitutionImmediate(
 	Record.FormationSlotId = ExecutionSlotId;
 	Record.ExecutedAtMatchSeconds = TotalMatchElapsedSeconds;
 	State.SubstitutionHistory.Add(Record);
+
+    // Display names are copied at execution time, before the actor identity
+    // can be reused by another substitute. Fallback is the stable profile ID.
+    const USoccerPlayerProfile* OutgoingTimelineProfile5I =
+        IsValid(SoccerGameInstance)
+            ? SoccerGameInstance->FindPlayerProfileById(Request.OutgoingPlayerId)
+            : nullptr;
+    const FString OutgoingTimelineName5I =
+        IsValid(OutgoingTimelineProfile5I) &&
+        !OutgoingTimelineProfile5I->Identity.DisplayName.IsEmpty()
+            ? OutgoingTimelineProfile5I->Identity.DisplayName.ToString()
+            : Request.OutgoingPlayerId.ToString();
+    const FString IncomingTimelineName5I =
+        !IncomingProfile->Identity.DisplayName.IsEmpty()
+            ? IncomingProfile->Identity.DisplayName.ToString()
+            : Request.IncomingPlayerId.ToString();
+    AppendMatchTimeline5I(TEXT("SUSTITUCIÓN"),
+        FString::Printf(TEXT("SALE: %s  |  ENTRA: %s"),
+            *OutgoingTimelineName5I, *IncomingTimelineName5I),
+        true, Request.Team);
 
 	UE_LOG(
 		LogTemp,
@@ -22028,6 +22104,29 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 	// Desde este momento el partido deja de estar en juego.
 	// Esto evita que SoccerGoalTrigger vuelva a contar el mismo gol.
     MatchPlayState = ESoccerMatchPlayState::GoalScored;
+    FString ScorerTimelineName5I = TEXT("AUTOR NO IDENTIFICADO");
+    if (IsValid(CreditedScorer))
+    {
+        if (const FSoccerPlayerMatchStatistics5G* ScorerRecord5I =
+            FindOrAddPlayerStatistics5G(CreditedScorer))
+        {
+            ScorerTimelineName5I = ScorerRecord5I->DisplayName;
+        }
+    }
+    else if (IsValid(LastTouchCharacter) &&
+        LastTouchCharacter->GetTeam() != ScoringTeam && !bKeeperDeflection)
+    {
+        if (const FSoccerPlayerMatchStatistics5G* OwnGoalRecord5I =
+            FindOrAddPlayerStatistics5G(LastTouchCharacter))
+        {
+            ScorerTimelineName5I = FString::Printf(TEXT("AUTOGOL: %s"),
+                *OwnGoalRecord5I->DisplayName);
+        }
+    }
+    AppendMatchTimeline5I(TEXT("¡GOL!"),
+        FString::Printf(TEXT("%s  |  %d - %d"),
+            *ScorerTimelineName5I, PlayerTeamScore, OpponentTeamScore),
+        true, ScoringTeam);
     PublishMatchAnnouncement(
         TEXT("¡GOOOOL!"),
         FString::Printf(TEXT("%s  |  %d - %d"),
@@ -23961,6 +24060,14 @@ void ASoccerMatchManager::StartKickoff(ESoccerTeam TeamTakingKickoff)
             (CurrentMatchPeriod == ESoccerMatchPeriod::FirstHalf ||
              CurrentMatchPeriod == ESoccerMatchPeriod::SecondHalf))
         {
+            if (CurrentMatchPeriod == ESoccerMatchPeriod::FirstHalf &&
+                MatchTimeline5I.Num() == 0)
+            {
+                AppendMatchTimeline5I(TEXT("INICIO DEL PARTIDO"),
+                    FString::Printf(TEXT("SACA %s"),
+                        *GetAnnouncementClubName(TeamTakingKickoff)),
+                    true, TeamTakingKickoff);
+            }
             PublishMatchAnnouncement(
                 CurrentMatchPeriod == ESoccerMatchPeriod::FirstHalf
                     ? TEXT("INICIO DEL PARTIDO") : TEXT("SEGUNDO TIEMPO"),

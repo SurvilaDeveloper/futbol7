@@ -135,6 +135,19 @@ struct FSoccerPlayerMatchStatistics5G
     int32 CleanTackles = 0;
 };
 
+// 5I: chronological, in-memory record of confirmed match events. It holds
+// only values (never character pointers), so substitutions cannot invalidate it.
+struct FSoccerMatchTimelineEvent5I
+{
+    int32 Sequence = 0;
+    float MatchSeconds = 0.0f;
+    ESoccerMatchPeriod Period = ESoccerMatchPeriod::FirstHalf;
+    bool bHasTeam = false;
+    ESoccerTeam Team = ESoccerTeam::PlayerTeam;
+    FString Title;
+    FString Detail;
+};
+
 enum class ESoccerConfirmedDecision5D : uint8
 {
     Offside,
@@ -197,6 +210,12 @@ public:
     const TArray<FSoccerPlayerMatchStatistics5G>& GetPlayerStatistics5G() const
     {
         return PlayerStatistics5G;
+    }
+
+    // Stage 5I: events are in time-of-occurrence order, with a stable sequence.
+    const TArray<FSoccerMatchTimelineEvent5I>& GetMatchTimeline5I() const
+    {
+        return MatchTimeline5I;
     }
 
     // Stage 5E: call only AFTER a genuine shot has launched the physical ball.
@@ -1164,6 +1183,10 @@ bool IsPenaltyMatchStateActive() const;
     );
     FString GetAnnouncementClubName(ESoccerTeam Team) const;
     FSoccerMatchAnnouncement LatestMatchAnnouncement;
+
+    void AppendMatchTimeline5I(const FString& Title, const FString& Detail,
+        bool bHasTeam = false, ESoccerTeam Team = ESoccerTeam::PlayerTeam);
+    TArray<FSoccerMatchTimelineEvent5I> MatchTimeline5I;
 
     void RecordConfirmedDecision5D(ESoccerTeam BenefitingTeam,
         ESoccerConfirmedDecision5D DecisionType);
