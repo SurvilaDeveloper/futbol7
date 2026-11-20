@@ -32,6 +32,8 @@ void FSoccerPenaltyKickRestart::CompleteByAI(ASoccerMatchManager& Manager)
 		ShotTarget,
 		FMath::Max(100.0f, Manager.PenaltyKickAIShotHorizontalSpeed)
 	);
+    // The penalty is launched immediately (no delayed montage impact).
+    Manager.RegisterShot5E(AITaker);
 }
 
 void FSoccerPenaltyKickRestart::Cancel(ASoccerMatchManager& Manager)

@@ -1753,6 +1753,21 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
         return;
     }
 
+    // A charged header is a true shot only if the animation touched the ball.
+    if (ContactResult.bContactResolved &&
+        CompletedKickMode == ESoccerPendingKickMode::KickAndRelease &&
+        ContactResult.ActionType == ESoccerAerialActionType::JumpHeaderKick)
+    {
+        if (!IsValid(MatchManager))
+        {
+            FindMatchManager();
+        }
+        if (IsValid(MatchManager))
+        {
+            MatchManager->RegisterShot5E(this);
+        }
+    }
+
     if (
         ContactResult.ActionType ==
             ESoccerAerialActionType::JumpHeaderKick
@@ -6984,6 +6999,11 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 				TargetKickMaxTravelTime
 			);
 		}
+        if (IsValid(MatchManager) &&
+            ExecutedMode == ESoccerPendingKickMode::KickAndRelease)
+        {
+            MatchManager->RegisterShot5E(this);
+        }
 		LogHumanPossessionDebugEvent(
 			TEXT("KICK_APPLIED"),
 			bHumanRestartExecution
@@ -7299,6 +7319,11 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 			TargetKickMaxTravelTime
 		);
 	}
+    if (IsValid(MatchManager) &&
+        ActiveKickMode == ESoccerPendingKickMode::KickAndRelease)
+    {
+        MatchManager->RegisterShot5E(this);
+    }
 	LogHumanPossessionDebugEvent(
 		TEXT("KICK_APPLIED"),
 		bActiveKickWasHumanRestartExecution

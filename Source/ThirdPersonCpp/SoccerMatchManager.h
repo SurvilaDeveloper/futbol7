@@ -100,6 +100,10 @@ struct FSoccerMatchTeamStatistics5D
     int32 CornersWon = 0;
     int32 ThrowInsWon = 0;
     int32 GoalKicksWon = 0;
+    // Stage 5E. These counters are cumulative over both halves.
+    int32 Shots = 0;
+    int32 ShotsOnTarget = 0;
+    int32 GoalkeeperSaves = 0;
 };
 
 struct FSoccerMatchStatistics5D
@@ -165,6 +169,14 @@ public:
     {
         return MatchStatistics5D;
     }
+
+    // Stage 5E: call only AFTER a genuine shot has launched the physical ball.
+    // Passing, dribbling and goalkeeper clearances must not call this.
+    void RegisterShot5E(ASoccerCharacterBase* ShootingCharacter);
+
+    // Call at actual goalkeeper contact, BEFORE the ball is caught/rebounded.
+    // A pass or a loose ball is never recorded as a save.
+    void RegisterGoalkeeperSave5E(ASoccerAICharacter* SavingCharacter);
 
 	virtual void Tick(float DeltaTime) override;
 
@@ -1115,6 +1127,16 @@ bool IsPenaltyMatchStateActive() const;
         ESoccerConfirmedDecision5D DecisionType);
     void UpdateControlledPossession5D(float DeltaTime);
     FSoccerMatchStatistics5D MatchStatistics5D;
+
+    // One shot at a time: stores ownership and whether the outgoing physics
+    // trajectory was heading into the opponent's goal mouth.
+    bool bPendingShot5E = false;
+    bool bPendingShotProjectedOnGoal5E = false;
+    bool bPendingShotClassifiedOnTarget5E = false;
+    ESoccerTeam PendingShotTeam5E = ESoccerTeam::PlayerTeam;
+    float PendingShotWorldTime5E = -1000.0f;
+    bool IsPendingShotRecent5E() const;
+    bool IsBallHeadingIntoOpponentGoal5E(ESoccerTeam ShootingTeam) const;
 
 	TUniquePtr<ISoccerMatchState> ActiveMatchState;
 	ESoccerMatchStateTransition PendingMatchStateTransition = ESoccerMatchStateTransition::None;

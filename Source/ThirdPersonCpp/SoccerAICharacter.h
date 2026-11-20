@@ -192,7 +192,8 @@ public:
 		const FVector& TargetLocation,
 		float HorizontalSpeed,
 		float MinTravelTime,
-		float MaxTravelTime
+		float MaxTravelTime,
+        bool bRecordShotForStatistics5E = false
 	);
 
 	// Legacy generic restart kick animation. Kept as fallback when no authored
@@ -591,6 +592,7 @@ private:
 	bool bLastAIKickMontageEndedAfterImpact = false;
 	bool bPendingAIKickIsAutoPass = false;
 	bool bPendingAIKickIsRestart = false;
+    bool bPendingAIKickIsShotForStatistics5E = false;
 
 	FTimerHandle AIKickImpactTimerHandle;
 	FTimerHandle AIKickFinishTimerHandle;

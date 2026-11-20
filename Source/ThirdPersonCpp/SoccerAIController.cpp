@@ -7989,6 +7989,12 @@ bool ASoccerAIController::TryGoalkeeperCollectLooseBallWithHands(
 		return false;
 	}
 
+    // A legal loose-ball collection can also stop a genuine on-target shot.
+    // The match manager distinguishes it from an ordinary pass or loose ball.
+    if (IsValid(MatchManager))
+    {
+        MatchManager->RegisterGoalkeeperSave5E(SoccerCharacter);
+    }
 	const bool bBallAttachedToHands =
 		SoccerCharacter->HoldGoalkeeperBallInHands(
 			SoccerBall
@@ -11352,6 +11358,10 @@ bool ASoccerAIController::TryExecuteGoalkeeperEmergencyBodyContact(
 		return false;
 	}
 
+    if (IsValid(MatchManager))
+    {
+        MatchManager->RegisterGoalkeeperSave5E(SoccerCharacter);
+    }
 	ApplyGoalkeeperBodyReboundEffect(
 		SoccerCharacter,
 		SoccerBall
@@ -12266,6 +12276,10 @@ bool ASoccerAIController::TryExecutePendingGoalkeeperSaveImpact(
 		return false;
 	}
 
+    if (IsValid(MatchManager))
+    {
+        MatchManager->RegisterGoalkeeperSave5E(SoccerCharacter);
+    }
 	ApplyGoalkeeperSaveEffect(
 		SoccerCharacter,
 		SoccerBall,
@@ -15586,7 +15600,8 @@ bool ASoccerAIController::TryShootBallIfClose(
 		ShotTargetLocation,
 		AIShotHorizontalSpeed,
 		AIShotMinTravelTime,
-		AIShotMaxTravelTime
+		AIShotMaxTravelTime,
+        true // Shot intent, never a pass or a clearance.
 	);
 
 	if (SoccerCharacter->IsAIKickMontageActive())
@@ -18948,7 +18963,8 @@ bool ASoccerAIController::TryExecutePendingMainActionAfterPreparation(
 			TargetLocation,
 			AIShotHorizontalSpeed,
 			AIShotMinTravelTime,
-			AIShotMaxTravelTime
+			AIShotMaxTravelTime,
+            true
 		);
 
 		if (SoccerCharacter->IsAIKickMontageActive())
@@ -24246,7 +24262,8 @@ bool ASoccerAIController::TryExecuteCurrentRecoveryIntent(
 			TargetLocation,
 			AIShotHorizontalSpeed,
 			AIShotMinTravelTime,
-			AIShotMaxTravelTime
+			AIShotMaxTravelTime,
+            true
 		);
 
 		if (SoccerCharacter->IsAIKickMontageActive())

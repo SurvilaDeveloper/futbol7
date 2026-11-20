@@ -1,4 +1,4 @@
-﻿//SoccerMatchManager.cpp
+//SoccerMatchManager.cpp
 
 #include "SoccerMatchManager.h"
 #include "SoccerPenaltyKickRestart.h"
@@ -119,6 +119,97 @@ void ASoccerMatchManager::RecordConfirmedDecision5D(
         ++Beneficiary.GoalKicksWon;
         break;
     }
+}
+
+// Stage 5E: a record is created at the *physical* shot impact rather than
+// when input or an AI decision requests a shot. This prevents phantom shots
+// when an animation misses the moving ball.
+bool ASoccerMatchManager::IsPendingShotRecent5E() const
+{
+    return bPendingShot5E && GetWorld() != nullptr &&
+        GetWorld()->GetTimeSeconds() - PendingShotWorldTime5E <= 7.0f;
+}
+
+bool ASoccerMatchManager::IsBallHeadingIntoOpponentGoal5E(
+    ESoccerTeam ShootingTeam) const
+{
+    if (!IsValid(SoccerBall) || !IsValid(SoccerField))
+    {
+        return false;
+    }
+
+    const ESoccerTeam DefendingTeamForStats = GetOppositeTeam(ShootingTeam);
+    const float GoalSignForStats = GetOwnGoalLineSign(DefendingTeamForStats);
+    const FVector GoalCenterForStats =
+        SoccerField->GetGoalCenterWorldLocation(GoalSignForStats, 0.0f);
+    // Prediction uses the launched ball's real velocity, gravity and damping.
+    // The normal points from the pitch into the defending goal.
+    const FVector OutwardNormalForStats =
+        SoccerField->PitchLocalToWorld(FVector(GoalSignForStats, 0.0f, 0.0f)) -
+        SoccerField->PitchLocalToWorld(FVector::ZeroVector);
+    float CrossingTimeForStats = 0.0f;
+    FVector CrossingWorldForStats = FVector::ZeroVector;
+    if (!SoccerBall->PredictCrossingOfHorizontalPlane(
+            GoalCenterForStats, 6.0f, CrossingTimeForStats,
+            CrossingWorldForStats, OutwardNormalForStats.GetSafeNormal()))
+    {
+        return false;
+    }
+
+    const FVector CrossingLocalForStats =
+        SoccerField->WorldToPitchLocal(CrossingWorldForStats);
+    return FMath::Abs(CrossingLocalForStats.Y - SoccerFieldDimensions::CenterY)
+            <= SoccerFieldDimensions::GoalHalfWidthCm &&
+        CrossingLocalForStats.Z >= 0.0f &&
+        CrossingLocalForStats.Z <= SoccerFieldDimensions::GoalHeightCm;
+}
+
+void ASoccerMatchManager::RegisterShot5E(
+    ASoccerCharacterBase* ShootingCharacter)
+{
+    if (!IsValid(ShootingCharacter) || !IsValid(SoccerBall) ||
+        GetWorld() == nullptr ||
+        SoccerBall->GetBallPhysicsVelocity().Size2D() < 55.0f ||
+        CurrentMatchPeriod == ESoccerMatchPeriod::FullTime ||
+        CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime)
+    {
+        return;
+    }
+
+    const ESoccerTeam ShotTeamForStats = ShootingCharacter->GetTeam();
+    FSoccerMatchTeamStatistics5D& TeamTotalsForStats =
+        ShotTeamForStats == ESoccerTeam::PlayerTeam
+            ? MatchStatistics5D.PlayerTeam : MatchStatistics5D.OpponentTeam;
+    ++TeamTotalsForStats.Shots;
+    bPendingShot5E = true;
+    PendingShotTeam5E = ShotTeamForStats;
+    PendingShotWorldTime5E = GetWorld()->GetTimeSeconds();
+    bPendingShotProjectedOnGoal5E =
+        IsBallHeadingIntoOpponentGoal5E(ShotTeamForStats);
+    bPendingShotClassifiedOnTarget5E = false;
+}
+
+void ASoccerMatchManager::RegisterGoalkeeperSave5E(
+    ASoccerAICharacter* SavingCharacter)
+{
+    if (!IsValid(SavingCharacter) ||
+        SavingCharacter->GetPlayerRole() != ESoccerPlayerRole::Goalkeeper ||
+        !IsPendingShotRecent5E() || !bPendingShotProjectedOnGoal5E ||
+        bPendingShotClassifiedOnTarget5E ||
+        SavingCharacter->GetTeam() == PendingShotTeam5E)
+    {
+        return;
+    }
+
+    FSoccerMatchTeamStatistics5D& ShootingTotalsForStats =
+        PendingShotTeam5E == ESoccerTeam::PlayerTeam
+            ? MatchStatistics5D.PlayerTeam : MatchStatistics5D.OpponentTeam;
+    FSoccerMatchTeamStatistics5D& GoalkeeperTotalsForStats =
+        SavingCharacter->GetTeam() == ESoccerTeam::PlayerTeam
+            ? MatchStatistics5D.PlayerTeam : MatchStatistics5D.OpponentTeam;
+    ++ShootingTotalsForStats.ShotsOnTarget;
+    ++GoalkeeperTotalsForStats.GoalkeeperSaves;
+    bPendingShotClassifiedOnTarget5E = true;
 }
 
 void ASoccerMatchManager::UpdateControlledPossession5D(float DeltaTime)
@@ -1177,6 +1268,10 @@ void ASoccerMatchManager::UpdateGroundBodyContests(float DeltaTime)
 void ASoccerMatchManager::InitializeMatchClock()
 {
 	MatchStatistics5D = FSoccerMatchStatistics5D();
+    bPendingShot5E = false;
+    bPendingShotProjectedOnGoal5E = false;
+    bPendingShotClassifiedOnTarget5E = false;
+    PendingShotWorldTime5E = -1000.0f;
 	CurrentMatchPeriod = ESoccerMatchPeriod::FirstHalf;
 	CurrentHalfElapsedSeconds = 0.0f;
 	TotalMatchElapsedSeconds = 0.0f;
@@ -5054,6 +5149,9 @@ bool ASoccerMatchManager::RegisterControlledBallPossession(
 		return false;
 	}
 
+    // A controlled new possession ends the previous shot trajectory. In the
+    // goalkeeper path the save is recorded first, at physical contact.
+    bPendingShot5E = false;
 	PossessingCharacter = NewPossessingCharacter;
 	PossessionTeam = ConvertTeamToPossessionTeam(
 		NewPossessingCharacter->GetTeam()
@@ -11545,6 +11643,7 @@ void ASoccerMatchManager::BeginBallOutOfPlayDelay(
 		return;
 	}
 
+    bPendingShot5E = false;
 	PendingBallOutOfPlayRestartType = RestartType;
 	PendingBallOutOfPlayRestartTeam = RestartTeam;
 	PendingBallOutOfPlayRestartReferenceLocation = RestartReferenceLocation;
@@ -21672,6 +21771,20 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
 	{
 		OpponentTeamScore++;
 	}
+
+    // Goals are always on-target. Do not count twice if a goalkeeper already
+    // saved/deflected this same shot, and do not attribute an own goal to
+    // the shooter of the other team.
+    if (IsPendingShotRecent5E() && PendingShotTeam5E == ScoringTeam &&
+        !bPendingShotClassifiedOnTarget5E)
+    {
+        FSoccerMatchTeamStatistics5D& ScorerTotalsForStats =
+            ScoringTeam == ESoccerTeam::PlayerTeam
+                ? MatchStatistics5D.PlayerTeam : MatchStatistics5D.OpponentTeam;
+        ++ScorerTotalsForStats.ShotsOnTarget;
+        bPendingShotClassifiedOnTarget5E = true;
+    }
+    bPendingShot5E = false;
 
 	PendingKickoffTeam =
 		GetOppositeTeam(ScoringTeam);

@@ -367,6 +367,21 @@ void ASoccerAICharacter::OnAerialBallContactResolved(
 )
 {
 	Super::OnAerialBallContactResolved(ContactResult);
+    if (ContactResult.bContactResolved && ContactResult.bTouchAcceptedByRules &&
+        AIAerialHeaderTactic == ESoccerAIAerialHeaderTactic::ShotAtGoal)
+    {
+        if (UWorld* StatisticsWorld = GetWorld())
+        {
+            for (TActorIterator<ASoccerMatchManager> It(StatisticsWorld); It; ++It)
+            {
+                if (IsValid(*It))
+                {
+                    (*It)->RegisterShot5E(this);
+                    break;
+                }
+            }
+        }
+    }
 	ClearAIAerialHeaderDecision();
 }
 
@@ -1534,7 +1549,8 @@ void ASoccerAICharacter::KickAIBallToAirTarget(
 	const FVector& TargetLocation,
 	float HorizontalSpeed,
 	float MinTravelTime,
-	float MaxTravelTime
+	float MaxTravelTime,
+    bool bRecordShotForStatistics5E
 )
 {
 	if (
@@ -1565,6 +1581,7 @@ void ASoccerAICharacter::KickAIBallToAirTarget(
 		)
 		)
 	{
+        bPendingAIKickIsShotForStatistics5E = bRecordShotForStatistics5E;
 		return;
 	}
 
@@ -1593,6 +1610,20 @@ void ASoccerAICharacter::KickAIBallToAirTarget(
 		MinTravelTime,
 		MaxTravelTime
 	);
+    if (bRecordShotForStatistics5E)
+    {
+        if (UWorld* StatisticsWorld = GetWorld())
+        {
+            for (TActorIterator<ASoccerMatchManager> It(StatisticsWorld); It; ++It)
+            {
+                if (IsValid(*It))
+                {
+                    (*It)->RegisterShot5E(this);
+                    break;
+                }
+            }
+        }
+    }
 }
 
 void ASoccerAICharacter::PlayAIKickAnimationForRestart()
@@ -2298,6 +2329,20 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 			PendingAIKickMaxTravelTime
 		);
 	}
+    if (bPendingAIKickIsShotForStatistics5E)
+    {
+        if (UWorld* StatisticsWorld = GetWorld())
+        {
+            for (TActorIterator<ASoccerMatchManager> It(StatisticsWorld); It; ++It)
+            {
+                if (IsValid(*It))
+                {
+                    (*It)->RegisterShot5E(this);
+                    break;
+                }
+            }
+        }
+    }
 }
 
 void ASoccerAICharacter::FinishPendingAIKickAnimation()
@@ -2333,6 +2378,7 @@ void ASoccerAICharacter::FinishPendingAIKickAnimation()
 	bPendingAIKickHasImpactedBall = false;
 	bPendingAIKickIsAutoPass = false;
 	bPendingAIKickIsRestart = false;
+    bPendingAIKickIsShotForStatistics5E = false;
 	bAIKickMontageActive = false;
 	bAIIsKickingForAnimation = false;
 	AIKickingAnimationEndTime = -1000.0f;
@@ -2393,6 +2439,7 @@ void ASoccerAICharacter::CancelPendingAIKickAnimation(
 	bLastAIKickMontageEndedAfterImpact = false;
 	bPendingAIKickIsAutoPass = false;
 	bPendingAIKickIsRestart = false;
+    bPendingAIKickIsShotForStatistics5E = false;
 	bAIKickMontageActive = false;
 	bAIIsKickingForAnimation = false;
 	AIKickingAnimationEndTime = -1000.0f;

@@ -1,4 +1,4 @@
-﻿//GameHUD.cpp
+//GameHUD.cpp
 #include "GameHUD.h"
 
 #include "ThirdPersonCppCharacter.h"
@@ -1590,7 +1590,7 @@ void AGameHUD::DrawPeriodSummary5D()
 
     const float UIScale = SoccerHudPresentation5B::GetScale(Canvas);
     const float BoxW = FMath::Min(540.0f * UIScale, Canvas->SizeX - 24.0f * UIScale);
-    const float BoxH = 288.0f * UIScale;
+    const float BoxH = 372.0f * UIScale;
     const float X = (Canvas->SizeX - BoxW) * 0.5f;
     // Always below the referee's four-second decision banner if it is active.
     const float PreferredY = FMath::Max(Canvas->SizeY * 0.36f,
@@ -1671,6 +1671,9 @@ void AGameHUD::DrawPeriodSummary5D()
     // the offending side and other decisions to the beneficiary side.
     struct FDisplayStat5D { const TCHAR* Label; int32 Left; int32 Right; };
     const FDisplayStat5D Rows[] = {
+        { TEXT("REMATES"), Local.Shots, Rival.Shots },
+        { TEXT("AL ARCO"), Local.ShotsOnTarget, Rival.ShotsOnTarget },
+        { TEXT("ATAJADAS"), Local.GoalkeeperSaves, Rival.GoalkeeperSaves },
         { TEXT("CÓRNERS"), Local.CornersWon, Rival.CornersWon },
         { TEXT("TIROS LIBRES"), Local.FreeKicksWon, Rival.FreeKicksWon },
         { TEXT("OFFSIDES"), Local.OffsidesCommitted, Rival.OffsidesCommitted },
@@ -1705,7 +1708,7 @@ void AGameHUD::DrawPeriodSummary5D()
     }
     DrawText(TEXT("Posesión: solo tiempo con control confirmado de pelota"),
         FLinearColor(0.60f,0.73f,0.76f,1.0f), InnerX,
-        Y + 262.0f * UIScale, Font, 0.76f * UIScale);
+        Y + 345.0f * UIScale, Font, 0.76f * UIScale);
 }
 
 void AGameHUD::DrawMatchScoreboard()
