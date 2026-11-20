@@ -38,6 +38,9 @@ private:
         int32 RowIndex, bool bBestPlayer5J);
     void ChangeSummaryTab5G(bool bPlayers);
     void RefreshTimeline5I();
+    void RefreshFinalReport5K();
+    UFUNCTION()
+    void ShowFinalReport5K();
     UFUNCTION()
     void ShowTimeline5I();
     void ChangeIndividualPage5H(bool bDefensive);
@@ -76,6 +79,9 @@ private:
     UButton* PlayerTabButton5G = nullptr;
     UPROPERTY(Transient)
     UButton* TimelineTabButton5I = nullptr;
+    UPROPERTY(Transient)
+    UButton* ReportTabButton5K = nullptr;
+    bool bShowingReport5K = false;
     bool bShowingTimeline5I = false;
     bool bShowingPlayers5G = false;
     bool bShowingDefense5H = false;

@@ -298,6 +298,51 @@ float ASoccerMatchManager::CalculatePlayerRating5J(
         FMath::Clamp(Score5J, 1.0f, 10.0f) * 10.0f)) / 10.0f;
 }
 
+bool ASoccerMatchManager::BuildFinalMatchReport5K(
+    FSoccerFinalMatchReport5K& OutReport) const
+{
+    OutReport = FSoccerFinalMatchReport5K();
+    if (CurrentMatchPeriod != ESoccerMatchPeriod::FullTime)
+    {
+        return false;
+    }
+
+    OutReport.LocalClubName = GetAnnouncementClubName(ESoccerTeam::PlayerTeam);
+    OutReport.RivalClubName = GetAnnouncementClubName(ESoccerTeam::OpponentTeam);
+    OutReport.LocalScore = PlayerTeamScore;
+    OutReport.RivalScore = OpponentTeamScore;
+    OutReport.PlayedSeconds = FMath::Max(0.0f, TotalMatchElapsedSeconds);
+    OutReport.TeamStatistics = MatchStatistics5D;
+    OutReport.Players = PlayerStatistics5G;
+    OutReport.Events = MatchTimeline5I;
+
+    int32 BestImpact5K = MIN_int32;
+    FString BestPlayerKey5K;
+    for (const FSoccerPlayerMatchStatistics5G& Player5K : OutReport.Players)
+    {
+        const float Rating5K = CalculatePlayerRating5J(Player5K);
+        // Use the exact same tie break as the 5J FUTBOLISTAS screen.
+        const int32 Impact5K = Player5K.Goals * 8 + Player5K.Assists * 5 +
+            Player5K.Saves * 4 + Player5K.Interceptions * 3 +
+            Player5K.CleanTackles * 3 + Player5K.Recoveries * 2 +
+            Player5K.ShotsOnTarget + Player5K.PassesCompleted / 3 -
+            Player5K.OwnGoals * 7;
+        if (!OutReport.bHasBestPlayer || Rating5K > OutReport.BestPlayerRating ||
+            (Rating5K == OutReport.BestPlayerRating && Impact5K > BestImpact5K) ||
+            (Rating5K == OutReport.BestPlayerRating && Impact5K == BestImpact5K &&
+                Player5K.PlayerKey < BestPlayerKey5K))
+        {
+            OutReport.bHasBestPlayer = true;
+            OutReport.BestPlayerRating = Rating5K;
+            OutReport.BestPlayerName = Player5K.DisplayName;
+            OutReport.BestPlayerTeam = Player5K.Team;
+            BestImpact5K = Impact5K;
+            BestPlayerKey5K = Player5K.PlayerKey;
+        }
+    }
+    return true;
+}
+
 void ASoccerMatchManager::TrackControlledPossession5H(
     ASoccerCharacterBase* NewController)
 {

@@ -142,15 +142,20 @@ void USoccerPeriodSummaryWidget::BuildScreen5F()
     TeamTabButton5G = WidgetTree->ConstructWidget<UButton>();
     PlayerTabButton5G = WidgetTree->ConstructWidget<UButton>();
     TimelineTabButton5I = WidgetTree->ConstructWidget<UButton>();
+    ReportTabButton5K = WidgetTree->ConstructWidget<UButton>();
     TeamTabButton5G->AddChild(NewText(WidgetTree, TEXT("EQUIPOS"), 17, White));
     PlayerTabButton5G->AddChild(NewText(WidgetTree, TEXT("FUTBOLISTAS"), 16, White));
     TimelineTabButton5I->AddChild(NewText(WidgetTree, TEXT("CRONOLOGÍA"), 16, White));
+    ReportTabButton5K->AddChild(NewText(WidgetTree, TEXT("INFORME"), 16, White));
     TeamTabButton5G->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::ShowTeamStatistics5G);
     PlayerTabButton5G->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::ShowPlayerStatistics5G);
     TimelineTabButton5I->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::ShowTimeline5I);
+    ReportTabButton5K->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::ShowFinalReport5K);
     AddColumn(SummaryTabs5G, TeamTabButton5G, 1.0f);
     AddColumn(SummaryTabs5G, PlayerTabButton5G, 1.0f);
     AddColumn(SummaryTabs5G, TimelineTabButton5I, 1.0f);
+    AddColumn(SummaryTabs5G, ReportTabButton5K, 1.0f);
+    ReportTabButton5K->SetVisibility(ESlateVisibility::Collapsed);
     AddVertical(Content, SummaryTabs5G, FMargin(10.0f, 0.0f, 10.0f, 8.0f));
 
     // Second level of navigation keeps both individual tables readable at 720p.
@@ -190,6 +195,12 @@ void USoccerPeriodSummaryWidget::BuildScreen5F()
 void USoccerPeriodSummaryWidget::InitializeForMatch(ASoccerMatchManager* InMatchManager)
 {
 	MatchManager = InMatchManager;
+    // The same widget instance can survive between periods: the full-time
+    // panel must start on the final report, not the half-time tab last viewed.
+    bShowingReport5K = IsValid(MatchManager) &&
+        MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime;
+    bShowingTimeline5I = false;
+    bShowingPlayers5G = false;
 	RefreshStatistics5F();
 	RefreshContinueHint5F();
 }
@@ -221,7 +232,7 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
 
     if (IsValid(TeamTabButton5G) && IsValid(PlayerTabButton5G))
     {
-        TeamTabButton5G->SetBackgroundColor(!bShowingPlayers5G && !bShowingTimeline5I ?
+        TeamTabButton5G->SetBackgroundColor(!bShowingPlayers5G && !bShowingTimeline5I && !bShowingReport5K ?
             Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
         PlayerTabButton5G->SetBackgroundColor(bShowingPlayers5G ?
             Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
@@ -229,6 +240,13 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
     if (IsValid(TimelineTabButton5I))
     {
         TimelineTabButton5I->SetBackgroundColor(bShowingTimeline5I ?
+            Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
+    }
+    if (IsValid(ReportTabButton5K))
+    {
+        ReportTabButton5K->SetVisibility(bFullTime
+            ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+        ReportTabButton5K->SetBackgroundColor(bShowingReport5K ?
             Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
     }
     if (IsValid(IndividualPages5H))
@@ -246,6 +264,11 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
             Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
         DefensivePageButton5H->SetBackgroundColor(bShowingDefense5H ?
             Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
+    }
+    if (bShowingReport5K && bFullTime)
+    {
+        RefreshFinalReport5K();
+        return;
     }
     if (bShowingPlayers5G)
     {
@@ -300,8 +323,9 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
 
 void USoccerPeriodSummaryWidget::ChangeSummaryTab5G(bool bPlayers)
 {
-    if (bShowingPlayers5G == bPlayers && !bShowingTimeline5I) return;
+    if (bShowingPlayers5G == bPlayers && !bShowingTimeline5I && !bShowingReport5K) return;
     bShowingTimeline5I = false;
+    bShowingReport5K = false;
     bShowingPlayers5G = bPlayers;
     RefreshStatistics5F();
 }
@@ -310,7 +334,22 @@ void USoccerPeriodSummaryWidget::ShowTimeline5I()
 {
     if (bShowingTimeline5I) return;
     bShowingPlayers5G = false;
+    bShowingReport5K = false;
     bShowingTimeline5I = true;
+    RefreshStatistics5F();
+}
+
+void USoccerPeriodSummaryWidget::ShowFinalReport5K()
+{
+    if (!IsValid(MatchManager) ||
+        MatchManager->GetCurrentMatchPeriod() != ESoccerMatchPeriod::FullTime ||
+        bShowingReport5K)
+    {
+        return;
+    }
+    bShowingReport5K = true;
+    bShowingTimeline5I = false;
+    bShowingPlayers5G = false;
     RefreshStatistics5F();
 }
 
@@ -367,6 +406,158 @@ void USoccerPeriodSummaryWidget::RefreshTimeline5I()
         AddColumn(Row5I, DescriptionBox5I, 4.3f);
         StatisticsScroll->AddChild(Background5I);
     }
+    StatisticsScroll->ScrollToStart();
+}
+
+void USoccerPeriodSummaryWidget::RefreshFinalReport5K()
+{
+    if (!WidgetTree || !StatisticsScroll || !IsValid(MatchManager)) return;
+    using namespace SoccerPeriodSummary5F;
+
+    FSoccerFinalMatchReport5K Report5K;
+    if (!MatchManager->BuildFinalMatchReport5K(Report5K)) return;
+    StatisticsScroll->ClearChildren();
+
+    const auto AddSection5K = [this](const FString& Text5K)
+    {
+        UBorder* Header5K = WidgetTree->ConstructWidget<UBorder>();
+        Header5K->SetBrushColor(FLinearColor(0.045f, 0.16f, 0.16f, 1.0f));
+        Header5K->SetPadding(FMargin(10.0f, 7.0f));
+        Header5K->SetContent(SoccerPeriodSummary5F::NewText(
+            WidgetTree, Text5K, 17, SoccerPeriodSummary5F::Green,
+            ETextJustify::Left));
+        StatisticsScroll->AddChild(Header5K);
+    };
+    const auto AddDescription5K = [this](const FString& Text5K,
+        const FLinearColor& Color5K, int32 Size5K)
+    {
+        UBorder* Line5K = WidgetTree->ConstructWidget<UBorder>();
+        Line5K->SetPadding(FMargin(12.0f, 7.0f));
+        Line5K->SetContent(SoccerPeriodSummary5F::NewText(
+            WidgetTree, Text5K, Size5K, Color5K, ETextJustify::Left));
+        StatisticsScroll->AddChild(Line5K);
+    };
+    const auto FormatTime5K = [](const FSoccerMatchTimelineEvent5I& Event5K)
+    {
+        const int32 Seconds5K = FMath::Max(0, FMath::FloorToInt(Event5K.MatchSeconds));
+        const TCHAR* Half5K = Event5K.Period == ESoccerMatchPeriod::SecondHalf
+            ? TEXT("2T") : TEXT("1T");
+        return FString::Printf(TEXT("%s %02d:%02d"),
+            Half5K, Seconds5K / 60, Seconds5K % 60);
+    };
+
+    // The result stays visible in the permanent header; this section is an
+    // additional self-contained summary for a future saved match record.
+    AddSection5K(TEXT("INFORME FINAL DEL ENCUENTRO"));
+    const FString Outcome5K = Report5K.LocalScore > Report5K.RivalScore
+        ? FString::Printf(TEXT("GANÓ %s"), *Report5K.LocalClubName)
+        : Report5K.RivalScore > Report5K.LocalScore
+            ? FString::Printf(TEXT("GANÓ %s"), *Report5K.RivalClubName)
+            : TEXT("EMPATE");
+    AddDescription5K(FString::Printf(TEXT("%s  %d - %d  %s  |  %s"),
+        *Report5K.LocalClubName, Report5K.LocalScore,
+        Report5K.RivalScore, *Report5K.RivalClubName, *Outcome5K),
+        White, 18);
+    if (Report5K.bHasBestPlayer)
+    {
+        const FString& BestClub5K =
+            Report5K.BestPlayerTeam == ESoccerTeam::PlayerTeam
+            ? Report5K.LocalClubName : Report5K.RivalClubName;
+        AddDescription5K(FString::Printf(
+            TEXT("JUGADOR DEL PARTIDO: %s (%s)  |  NOTA %.1f"),
+            *Report5K.BestPlayerName, *BestClub5K,
+            Report5K.BestPlayerRating), Cyan, 16);
+    }
+    else
+    {
+        AddDescription5K(TEXT("JUGADOR DEL PARTIDO: sin acciones individuales suficientes"),
+            Muted, 15);
+    }
+
+    AddSection5K(TEXT("GOLES DEL PARTIDO"));
+    int32 GoalCount5K = 0;
+    for (const FSoccerMatchTimelineEvent5I& Event5K : Report5K.Events)
+    {
+        if (Event5K.Title != TEXT("¡GOL!")) continue;
+        const FString& Club5K = Event5K.Team == ESoccerTeam::PlayerTeam
+            ? Report5K.LocalClubName : Report5K.RivalClubName;
+        AddDescription5K(FString::Printf(TEXT("%s  |  %s  |  %s"),
+            *FormatTime5K(Event5K), *Club5K, *Event5K.Detail), White, 14);
+        ++GoalCount5K;
+    }
+    if (GoalCount5K == 0)
+    {
+        AddDescription5K(TEXT("No hubo goles."), Muted, 14);
+    }
+
+    AddSection5K(TEXT("ESTADÍSTICAS PRINCIPALES"));
+    const FSoccerMatchTeamStatistics5D& Home5K =
+        Report5K.TeamStatistics.PlayerTeam;
+    const FSoccerMatchTeamStatistics5D& Away5K =
+        Report5K.TeamStatistics.OpponentTeam;
+    const float Controlled5K = Home5K.ControlledPossessionSeconds +
+        Away5K.ControlledPossessionSeconds;
+    if (Controlled5K > KINDA_SMALL_NUMBER)
+    {
+        const int32 HomePercent5K = FMath::Clamp(FMath::RoundToInt(
+            100.0f * Home5K.ControlledPossessionSeconds / Controlled5K), 0, 100);
+        AddStatisticRow5F(TEXT("POSESIÓN CONTROLADA"),
+            FString::Printf(TEXT("%d%%"), HomePercent5K),
+            FString::Printf(TEXT("%d%%"), 100 - HomePercent5K), 0);
+    }
+    else
+    {
+        AddStatisticRow5F(TEXT("POSESIÓN CONTROLADA"),
+            TEXT("--"), TEXT("--"), 0);
+    }
+    AddStatisticRow5F(TEXT("REMATES"), FString::FromInt(Home5K.Shots),
+        FString::FromInt(Away5K.Shots), 1);
+    AddStatisticRow5F(TEXT("AL ARCO"), FString::FromInt(Home5K.ShotsOnTarget),
+        FString::FromInt(Away5K.ShotsOnTarget), 2);
+    AddStatisticRow5F(TEXT("ATAJADAS"), FString::FromInt(Home5K.GoalkeeperSaves),
+        FString::FromInt(Away5K.GoalkeeperSaves), 3);
+    AddStatisticRow5F(TEXT("CÓRNERS"), FString::FromInt(Home5K.CornersWon),
+        FString::FromInt(Away5K.CornersWon), 4);
+    int32 PassesHome5K = 0;
+    int32 PassesAway5K = 0;
+    for (const FSoccerPlayerMatchStatistics5G& Player5K : Report5K.Players)
+    {
+        if (Player5K.Team == ESoccerTeam::PlayerTeam)
+            PassesHome5K += Player5K.PassesCompleted;
+        else
+            PassesAway5K += Player5K.PassesCompleted;
+    }
+    AddStatisticRow5F(TEXT("PASES COMPLETADOS"),
+        FString::FromInt(PassesHome5K), FString::FromInt(PassesAway5K), 5);
+
+    AddSection5K(TEXT("MOMENTOS RELEVANTES"));
+    int32 HighlightCount5K = 0;
+    for (const FSoccerMatchTimelineEvent5I& Event5K : Report5K.Events)
+    {
+        // All goals are shown above. Keep a brief selection of referee and
+        // substitution events here; the CRONOLOGÍA tab keeps the full list.
+        if (Event5K.Title != TEXT("PENAL") &&
+            Event5K.Title != TEXT("SUSTITUCIÓN") &&
+            Event5K.Title != TEXT("FUERA DE JUEGO"))
+            continue;
+        if (HighlightCount5K >= 7) break;
+        const FString Club5K = Event5K.bHasTeam
+            ? (Event5K.Team == ESoccerTeam::PlayerTeam
+                ? Report5K.LocalClubName : Report5K.RivalClubName)
+            : TEXT("PARTIDO");
+        AddDescription5K(FString::Printf(TEXT("%s  |  %s  |  %s: %s"),
+            *FormatTime5K(Event5K), *Club5K, *Event5K.Title,
+            *Event5K.Detail), Muted, 13);
+        ++HighlightCount5K;
+    }
+    if (HighlightCount5K == 0)
+    {
+        AddDescription5K(TEXT("Sin otros acontecimientos destacados."), Muted, 14);
+    }
+    AddDescription5K(TEXT("La cronología completa y todas las estadísticas están en las otras pestañas."),
+        Muted, 12);
+    AddDescription5K(TEXT("Informe calculado a partir de eventos confirmados. La nota es estimada. Aún no se guarda un historial en disco."),
+        Muted, 12);
     StatisticsScroll->ScrollToStart();
 }
 
@@ -667,6 +858,11 @@ FReply USoccerPeriodSummaryWidget::NativeOnPreviewKeyDown(
     if (Key == EKeys::Five || Key == EKeys::Gamepad_FaceButton_Top)
     {
         ShowTimeline5I();
+        return FReply::Handled();
+    }
+    if (Key == EKeys::Six || Key == EKeys::Gamepad_FaceButton_Left)
+    {
+        ShowFinalReport5K();
         return FReply::Handled();
     }
     if (bShowingPlayers5G &&

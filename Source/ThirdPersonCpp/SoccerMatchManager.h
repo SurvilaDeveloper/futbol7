@@ -148,6 +148,25 @@ struct FSoccerMatchTimelineEvent5I
     FString Detail;
 };
 
+// Stage 5K: a complete, value-only final report. No Actor / UObject pointers:
+// safe to serialize in a future history feature without needing the level.
+// BuildFinalMatchReport5K populates it only after the match has ended.
+struct FSoccerFinalMatchReport5K
+{
+    FString LocalClubName;
+    FString RivalClubName;
+    int32 LocalScore = 0;
+    int32 RivalScore = 0;
+    float PlayedSeconds = 0.0f;
+    FSoccerMatchStatistics5D TeamStatistics;
+    TArray<FSoccerPlayerMatchStatistics5G> Players;
+    TArray<FSoccerMatchTimelineEvent5I> Events;
+    FString BestPlayerName;
+    ESoccerTeam BestPlayerTeam = ESoccerTeam::PlayerTeam;
+    float BestPlayerRating = 0.0f;
+    bool bHasBestPlayer = false;
+};
+
 enum class ESoccerConfirmedDecision5D : uint8
 {
     Offside,
@@ -222,6 +241,10 @@ public:
     {
         return MatchTimeline5I;
     }
+
+    // A standalone snapshot for the final report. Does not write to disk or
+    // interfere with the live statistics / confirmed-event counters.
+    bool BuildFinalMatchReport5K(FSoccerFinalMatchReport5K& OutReport) const;
 
     // Stage 5E: call only AFTER a genuine shot has launched the physical ball.
     // Passing, dribbling and goalkeeper clearances must not call this.
