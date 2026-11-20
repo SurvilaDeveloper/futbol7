@@ -7,6 +7,7 @@
 #include "SoccerMatchManager.h"
 #include "SoccerSquadCatalog.h"
 #include "SoccerSquadViewerWidget.h"
+#include "SoccerMatchHistoryWidget.h"
 #include "SoccerUIStyleEditorController.h"
 
 #include "Blueprint/WidgetTree.h"
@@ -155,6 +156,11 @@ FReply USoccerClubSelectionWidget::NativeOnPreviewKeyDown(
         FSoccerUINavigation::IsEditingText(WidgetTree))
         return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 
+    if (Key == EKeys::H)
+    {
+        HandleHistoryClicked();
+        return FReply::Handled();
+    }
     if (Key == EKeys::Gamepad_FaceButton_Top || Key == EKeys::V)
     {
         HandleViewSquadsClicked();
@@ -168,7 +174,9 @@ FReply USoccerClubSelectionWidget::NativeOnPreviewKeyDown(
     if (Vertical != 0) { NavigateOpponentGrid(Vertical); return FReply::Handled(); }
     if (FSoccerUINavigation::IsAccept(Key))
     {
-        if (IsValid(ViewSquadsButton) && ViewSquadsButton->HasKeyboardFocus())
+        if (IsValid(HistoryButton) && HistoryButton->HasKeyboardFocus())
+            HandleHistoryClicked();
+        else if (IsValid(ViewSquadsButton) && ViewSquadsButton->HasKeyboardFocus())
             HandleViewSquadsClicked();
         else
             HandleConfirmClicked();
@@ -556,6 +564,29 @@ void USoccerClubSelectionWidget::HandleViewSquadsClicked()
     OpenSquadViewer();
 }
 
+void USoccerClubSelectionWidget::HandleHistoryClicked()
+{
+    APlayerController* PC = GetOwningPlayer();
+    if (!PC || !IsInViewport()) return;
+    if (!IsValid(HistoryWidget))
+        HistoryWidget = CreateWidget<USoccerMatchHistoryWidget>(
+            PC, USoccerMatchHistoryWidget::StaticClass());
+    if (!IsValid(HistoryWidget)) return;
+    HistoryWidget->OnHistoryClosed.RemoveDynamic(
+        this, &USoccerClubSelectionWidget::HandleHistoryClosed);
+    HistoryWidget->OnHistoryClosed.AddDynamic(
+        this, &USoccerClubSelectionWidget::HandleHistoryClosed);
+    if (!HistoryWidget->IsInViewport()) HistoryWidget->AddToViewport(160);
+    HistoryWidget->OpenHistory();
+}
+
+void USoccerClubSelectionWidget::HandleHistoryClosed()
+{
+    // Exactly the same input-mode restoration as when leaving VER PLANTELES.
+    HandleSquadViewerClosed();
+    if (IsValid(HistoryButton)) HistoryButton->SetKeyboardFocus();
+}
+
 void USoccerClubSelectionWidget::OpenSquadViewer()
 {
     APlayerController* PlayerController = GetOwningPlayer();
@@ -700,6 +731,13 @@ void USoccerClubSelectionWidget::BuildWidgetTree()
     UHorizontalBoxSlot* ViewerSlot = Footer->AddChildToHorizontalBox(ViewSquadsButton);
     ViewerSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
     ViewerSlot->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 0.0f));
+
+    HistoryButton = MakeClubSelectionButton(WidgetTree, TEXT("HISTORIAL"));
+    HistoryButton->OnClicked.AddDynamic(
+        this, &USoccerClubSelectionWidget::HandleHistoryClicked);
+    UHorizontalBoxSlot* HistorySlot = Footer->AddChildToHorizontalBox(HistoryButton);
+    HistorySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+    HistorySlot->SetPadding(FMargin(6.0f, 0.0f, 6.0f, 0.0f));
 
     ConfirmButton = MakeClubSelectionButton(WidgetTree, TEXT("JUGAR PARTIDO"));
     ConfirmButton->OnClicked.AddDynamic(this, &USoccerClubSelectionWidget::HandleConfirmClicked);

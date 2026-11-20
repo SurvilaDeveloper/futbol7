@@ -11,6 +11,7 @@ class USoccerGameInstance;
 class USoccerClubProfile;
 class USoccerClubIdButton;
 class USoccerSquadViewerWidget;
+class USoccerMatchHistoryWidget;
 class UButton;
 class UBorder;
 class UTextBlock;
@@ -64,6 +65,10 @@ private:
 
     UFUNCTION()
     void HandleViewSquadsClicked();
+    UFUNCTION()
+    void HandleHistoryClicked();
+    UFUNCTION()
+    void HandleHistoryClosed();
 
     UFUNCTION()
     void HandleSquadViewerClosed();
@@ -102,12 +107,16 @@ private:
 
     UPROPERTY(Transient)
     USoccerSquadViewerWidget* SquadViewerWidget = nullptr;
+    UPROPERTY(Transient)
+    USoccerMatchHistoryWidget* HistoryWidget = nullptr;
 
     UPROPERTY(Transient)
     UTextBlock* StatusText = nullptr;
 
     UPROPERTY(Transient)
     UButton* ViewSquadsButton = nullptr;
+    UPROPERTY(Transient)
+    UButton* HistoryButton = nullptr;
 
     UPROPERTY(Transient)
     UButton* ConfirmButton = nullptr;

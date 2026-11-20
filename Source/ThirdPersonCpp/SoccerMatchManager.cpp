@@ -1,6 +1,7 @@
 //SoccerMatchManager.cpp
 
 #include "SoccerMatchManager.h"
+#include "SoccerMatchHistory5L.h"
 #include "SoccerPenaltyKickRestart.h"
 #include "SoccerFreeKickRestart.h"
 #include "SoccerGoalLineRestart.h"
@@ -1533,6 +1534,7 @@ void ASoccerMatchManager::InitializeMatchClock()
 {
 	MatchStatistics5D = FSoccerMatchStatistics5D();
     MatchTimeline5I.Empty();
+    bFinalMatchArchived5L = false;
     PlayerStatistics5G.Empty();
     bHasPreviousControllerTeam5H = false;
     PreviousController5H.Reset();
@@ -1919,6 +1921,17 @@ void ASoccerMatchManager::BeginFullTime()
             OpponentTeamScore, *GetAnnouncementClubName(ESoccerTeam::OpponentTeam)),
         FLinearColor(0.98f, 0.80f, 0.28f, 1.0f), 4.0f
     );
+
+    // Save once at the genuine full-time transition, after appending the
+    // final event. Never save on opening/closing the summary widget.
+    if (!bFinalMatchArchived5L)
+    {
+        FSoccerFinalMatchReport5K FinalReport5L;
+        if (BuildFinalMatchReport5K(FinalReport5L))
+        {
+            bFinalMatchArchived5L = FSoccerMatchHistory5L::SaveCompletedMatch(FinalReport5L);
+        }
+    }
 
 	PlayRefereeWhistle(RefereeWhistleFullTimeSound);
 	PrepareForMatchPeriodBreak();

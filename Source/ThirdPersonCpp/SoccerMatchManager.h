@@ -1215,6 +1215,7 @@ bool IsPenaltyMatchStateActive() const;
     void AppendMatchTimeline5I(const FString& Title, const FString& Detail,
         bool bHasTeam = false, ESoccerTeam Team = ESoccerTeam::PlayerTeam);
     TArray<FSoccerMatchTimelineEvent5I> MatchTimeline5I;
+    bool bFinalMatchArchived5L = false;
 
     void RecordConfirmedDecision5D(ESoccerTeam BenefitingTeam,
         ESoccerConfirmedDecision5D DecisionType);

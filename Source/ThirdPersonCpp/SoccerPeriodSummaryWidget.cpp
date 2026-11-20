@@ -432,6 +432,9 @@ void USoccerPeriodSummaryWidget::RefreshFinalReport5K()
         const FLinearColor& Color5K, int32 Size5K)
     {
         UBorder* Line5K = WidgetTree->ConstructWidget<UBorder>();
+        // UBorder's default brush is WHITE in native UMG. Without an explicit
+        // brush the bright report text becomes almost unreadable (stage 5K).
+        Line5K->SetBrushColor(FLinearColor(0.045f, 0.105f, 0.135f, 1.0f));
         Line5K->SetPadding(FMargin(12.0f, 7.0f));
         Line5K->SetContent(SoccerPeriodSummary5F::NewText(
             WidgetTree, Text5K, Size5K, Color5K, ETextJustify::Left));
@@ -556,7 +559,7 @@ void USoccerPeriodSummaryWidget::RefreshFinalReport5K()
     }
     AddDescription5K(TEXT("La cronología completa y todas las estadísticas están en las otras pestañas."),
         Muted, 12);
-    AddDescription5K(TEXT("Informe calculado a partir de eventos confirmados. La nota es estimada. Aún no se guarda un historial en disco."),
+    AddDescription5K(TEXT("Informe calculado a partir de eventos confirmados. La nota es estimada. El encuentro se guarda en el historial al finalizar."),
         Muted, 12);
     StatisticsScroll->ScrollToStart();
 }
