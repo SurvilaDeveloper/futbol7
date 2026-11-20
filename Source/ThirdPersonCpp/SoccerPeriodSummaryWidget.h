@@ -55,6 +55,8 @@ private:
 
 	UFUNCTION()
 	void HandleContinueClicked5F();
+    UFUNCTION()
+    void HandlePlayAgain5M();
 
 	UPROPERTY(Transient)
 	ASoccerMatchManager* MatchManager = nullptr;
@@ -96,4 +98,6 @@ private:
 
 	UPROPERTY(Transient)
 	UButton* ContinueButton = nullptr;
+    UPROPERTY(Transient)
+    UButton* PlayAgainButton5M = nullptr;
 };

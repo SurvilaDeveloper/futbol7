@@ -135,12 +135,15 @@ void USoccerMatchHistoryWidget::BuildHistoryScreen()
     ReportButton = Button(WidgetTree, TEXT("INFORME"));
     PlayersButton = Button(WidgetTree, TEXT("FUTBOLISTAS"));
     EventsButton = Button(WidgetTree, TEXT("CRONOLOGÍA"));
+    TotalsButton5M = Button(WidgetTree, TEXT("ACUMULADOS"));
     ReportButton->OnClicked.AddDynamic(this, &USoccerMatchHistoryWidget::HandleReport);
     PlayersButton->OnClicked.AddDynamic(this, &USoccerMatchHistoryWidget::HandlePlayers);
     EventsButton->OnClicked.AddDynamic(this, &USoccerMatchHistoryWidget::HandleEvents);
+    TotalsButton5M->OnClicked.AddDynamic(this, &USoccerMatchHistoryWidget::HandleTotals5M);
     Column(Pages, ReportButton);
     Column(Pages, PlayersButton);
     Column(Pages, EventsButton);
+    Column(Pages, TotalsButton5M);
     Vertical(Layout, Pages, 9.0f);
 
     USizeBox* DetailSize = WidgetTree->ConstructWidget<USizeBox>();
@@ -151,7 +154,7 @@ void USoccerMatchHistoryWidget::BuildHistoryScreen()
     Vertical(Layout, DetailSize, 8.0f);
 
     Vertical(Layout, Text(WidgetTree,
-        TEXT("Izq/Der: partido  |  1/2/3: pestañas  |  Esc/B: volver"),
+        TEXT("Izq/Der: partido  |  1/2/3/4: pestañas  |  Esc/B: volver"),
         13, Muted), 6.0f);
     UButton* Close = Button(WidgetTree, TEXT("VOLVER A SELECCIÓN DE CLUB"));
     Close->SetBackgroundColor(FLinearColor(0.14f, 0.47f, 0.37f, 1.0f));
@@ -162,6 +165,10 @@ void USoccerMatchHistoryWidget::BuildHistoryScreen()
 void USoccerMatchHistoryWidget::OpenHistory()
 {
     FSoccerMatchHistory5L::LoadRecent(Matches, 100);
+    TArray<FSoccerArchivedMatch5L> AllSavedMatches5M;
+    FSoccerMatchHistory5L::LoadRecent(AllSavedMatches5M, 10000);
+    TotalMatches5M = AllSavedMatches5M.Num();
+    FSoccerHistoricalStats5M::Aggregate(AllSavedMatches5M, TotalClubs5M, TotalPlayers5M);
     SelectedIndex = 0;
     ActivePage = 0;
     bChangingOptions = true;
@@ -215,6 +222,41 @@ void USoccerMatchHistoryWidget::RefreshContents()
     if (ReportButton) ReportButton->SetBackgroundColor(ActivePage == 0 ? Green : ButtonDark);
     if (PlayersButton) PlayersButton->SetBackgroundColor(ActivePage == 1 ? Green : ButtonDark);
     if (EventsButton) EventsButton->SetBackgroundColor(ActivePage == 2 ? Green : ButtonDark);
+    if (TotalsButton5M) TotalsButton5M->SetBackgroundColor(ActivePage == 3 ? Green : ButtonDark);
+    if (ActivePage == 3)
+    {
+        SummaryHeading->SetText(FText::FromString(TEXT("ESTADÍSTICAS HISTÓRICAS ACUMULADAS")));
+        AddDarkLine(FString::Printf(TEXT("PARTIDOS FINALIZADOS REGISTRADOS: %d"), TotalMatches5M), 17, true);
+        if (TotalClubs5M.Num() == 0)
+        {
+            AddDarkLine(TEXT("Todavía no hay partidos completos guardados."));
+        }
+        for (const FSoccerClubTotals5M& Club5M : TotalClubs5M)
+        {
+            AddDarkLine(Club5M.Name.ToUpper(), 18, true);
+            AddDarkLine(FString::Printf(TEXT("PJ %d   PG %d   PE %d   PP %d   GF %d   GC %d"),
+                Club5M.Played, Club5M.Wins, Club5M.Draws, Club5M.Losses,
+                Club5M.GoalsFor, Club5M.GoalsAgainst));
+            AddDarkLine(FString::Printf(TEXT("REMATES %d   AL ARCO %d   ATAJADAS %d   CÓRNERS %d   TIROS LIBRES %d"),
+                Club5M.Shots, Club5M.ShotsOnTarget, Club5M.Saves,
+                Club5M.Corners, Club5M.FreeKicks), 13);
+        }
+        AddDarkLine(TEXT("FUTBOLISTAS: REGISTROS CON ACCIONES"), 17, true);
+        for (const FSoccerPlayerTotals5M& Player5M : TotalPlayers5M)
+        {
+            const float Average5M = Player5M.Records > 0
+                ? Player5M.RatingSum / Player5M.Records : 0.0f;
+            AddDarkLine(FString::Printf(TEXT("%s  |  %s  |  REG %d  G %d  AS %d  AT %d  NOTA MEDIA %.1f"),
+                *Player5M.Club, *Player5M.Name, Player5M.Records,
+                Player5M.Goals, Player5M.Assists, Player5M.Saves, Average5M));
+            AddDarkLine(FString::Printf(TEXT("REM %d  AL %d  PASES %d/%d  REC %d  INT %d  ENT %d"),
+                Player5M.Shots, Player5M.ShotsOnTarget,
+                Player5M.PassesCompleted, Player5M.PassesAttempted,
+                Player5M.Recoveries, Player5M.Interceptions, Player5M.CleanTackles), 13);
+        }
+        Details->ScrollToStart();
+        return;
+    }
     if (!Matches.IsValidIndex(SelectedIndex))
     {
         SummaryHeading->SetText(FText::FromString(TEXT("TODAVÍA NO HAY ENCUENTROS GUARDADOS")));
@@ -312,7 +354,7 @@ void USoccerMatchHistoryWidget::SwitchMatch(int32 Delta)
 }
 void USoccerMatchHistoryWidget::SwitchPage(int32 NewPage)
 {
-    ActivePage = FMath::Clamp(NewPage, 0, 2);
+    ActivePage = FMath::Clamp(NewPage, 0, 3);
     RefreshContents();
 }
 void USoccerMatchHistoryWidget::HandlePrevious() { SwitchMatch(-1); }
@@ -320,6 +362,7 @@ void USoccerMatchHistoryWidget::HandleNext() { SwitchMatch(1); }
 void USoccerMatchHistoryWidget::HandleReport() { SwitchPage(0); }
 void USoccerMatchHistoryWidget::HandlePlayers() { SwitchPage(1); }
 void USoccerMatchHistoryWidget::HandleEvents() { SwitchPage(2); }
+void USoccerMatchHistoryWidget::HandleTotals5M() { SwitchPage(3); }
 void USoccerMatchHistoryWidget::HandleSelectionChanged(FString Option, ESelectInfo::Type SelectionType)
 {
     if (bChangingOptions || !MatchSelector) return;
@@ -347,6 +390,7 @@ FReply USoccerMatchHistoryWidget::NativeOnPreviewKeyDown(
     if (Key == EKeys::One) { SwitchPage(0); return FReply::Handled(); }
     if (Key == EKeys::Two) { SwitchPage(1); return FReply::Handled(); }
     if (Key == EKeys::Three) { SwitchPage(2); return FReply::Handled(); }
+    if (Key == EKeys::Four) { SwitchPage(3); return FReply::Handled(); }
     if (Key == EKeys::Left || Key == EKeys::Gamepad_DPad_Left)
     {
         SwitchMatch(-1); return FReply::Handled();

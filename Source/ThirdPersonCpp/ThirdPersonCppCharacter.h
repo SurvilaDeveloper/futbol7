@@ -165,6 +165,7 @@ protected:
 
 	/** Opens the coach menu from gameplay. Bound to M and Gamepad Menu/Options. */
 	void ToggleFormationMenu();
+    void ToggleMatchPause5M();
 
 	/** Opens the four-slot quick tactics selector. Bound to Tab and Gamepad View/Back. */
 	void ToggleQuickTacticsMenu();

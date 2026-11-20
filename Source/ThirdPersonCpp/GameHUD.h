@@ -12,6 +12,7 @@ class USoccerQuickTacticsWidget;
 class USoccerSubstitutionMenuWidget;
 class USoccerTacticalPresetManager;
 class USoccerPeriodSummaryWidget;
+class USoccerMatchSessionWidget5M;
 
 UCLASS()
 class THIRDPERSONCPP_API AGameHUD : public AHUD
@@ -44,6 +45,11 @@ public:
 
 	// Called only by the full-time statistics overlay.
 	void DismissFinalSummary5F();
+    void TogglePauseMenu5M();
+    void ResumeMatch5M();
+    void AbortMatch5M();
+    void StartNewMatch5M();
+    void DismissPostMatchMenu5M();
 
 
 private:
@@ -68,6 +74,8 @@ private:
 	void DrawCompactPossession5D();
 	void DrawPeriodSummary5D();
 	void UpdatePeriodSummary5F();
+    void UpdateMatchSession5M();
+    void ShowMatchSession5M(bool bFinished);
 	bool IsPeriodSummaryVisible5F() const;
 
 
@@ -106,6 +114,11 @@ private:
 
 	UPROPERTY(Transient)
 	USoccerPeriodSummaryWidget* PeriodSummaryWidget5F = nullptr;
+    UPROPERTY(Transient) USoccerMatchSessionWidget5M* SessionWidget5M = nullptr;
+    bool bFinishedSessionDismissed5M = false;
+    bool bSessionAppliedPause5M = false;
+    bool bSessionPreviousCursor5M = false;
+    bool bOpponentConfirmedForSession5M = false;
 	bool bFinalSummaryDismissed5F = false;
 	bool bPeriodSummaryPreviousCursor5F = false;
 

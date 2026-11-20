@@ -948,7 +948,10 @@ void ASoccerMatchManager::EndPlay(
 
 void ASoccerMatchManager::Tick(float DeltaTime)
 {
-	Super::Tick(DeltaTime);
+    Super::Tick(DeltaTime);
+    // 5M: the controller intentionally freezes gameplay during session pause/abort.
+    // Do NOT change the existing referee/formation pauses.
+    if (bMatchAborted5M || bSessionPaused5M) return;
 
 	// Human pass requests are independent from the tactical match-state cadence.
 	UpdateHumanPassRequestState();
@@ -1734,6 +1737,7 @@ void ASoccerMatchManager::UpdateMatchClock(float DeltaTime)
 
 void ASoccerMatchManager::TryEndMatchPeriodIfTimeElapsed()
 {
+    if (bMatchAborted5M) return;
 	if (!bEnableMatchClock || !bCurrentHalfClockStarted)
 	{
 		return;
@@ -1900,8 +1904,26 @@ void ASoccerMatchManager::CompleteHalfTime()
 	StartKickoff(GetOppositeTeam(FirstHalfKickoffTeam));
 }
 
+void ASoccerMatchManager::AbortMatch5M()
+{
+    if (bMatchAborted5M || CurrentMatchPeriod == ESoccerMatchPeriod::FullTime) return;
+    bMatchAborted5M = true;
+    bSessionPaused5M = true;
+    bCurrentHalfClockStarted = false;
+    SetMatchPeriodHumanMoveLock(true);
+    UE_LOG(LogTemp, Display, TEXT("Soccer 5M: match aborted; no history or final report will be saved."));
+}
+
+bool ASoccerMatchManager::IsFullTimeSummaryDelayComplete5M() const
+{
+    return CurrentMatchPeriod == ESoccerMatchPeriod::FullTime &&
+        (FullTimeSummaryRevealAtRealTime5M < 0.0 ||
+         FPlatformTime::Seconds() >= FullTimeSummaryRevealAtRealTime5M);
+}
+
 void ASoccerMatchManager::BeginFullTime()
 {
+    if (bMatchAborted5M) return;
 	if (CurrentMatchPeriod != ESoccerMatchPeriod::SecondHalf)
 	{
 		return;
@@ -1924,7 +1946,7 @@ void ASoccerMatchManager::BeginFullTime()
 
     // Save once at the genuine full-time transition, after appending the
     // final event. Never save on opening/closing the summary widget.
-    if (!bFinalMatchArchived5L)
+    if (!bFinalMatchArchived5L && !bMatchAborted5M)
     {
         FSoccerFinalMatchReport5K FinalReport5L;
         if (BuildFinalMatchReport5K(FinalReport5L))
@@ -1933,7 +1955,21 @@ void ASoccerMatchManager::BeginFullTime()
         }
     }
 
-	PlayRefereeWhistle(RefereeWhistleFullTimeSound);
+    // The full-time sound contains the three final whistles. Keep the view
+    // of the pitch for 3 seconds AFTER the sound has finished, before opening
+    // the statistics screen. If no usable sound is assigned, wait 3 seconds.
+    float WhistleLength5M = 0.0f;
+    if (bEnableRefereeWhistle && IsValid(RefereeWhistleFullTimeSound))
+    {
+        const float AudioDuration5M = RefereeWhistleFullTimeSound->GetDuration();
+        if (AudioDuration5M > 0.0f && AudioDuration5M <= 15.0f)
+        {
+            WhistleLength5M = AudioDuration5M;
+        }
+    }
+    FullTimeSummaryRevealAtRealTime5M =
+        FPlatformTime::Seconds() + static_cast<double>(WhistleLength5M) + 3.0;
+    PlayRefereeWhistle(RefereeWhistleFullTimeSound);
 	PrepareForMatchPeriodBreak();
 	SetMatchPeriodHumanMoveLock(true);
 

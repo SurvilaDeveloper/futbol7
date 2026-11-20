@@ -185,11 +185,30 @@ void USoccerPeriodSummaryWidget::BuildScreen5F()
 	AddVertical(Content, StatusText, FMargin(0.0f, 0.0f, 0.0f, 8.0f));
 
 	ContinueButton = WidgetTree->ConstructWidget<UButton>();
-	ContinueButton->SetBackgroundColor(Green);
-	ContinueLabel = NewText(WidgetTree, TEXT("CONTINUAR AL SEGUNDO TIEMPO"), 20, White);
-	ContinueButton->AddChild(ContinueLabel);
+    ContinueButton->SetBackgroundColor(FLinearColor(0.32f, 0.82f, 0.52f, 1.0f));
+    USizeBox* ContinueContentSize5M = WidgetTree->ConstructWidget<USizeBox>();
+    ContinueContentSize5M->SetMinDesiredHeight(55.0f);
+    ContinueLabel = NewText(WidgetTree, TEXT("CONTINUAR AL SEGUNDO TIEMPO"), 21,
+        FLinearColor(0.018f, 0.13f, 0.085f, 1.0f));
+    ContinueContentSize5M->SetContent(ContinueLabel);
+    ContinueButton->AddChild(ContinueContentSize5M);
 	ContinueButton->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::HandleContinueClicked5F);
-	AddVertical(Content, ContinueButton, FMargin(95.0f, 0.0f, 95.0f, 0.0f));
+
+    // Both actions share the existing bottom row: no extra height is needed at 720p.
+    UHorizontalBox* BottomActions5M = WidgetTree->ConstructWidget<UHorizontalBox>();
+    AddColumn(BottomActions5M, ContinueButton, 1.0f);
+    PlayAgainButton5M = WidgetTree->ConstructWidget<UButton>();
+    PlayAgainButton5M->SetBackgroundColor(FLinearColor(0.32f, 0.82f, 0.52f, 1.0f));
+    USizeBox* PlayAgainContentSize5M = WidgetTree->ConstructWidget<USizeBox>();
+    PlayAgainContentSize5M->SetMinDesiredHeight(55.0f);
+    PlayAgainContentSize5M->SetContent(NewText(WidgetTree, TEXT("JUGAR OTRO PARTIDO"), 21,
+        FLinearColor(0.018f, 0.13f, 0.085f, 1.0f)));
+    PlayAgainButton5M->AddChild(PlayAgainContentSize5M);
+    PlayAgainButton5M->OnClicked.AddDynamic(this,
+        &USoccerPeriodSummaryWidget::HandlePlayAgain5M);
+    AddColumn(BottomActions5M, PlayAgainButton5M, 1.0f);
+    PlayAgainButton5M->SetVisibility(ESlateVisibility::Collapsed);
+    AddVertical(Content, BottomActions5M, FMargin(20.0f, 0.0f, 20.0f, 0.0f));
 }
 
 void USoccerPeriodSummaryWidget::InitializeForMatch(ASoccerMatchManager* InMatchManager)
@@ -799,6 +818,15 @@ void USoccerPeriodSummaryWidget::RefreshContinueHint5F()
 {
 	if (!IsValid(MatchManager) || !IsValid(StatusText)) return;
 	const bool bFinal = MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime;
+    if (IsValid(PlayAgainButton5M))
+        PlayAgainButton5M->SetVisibility(bFinal ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+    // At full time this is a secondary CLOSE action, not a PLAY action.
+    ContinueButton->SetBackgroundColor(bFinal
+        ? FLinearColor(0.15f, 0.31f, 0.39f, 1.0f)
+        : FLinearColor(0.32f, 0.82f, 0.52f, 1.0f));
+    ContinueLabel->SetColorAndOpacity(FSlateColor(bFinal
+        ? FLinearColor::White
+        : FLinearColor(0.018f, 0.13f, 0.085f, 1.0f)));
 	if (bFinal)
 	{
 		ContinueLabel->SetText(FText::FromString(TEXT("CERRAR RESUMEN")));
@@ -821,6 +849,18 @@ void USoccerPeriodSummaryWidget::NativeTick(const FGeometry& MyGeometry, float I
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	RefreshContinueHint5F();
+}
+
+void USoccerPeriodSummaryWidget::HandlePlayAgain5M()
+{
+    if (!IsValid(MatchManager) ||
+        MatchManager->GetCurrentMatchPeriod() != ESoccerMatchPeriod::FullTime)
+        return;
+    if (APlayerController* PlayerController = GetOwningPlayer())
+    {
+        if (AGameHUD* Hud5M = Cast<AGameHUD>(PlayerController->GetHUD()))
+            Hud5M->StartNewMatch5M();
+    }
 }
 
 void USoccerPeriodSummaryWidget::HandleContinueClicked5F()
@@ -878,6 +918,12 @@ FReply USoccerPeriodSummaryWidget::NativeOnPreviewKeyDown(
         (Key == EKeys::Four || Key == EKeys::Gamepad_DPad_Right))
     {
         ChangeIndividualPage5H(true);
+        return FReply::Handled();
+    }
+    if (Key == EKeys::J && IsValid(MatchManager) &&
+        MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime)
+    {
+        HandlePlayAgain5M();
         return FReply::Handled();
     }
 	if (Key == EKeys::Enter || Key == EKeys::SpaceBar ||

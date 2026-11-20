@@ -18,6 +18,7 @@
 #include "SoccerQuickTacticsWidget.h"
 #include "SoccerSubstitutionMenuWidget.h"
 #include "SoccerPeriodSummaryWidget.h"
+#include "SoccerMatchSessionWidget5M.h"
 #include "SoccerTacticalPresetManager.h"
 
 #include "Engine/Engine.h"
@@ -226,6 +227,7 @@ bool AGameHUD::IsClubSelectionMenuVisible() const
 
 void AGameHUD::HandleClubSelectionConfirmed()
 {
+    bOpponentConfirmedForSession5M = true;
 	UE_LOG(LogTemp, Display, TEXT("[ClubSelection] Opponent confirmed; match materialized."));
 	if (IsValid(MatchManager) && MatchManager->ShouldShowFormationMenuAtMatchStart())
 	{
@@ -841,10 +843,12 @@ void AGameHUD::UpdatePeriodSummary5F()
 	}
 	const bool bHalfTime = Period == ESoccerMatchPeriod::HalfTime;
 	const bool bFullTime = Period == ESoccerMatchPeriod::FullTime;
+    const bool bFinalRevealReady5M = !bFullTime ||
+        MatchManager->IsFullTimeSummaryDelayComplete5M();
 	const bool bOtherMenu = IsClubSelectionMenuVisible() ||
 		IsFormationMenuVisible() || IsQuickTacticsMenuVisible() ||
 		IsSubstitutionMenuVisible();
-	const bool bShouldShow = (bHalfTime || (bFullTime && !bFinalSummaryDismissed5F)) &&
+	const bool bShouldShow = (bHalfTime || (bFullTime && !bFinalSummaryDismissed5F && bFinalRevealReady5M)) &&
 		!bOtherMenu;
 	APlayerController* PlayerController = UGameplayStatics::GetPlayerController(GetWorld(), 0);
 	if (!bShouldShow || PlayerController == nullptr)
@@ -880,6 +884,132 @@ void AGameHUD::UpdatePeriodSummary5F()
 	}
 }
 
+void AGameHUD::ShowMatchSession5M(bool bFinished)
+{
+    APlayerController* PC5M = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+    if (!PC5M) return;
+    if (!IsValid(SessionWidget5M))
+        SessionWidget5M = CreateWidget<USoccerMatchSessionWidget5M>(
+            PC5M, USoccerMatchSessionWidget5M::StaticClass());
+    if (!IsValid(SessionWidget5M)) return;
+    if (!SessionWidget5M->IsInViewport())
+    {
+        bSessionPreviousCursor5M = PC5M->bShowMouseCursor;
+        SessionWidget5M->AddToViewport(220);
+    }
+    if (bFinished) SessionWidget5M->ShowFinished5M();
+    else SessionWidget5M->ShowPaused5M();
+    UE_LOG(LogTemp, Log, TEXT("[Session5M] Menu opened, fulltime=%d"), bFinished ? 1 : 0);
+    PC5M->bShowMouseCursor = true;
+    PC5M->bEnableClickEvents = true;
+    FInputModeUIOnly Mode5M;
+    Mode5M.SetWidgetToFocus(SessionWidget5M->TakeWidget());
+    Mode5M.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    PC5M->SetInputMode(Mode5M);
+    SessionWidget5M->SetKeyboardFocus();
+}
+
+void AGameHUD::TogglePauseMenu5M()
+{
+    if (!IsValid(MatchManager) || IsPeriodSummaryVisible5F() ||
+        IsClubSelectionMenuVisible() || IsFormationMenuVisible() ||
+        IsSubstitutionMenuVisible() || IsQuickTacticsMenuVisible()) return;
+    if (MatchManager->IsMatchAborted5M()) return;
+    if (!bOpponentConfirmedForSession5M && MatchManager->ShouldShowClubSelectionAtMatchStart())
+        return;
+    if (MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime)
+    {
+        if (!MatchManager->IsFullTimeSummaryDelayComplete5M()) return;
+        bFinishedSessionDismissed5M = false;
+        ShowMatchSession5M(true);
+        return;
+    }
+    if (!MatchManager->IsMatchPeriodGameplayActive()) return;
+    if (IsValid(SessionWidget5M) && SessionWidget5M->IsInViewport())
+    {
+        ResumeMatch5M();
+        return;
+    }
+    if (!GetWorld() || UGameplayStatics::IsGamePaused(GetWorld())) return;
+    APlayerController* SessionPC5M = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+    if (!SessionPC5M) return;
+    if (!IsValid(SessionWidget5M))
+        SessionWidget5M = CreateWidget<USoccerMatchSessionWidget5M>(
+            SessionPC5M, USoccerMatchSessionWidget5M::StaticClass());
+    if (!IsValid(SessionWidget5M)) return;
+    if (!UGameplayStatics::SetGamePaused(GetWorld(), true)) return;
+    bSessionAppliedPause5M = true;
+    MatchManager->SetSessionPaused5M(true);
+    UE_LOG(LogTemp, Log, TEXT("[Session5M] Game paused by player"));
+    ShowMatchSession5M(false);
+}
+
+void AGameHUD::ResumeMatch5M()
+{
+    if (!IsValid(MatchManager) || MatchManager->IsMatchAborted5M()) return;
+    if (MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime) return;
+    if (IsValid(SessionWidget5M)) SessionWidget5M->RemoveFromParent();
+    if (bSessionAppliedPause5M && GetWorld())
+        UGameplayStatics::SetGamePaused(GetWorld(), false);
+    bSessionAppliedPause5M = false;
+    MatchManager->SetSessionPaused5M(false);
+    if (APlayerController* PC5M = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+    {
+        PC5M->bShowMouseCursor = bSessionPreviousCursor5M;
+        PC5M->SetInputMode(FInputModeGameOnly());
+    }
+}
+
+void AGameHUD::AbortMatch5M()
+{
+    if (!IsValid(MatchManager) || !bSessionAppliedPause5M ||
+        !IsValid(SessionWidget5M) || !SessionWidget5M->IsInViewport()) return;
+    MatchManager->AbortMatch5M();
+    UE_LOG(LogTemp, Display, TEXT("[Session5M] Abandon confirmed. No history written."));
+    // Leave the world paused; only JUGAR starts a fresh level and selection.
+    SessionWidget5M->ShowAborted5M();
+}
+
+void AGameHUD::StartNewMatch5M()
+{
+    UWorld* World5M = GetWorld();
+    if (!World5M) return;
+    if (IsValid(MatchManager) && !MatchManager->IsMatchAborted5M() &&
+        MatchManager->GetCurrentMatchPeriod() != ESoccerMatchPeriod::FullTime) return;
+    const FString CurrentMap5M = UGameplayStatics::GetCurrentLevelName(World5M, true);
+    if (CurrentMap5M.IsEmpty()) return;
+    UE_LOG(LogTemp, Display, TEXT("[Session5M] New match: reloading %s; original 5L club selection preserved"), *CurrentMap5M);
+    if (UGameplayStatics::IsGamePaused(World5M))
+        UGameplayStatics::SetGamePaused(World5M, false);
+    // Recreate actors, timers and ball physics; retain GameInstance & JSON history.
+    // OpenInitialMatchMenu always begins at rival-club selection.
+    UGameplayStatics::OpenLevel(World5M, FName(*CurrentMap5M), true);
+}
+
+void AGameHUD::DismissPostMatchMenu5M()
+{
+    if (!IsValid(MatchManager) ||
+        MatchManager->GetCurrentMatchPeriod() != ESoccerMatchPeriod::FullTime) return;
+    bFinishedSessionDismissed5M = true;
+    if (IsValid(SessionWidget5M)) SessionWidget5M->RemoveFromParent();
+    if (APlayerController* PC5M = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+    {
+        PC5M->bShowMouseCursor = bSessionPreviousCursor5M;
+        PC5M->SetInputMode(FInputModeGameOnly());
+    }
+}
+
+void AGameHUD::UpdateMatchSession5M()
+{
+    if (!IsValid(MatchManager) || MatchManager->IsMatchAborted5M()) return;
+    if (MatchManager->GetCurrentMatchPeriod() != ESoccerMatchPeriod::FullTime ||
+        !MatchManager->IsFullTimeSummaryDelayComplete5M() ||
+        IsPeriodSummaryVisible5F() || !bFinalSummaryDismissed5F ||
+        bFinishedSessionDismissed5M) return;
+    if (!IsValid(SessionWidget5M) || !SessionWidget5M->IsInViewport())
+        ShowMatchSession5M(true);
+}
+
 void AGameHUD::DrawHUD()
 {
     Super::DrawHUD();
@@ -894,6 +1024,7 @@ void AGameHUD::DrawHUD()
     HUDMainAnnouncementBottomY = 0.0f;
     ObserveMatchAnnouncement();
 	UpdatePeriodSummary5F();
+    UpdateMatchSession5M();
 
     // Keep the result visible in replay, but hide normal play controls.
     DrawMatchScoreboard();
@@ -916,7 +1047,9 @@ void AGameHUD::DrawHUD()
     {
         // The interactive 5F screen owns the full report. Retain the legacy
         // Canvas report only as a fallback if UMG cannot be constructed.
-        if (!IsPeriodSummaryVisible5F() && !bFinalSummaryDismissed5F)
+        if (!IsPeriodSummaryVisible5F() && !bFinalSummaryDismissed5F &&
+            (MatchManager->GetCurrentMatchPeriod() != ESoccerMatchPeriod::FullTime ||
+             MatchManager->IsFullTimeSummaryDelayComplete5M()))
         {
             DrawPeriodSummary5D();
         }

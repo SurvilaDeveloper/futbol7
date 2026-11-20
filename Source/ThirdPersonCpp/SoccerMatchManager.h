@@ -444,7 +444,14 @@ public:
 	// Match clock / period API. The clock starts when the kickoff of each half
 	// is actually taken, then runs continuously until that half expires.
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match|Time")
-	ESoccerMatchPeriod GetCurrentMatchPeriod() const;
+    ESoccerMatchPeriod GetCurrentMatchPeriod() const;
+    /** Does not score, finalize, or archive this abandoned match. */
+    void AbortMatch5M();
+    bool IsMatchAborted5M() const { return bMatchAborted5M; }
+    // At full-time, keep the pitch visible until the final whistle audio
+    // finishes plus three additional seconds (uses wall-clock time).
+    bool IsFullTimeSummaryDelayComplete5M() const;
+    void SetSessionPaused5M(bool bPaused) { bSessionPaused5M = bPaused; }
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match|Time")
 	float GetCurrentHalfElapsedSeconds() const;
@@ -1216,6 +1223,9 @@ bool IsPenaltyMatchStateActive() const;
         bool bHasTeam = false, ESoccerTeam Team = ESoccerTeam::PlayerTeam);
     TArray<FSoccerMatchTimelineEvent5I> MatchTimeline5I;
     bool bFinalMatchArchived5L = false;
+    double FullTimeSummaryRevealAtRealTime5M = -1.0;
+    bool bMatchAborted5M = false;
+    bool bSessionPaused5M = false;
 
     void RecordConfirmedDecision5D(ESoccerTeam BenefitingTeam,
         ESoccerConfirmedDecision5D DecisionType);

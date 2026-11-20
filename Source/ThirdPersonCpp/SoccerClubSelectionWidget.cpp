@@ -52,11 +52,26 @@ namespace
 
     UButton* MakeClubSelectionButton(
         UWidgetTree* WidgetTree,
-        const FString& Label
+        const FString& Label,
+        bool bPlayAction = false
     )
     {
         UButton* Button = WidgetTree->ConstructWidget<UButton>();
-        Button->AddChild(MakeClubSelectionText(WidgetTree, Label, 18));
+        if (bPlayAction)
+        {
+            // Primary play actions stay readable regardless of the global theme.
+            Button->SetBackgroundColor(FLinearColor(0.32f, 0.82f, 0.52f, 1.0f));
+            USizeBox* PlayContentSize = WidgetTree->ConstructWidget<USizeBox>();
+            PlayContentSize->SetMinDesiredHeight(55.0f);
+            UTextBlock* PlayLabel = MakeClubSelectionText(WidgetTree, Label, 21);
+            PlayLabel->SetColorAndOpacity(FSlateColor(FLinearColor(0.018f, 0.13f, 0.085f, 1.0f)));
+            PlayContentSize->SetContent(PlayLabel);
+            Button->AddChild(PlayContentSize);
+        }
+        else
+        {
+            Button->AddChild(MakeClubSelectionText(WidgetTree, Label, 18));
+        }
         return Button;
     }
 }
@@ -739,7 +754,7 @@ void USoccerClubSelectionWidget::BuildWidgetTree()
     HistorySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
     HistorySlot->SetPadding(FMargin(6.0f, 0.0f, 6.0f, 0.0f));
 
-    ConfirmButton = MakeClubSelectionButton(WidgetTree, TEXT("JUGAR PARTIDO"));
+    ConfirmButton = MakeClubSelectionButton(WidgetTree, TEXT("JUGAR PARTIDO"), true);
     ConfirmButton->OnClicked.AddDynamic(this, &USoccerClubSelectionWidget::HandleConfirmClicked);
     UHorizontalBoxSlot* PlaySlot = Footer->AddChildToHorizontalBox(ConfirmButton);
     PlaySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));

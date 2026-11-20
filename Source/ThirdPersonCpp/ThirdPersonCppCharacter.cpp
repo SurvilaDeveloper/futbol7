@@ -207,6 +207,14 @@ void AThirdPersonCppCharacter::SetupPlayerInputComponent(class UInputComponent* 
 		&AThirdPersonCppCharacter::ToggleSubstitutionMenu
 	);
 	SubstitutionMenuKeyboardBinding.bExecuteWhenPaused = true;
+    // 5M: Escape/P and left-stick press open pause without stealing the
+    // existing Start-button formation menu or Tab quick tactics.
+    for (const FKey& PauseKey5M : {EKeys::Escape, EKeys::P, EKeys::Gamepad_LeftThumbstick})
+    {
+        FInputKeyBinding& PauseBinding5M = PlayerInputComponent->BindKey(
+            PauseKey5M, IE_Pressed, this, &AThirdPersonCppCharacter::ToggleMatchPause5M);
+        PauseBinding5M.bExecuteWhenPaused = true;
+    }
 	PlayerInputComponent->BindAction("KickToTargetFollow", IE_Pressed, this, &AThirdPersonCppCharacter::HandleLeftClickTarget);
 	PlayerInputComponent->BindAction("KickToTargetRelease", IE_Pressed, this, &AThirdPersonCppCharacter::StartChargedKickRelease);
 	PlayerInputComponent->BindAction("KickToTargetRelease", IE_Released, this, &AThirdPersonCppCharacter::FinishChargedKickRelease);
@@ -226,6 +234,16 @@ void AThirdPersonCppCharacter::SetupPlayerInputComponent(class UInputComponent* 
 	);
 }
 
+
+void AThirdPersonCppCharacter::ToggleMatchPause5M()
+{
+    APlayerController* PC5M = Cast<APlayerController>(GetController());
+    if (PC5M)
+    {
+        if (AGameHUD* HUD5M = Cast<AGameHUD>(PC5M->GetHUD()))
+            HUD5M->TogglePauseMenu5M();
+    }
+}
 
 void AThirdPersonCppCharacter::ToggleFormationMenu()
 {

@@ -217,7 +217,7 @@ void FSoccerMatchHistory5L::LoadRecent(TArray<FSoccerArchivedMatch5L>& OutMatche
     Names.Sort([](const FString& A, const FString& B) { return A > B; });
     for (const FString& Name : Names)
     {
-        if (OutMatches.Num() >= FMath::Clamp(MaxMatches, 1, 500)) break;
+        if (OutMatches.Num() >= FMath::Clamp(MaxMatches, 1, 10000)) break;
         FString Contents;
         if (!FFileHelper::LoadFileToString(Contents, *FPaths::Combine(Directory, Name))) continue;
         FObject Root;

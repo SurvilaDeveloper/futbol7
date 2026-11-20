@@ -4,6 +4,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Components/ComboBoxString.h"
 #include "SoccerMatchHistory5L.h"
+#include "SoccerHistoricalStats5M.h"
 #include "SoccerMatchHistoryWidget.generated.h"
 
 class UButton;
@@ -44,6 +45,7 @@ private:
     UFUNCTION() void HandleReport();
     UFUNCTION() void HandlePlayers();
     UFUNCTION() void HandleEvents();
+    UFUNCTION() void HandleTotals5M();
     UFUNCTION() void HandleSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 
     UPROPERTY(Transient) UComboBoxString* MatchSelector = nullptr;
@@ -53,6 +55,10 @@ private:
     UPROPERTY(Transient) UButton* ReportButton = nullptr;
     UPROPERTY(Transient) UButton* PlayersButton = nullptr;
     UPROPERTY(Transient) UButton* EventsButton = nullptr;
+    UPROPERTY(Transient) UButton* TotalsButton5M = nullptr;
+    TArray<FSoccerClubTotals5M> TotalClubs5M;
+    TArray<FSoccerPlayerTotals5M> TotalPlayers5M;
+    int32 TotalMatches5M = 0;
     TArray<FSoccerArchivedMatch5L> Matches;
     int32 SelectedIndex = 0;
     int32 ActivePage = 0;
