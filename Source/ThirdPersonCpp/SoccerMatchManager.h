@@ -212,6 +212,11 @@ public:
         return PlayerStatistics5G;
     }
 
+    // 5J: deterministic, reusable estimate based only on confirmed match events.
+    // Returns a score between 1.0 and 10.0, rounded to one decimal. A missing
+    // player record is NOT an automatic 6.0: the UI lists only tracked players.
+    static float CalculatePlayerRating5J(const FSoccerPlayerMatchStatistics5G& Player);
+
     // Stage 5I: events are in time-of-occurrence order, with a stable sequence.
     const TArray<FSoccerMatchTimelineEvent5I>& GetMatchTimeline5I() const
     {

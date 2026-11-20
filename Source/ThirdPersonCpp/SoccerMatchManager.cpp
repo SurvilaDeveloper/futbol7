@@ -253,6 +253,51 @@ FSoccerPlayerMatchStatistics5G* ASoccerMatchManager::FindOrAddPlayerStatistics5G
     return &PlayerStatistics5G[NewRecordIndex5G];
 }
 
+float ASoccerMatchManager::CalculatePlayerRating5J(
+    const FSoccerPlayerMatchStatistics5G& Player)
+{
+    // 5J: event-based rating, not a physical ability score. The square root
+    // reduces the advantage of farming one action repeatedly in a long match.
+    // Goals, saves and defensive actions can each produce a high evaluation.
+    const auto RootCount5J = [](int32 Count) -> float
+    {
+        return FMath::Sqrt(static_cast<float>(FMath::Max(0, Count)));
+    };
+    const int32 UnsuccessfulPasses5J = FMath::Max(0,
+        Player.PassesAttempted - Player.PassesCompleted);
+    const int32 OffTargetShots5J = FMath::Max(0,
+        Player.Shots - Player.ShotsOnTarget);
+
+    float Score5J = 6.0f;
+    Score5J += 1.55f * RootCount5J(Player.Goals);
+    Score5J += 1.05f * RootCount5J(Player.Assists);
+    Score5J += 0.24f * RootCount5J(Player.ShotsOnTarget);
+    Score5J += 0.88f * RootCount5J(Player.Saves);
+    Score5J += 0.08f * RootCount5J(Player.PassesCompleted);
+    Score5J += 0.24f * RootCount5J(Player.Recoveries);
+    Score5J += 0.35f * RootCount5J(Player.Interceptions);
+    Score5J += 0.44f * RootCount5J(Player.CleanTackles);
+    Score5J -= 0.13f * RootCount5J(OffTargetShots5J);
+    Score5J -= 0.07f * RootCount5J(UnsuccessfulPasses5J);
+    Score5J -= 1.80f * FMath::Max(0, Player.OwnGoals);
+
+    // With at least five registered attempts, reward efficient distribution
+    // and penalize repeated errors. Tiny samples are too noisy to rate.
+    if (Player.PassesAttempted >= 5)
+    {
+        const float PassAccuracy5J = FMath::Clamp(
+            static_cast<float>(Player.PassesCompleted) /
+                static_cast<float>(Player.PassesAttempted), 0.0f, 1.0f);
+        Score5J += FMath::Clamp(
+            (PassAccuracy5J - 0.65f) * 0.75f, -0.40f, 0.26f);
+    }
+
+    // Quantize to tenths so list sorting, highlights and the displayed note
+    // all use the exact same value (rather than slightly different floats).
+    return static_cast<float>(FMath::RoundToInt(
+        FMath::Clamp(Score5J, 1.0f, 10.0f) * 10.0f)) / 10.0f;
+}
+
 void ASoccerMatchManager::TrackControlledPossession5H(
     ASoccerCharacterBase* NewController)
 {

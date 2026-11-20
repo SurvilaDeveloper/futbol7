@@ -35,6 +35,8 @@ namespace SoccerPeriodSummary5F
 	// and horizontal padding. Never position the headings with spaces in text.
 	constexpr float PlayerNameWidth5G = 3.8f;
 	constexpr float PlayerStatWidth5G = 0.8f;
+    // Shared by the player rows and BOTH attack/defense headings.
+    constexpr float PlayerRatingWidth5J = 1.02f;
 	constexpr float PlayerRowHorizontalPadding5G = 10.0f;
 
 	UTextBlock* NewText(UWidgetTree* Tree, const FString& Value, int32 FontSize,
@@ -396,15 +398,18 @@ void USoccerPeriodSummaryWidget::ShowPlayerStatistics5G()
 }
 
 void USoccerPeriodSummaryWidget::AddPlayerStatisticsRow5G(
-    const FSoccerPlayerMatchStatistics5G& PlayerStats, int32 RowIndex)
+    const FSoccerPlayerMatchStatistics5G& PlayerStats, int32 RowIndex,
+    bool bBestPlayer5J)
 {
     if (!WidgetTree || !StatisticsScroll) return;
     using namespace SoccerPeriodSummary5F;
 
     UBorder* RowBackground = WidgetTree->ConstructWidget<UBorder>();
-    RowBackground->SetBrushColor(RowIndex % 2 == 0
-        ? FLinearColor(0.065f, 0.115f, 0.145f, 1.0f)
-        : FLinearColor(0.042f, 0.085f, 0.110f, 1.0f));
+    RowBackground->SetBrushColor(bBestPlayer5J
+        ? FLinearColor(0.06f, 0.20f, 0.17f, 1.0f)
+        : RowIndex % 2 == 0
+            ? FLinearColor(0.065f, 0.115f, 0.145f, 1.0f)
+            : FLinearColor(0.042f, 0.085f, 0.110f, 1.0f));
     RowBackground->SetPadding(FMargin(PlayerRowHorizontalPadding5G, 7.0f));
     UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
     RowBackground->SetContent(Row);
@@ -434,6 +439,12 @@ void USoccerPeriodSummaryWidget::AddPlayerStatisticsRow5G(
         AddColumn(Row, NewText(WidgetTree, FString::FromInt(Value), 16,
             Value > 0 ? Green : Muted), PlayerStatWidth5G);
     }
+    const float Rating5J = ASoccerMatchManager::CalculatePlayerRating5J(PlayerStats);
+    const FLinearColor RatingColor5J = bBestPlayer5J || Rating5J >= 7.5f
+        ? Green : Rating5J < 5.5f ? Muted : White;
+    AddColumn(Row, NewText(WidgetTree,
+        FString::Printf(TEXT("%.1f"), Rating5J), 17, RatingColor5J),
+        PlayerRatingWidth5J);
     StatisticsScroll->AddChild(RowBackground);
 }
 
@@ -449,6 +460,9 @@ void USoccerPeriodSummaryWidget::RefreshPlayerStatistics5G()
     {
         if (A.Team != B.Team)
             return A.Team == ESoccerTeam::PlayerTeam;
+        const float RatingA5J = ASoccerMatchManager::CalculatePlayerRating5J(A);
+        const float RatingB5J = ASoccerMatchManager::CalculatePlayerRating5J(B);
+        if (RatingA5J != RatingB5J) return RatingA5J > RatingB5J;
         if (A.Goals != B.Goals) return A.Goals > B.Goals;
         if (A.Assists != B.Assists) return A.Assists > B.Assists;
         if (A.ShotsOnTarget != B.ShotsOnTarget)
@@ -469,32 +483,46 @@ void USoccerPeriodSummaryWidget::RefreshPlayerStatistics5G()
     }
 
     const FSoccerPlayerMatchStatistics5G* TopScorer = nullptr;
-    const FSoccerPlayerMatchStatistics5G* Standout = nullptr;
-    float BestScore = 0.0f;
+    const FSoccerPlayerMatchStatistics5G* BestPlayer5J = nullptr;
+    float BestRating5J = -1.0f;
+    int32 BestImpact5J = MIN_int32;
     for (const FSoccerPlayerMatchStatistics5G& Player : Players)
     {
         if (Player.Goals > 0 && (!TopScorer || Player.Goals > TopScorer->Goals))
             TopScorer = &Player;
-        // A basic, explicit performance indicator using registered events.
-        // Balanced event score (not an official match rating): attackers,
-        // defenders, midfielders and keepers can all contribute.
-        const float Score = Player.Goals * 5.0f + Player.Assists * 3.0f +
-            Player.ShotsOnTarget * 1.5f + Player.Saves * 2.0f +
-            Player.Shots * 0.25f - Player.OwnGoals * 4.0f +
-            Player.PassesCompleted * 0.18f + Player.Recoveries * 0.75f +
-            Player.Interceptions * 0.95f + Player.CleanTackles * 1.15f -
-            (Player.PassesAttempted - Player.PassesCompleted) * 0.07f;
-        if (Score > BestScore)
+        const float Rating5J = ASoccerMatchManager::CalculatePlayerRating5J(Player);
+        // Break equal tenths by confirmed impact, independently of team.
+        // The final identity comparison keeps the result deterministic when
+        // two players have exactly the same rating AND contribution.
+        const int32 Impact5J = Player.Goals * 8 + Player.Assists * 5 +
+            Player.Saves * 4 + Player.Interceptions * 3 +
+            Player.CleanTackles * 3 + Player.Recoveries * 2 +
+            Player.ShotsOnTarget + Player.PassesCompleted / 3 -
+            Player.OwnGoals * 7;
+        if (Rating5J > BestRating5J ||
+            (Rating5J == BestRating5J && Impact5J > BestImpact5J) ||
+            (Rating5J == BestRating5J && Impact5J == BestImpact5J &&
+                (!BestPlayer5J || Player.PlayerKey < BestPlayer5J->PlayerKey)))
         {
-            BestScore = Score;
-            Standout = &Player;
+            BestRating5J = Rating5J;
+            BestImpact5J = Impact5J;
+            BestPlayer5J = &Player;
         }
     }
+    const bool bFullTime5J =
+        MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime;
+    const TCHAR* BestLabel5J = bFullTime5J
+        ? TEXT("JUGADOR DEL PARTIDO") : TEXT("DESTACADO DEL PRIMER TIEMPO");
     UTextBlock* Highlights = NewText(WidgetTree,
-        FString::Printf(TEXT("GOLEADOR: %s    |    DESTACADO POR ESTADÍSTICAS: %s"),
+        FString::Printf(TEXT("GOLEADOR: %s    |    %s: %s (%.1f)"),
             TopScorer ? *TopScorer->DisplayName : TEXT("Sin datos"),
-            Standout ? *Standout->DisplayName : TEXT("Sin datos")), 15, Cyan);
+            BestLabel5J,
+            BestPlayer5J ? *BestPlayer5J->DisplayName : TEXT("Sin datos"),
+            BestPlayer5J ? BestRating5J : 0.0f), 15, Cyan);
     StatisticsScroll->AddChild(Highlights);
+    StatisticsScroll->AddChild(NewText(WidgetTree,
+        TEXT("NOTA: estimación de 1,0 a 10,0 según acciones registradas; no incluye minutos ni acciones sin seguimiento."),
+        12, Muted));
 
     UTextBlock* Legend = NewText(WidgetTree,
         bShowingDefense5H
@@ -532,12 +560,17 @@ void USoccerPeriodSummaryWidget::RefreshPlayerStatistics5G()
             AddColumn(ClubHeaderRow, NewText(WidgetTree, Caption, 16, Green),
                 PlayerStatWidth5G);
         }
+        // Exact same width in heading and row: keeps NOTA aligned at 720p.
+        AddColumn(ClubHeaderRow, NewText(WidgetTree, TEXT("NOTA"), 15, Cyan),
+            PlayerRatingWidth5J);
         StatisticsScroll->AddChild(ClubHeaderBackground);
         int32 RowIndex = 0;
         for (const FSoccerPlayerMatchStatistics5G& Player : Players)
         {
             if (Player.Team != Team) continue;
-            AddPlayerStatisticsRow5G(Player, RowIndex++);
+            const bool bBestPlayer5J = BestPlayer5J &&
+                Player.PlayerKey == BestPlayer5J->PlayerKey;
+            AddPlayerStatisticsRow5G(Player, RowIndex++, bBestPlayer5J);
         }
         if (RowIndex == 0)
         {

@@ -34,7 +34,8 @@ private:
 	void AddStatisticRow5F(const FString& Label, const FString& LocalValue,
 		const FString& RivalValue, int32 RowIndex);
     void RefreshPlayerStatistics5G();
-    void AddPlayerStatisticsRow5G(const FSoccerPlayerMatchStatistics5G& Row, int32 RowIndex);
+    void AddPlayerStatisticsRow5G(const FSoccerPlayerMatchStatistics5G& Row,
+        int32 RowIndex, bool bBestPlayer5J);
     void ChangeSummaryTab5G(bool bPlayers);
     void RefreshTimeline5I();
     UFUNCTION()
