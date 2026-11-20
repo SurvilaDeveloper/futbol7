@@ -113,4 +113,15 @@ private:
 	int32 ObservedPlayerTeamSubstitutionCount = 0;
 	int32 ObservedOpponentTeamSubstitutionCount = 0;
 	bool bSubstitutionHistoryObserved = false;
+
+    // Stage 5C: short contextual notices (real time; independent of game pause).
+    // HUD state only. Never changes the match, possession or player data.
+    bool bHudIdentityInitialized = false;
+    FName ObservedHudPlayerId = NAME_None;
+    bool bLowEnergyNoticeArmed = true;
+    FString PlayerContextNoticeText;
+    FLinearColor PlayerContextNoticeAccent = FLinearColor::White;
+    double PlayerContextNoticeStartedAt = -1.0;
+    double PlayerContextNoticeExpiresAt = -1.0;
+
 };

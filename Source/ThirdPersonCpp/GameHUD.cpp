@@ -81,6 +81,50 @@ namespace SoccerHudPresentation5B
 }
 
 
+namespace SoccerHudContext5C
+{
+    static FString GetPositionName(ESoccerPlayerRole PlayerRole)
+    {
+        switch (PlayerRole)
+        {
+        case ESoccerPlayerRole::Goalkeeper: return TEXT("ARQUERO");
+        case ESoccerPlayerRole::Defender: return TEXT("DEFENSOR");
+        case ESoccerPlayerRole::Midfielder: return TEXT("MEDIOCAMPISTA");
+        case ESoccerPlayerRole::Forward: return TEXT("DELANTERO");
+        default: return TEXT("JUGADOR");
+        }
+    }
+
+    static FString GetCurrentAction(const AThirdPersonCppCharacter* Human,
+        const ASoccerMatchManager* Match, bool bCharging)
+    {
+        if (IsValid(Match) &&
+            Match->GetMatchPlayState() != ESoccerMatchPlayState::Playing)
+        {
+            return TEXT("JUEGO DETENIDO");
+        }
+        if (bCharging) return TEXT("CARGANDO REMATE");
+        if (Human->IsHoldingThrowInBall()) return TEXT("PREPARANDO LATERAL");
+        if (Human->IsKicking()) return TEXT("PATEANDO");
+        if (Human->HasHumanLogicalBallControl() || Human->IsPossessingBall())
+        {
+            return TEXT("CON LA PELOTA");
+        }
+        if (Human->IsChasingBall()) return TEXT("BUSCANDO PELOTA");
+        if (IsValid(Match))
+        {
+            switch (Match->GetPossessionTeam())
+            {
+            case ESoccerPossessionTeam::PlayerTeam: return TEXT("EQUIPO EN ATAQUE");
+            case ESoccerPossessionTeam::OpponentTeam: return TEXT("EQUIPO EN DEFENSA");
+            default: break;
+            }
+        }
+        return TEXT("PELOTA DIVIDIDA");
+    }
+}
+
+
 void AGameHUD::BeginPlay()
 {
 	Super::BeginPlay();
@@ -438,62 +482,216 @@ void AGameHUD::DrawPlayerStatusPanel()
     {
         return;
     }
-    const AThirdPersonCppCharacter* PlayerCharacter = Cast<AThirdPersonCppCharacter>(
+    const AThirdPersonCppCharacter* Human = Cast<AThirdPersonCppCharacter>(
         UGameplayStatics::GetPlayerCharacter(GetWorld(), 0));
     UFont* StatusFont = GEngine != nullptr ? GEngine->GetSmallFont() : nullptr;
-    if (!IsValid(PlayerCharacter) || StatusFont == nullptr)
+    if (!IsValid(Human) || StatusFont == nullptr)
     {
         return;
     }
 
-    const float UIScale = SoccerHudPresentation5B::GetScale(Canvas);
-    const float CardWidth = 272.0f * UIScale;
-    const float CardX = 19.0f * UIScale;
-    const float BarLeft = CardX + 13.0f * UIScale;
-    const float BarWidth = CardWidth - 26.0f * UIScale;
-    const float BarHeight = 11.0f * UIScale;
-    const float Energy = FMath::Clamp(PlayerCharacter->GetPlayerEnergyPercent(), 0.0f, 1.0f);
+    const USoccerPlayerProfile* PlayerProfile = Human->GetPlayerProfile();
+    const FName CurrentId = IsValid(PlayerProfile)
+        ? PlayerProfile->Identity.PlayerId : NAME_None;
+    const FString FullPlayerName = IsValid(PlayerProfile) &&
+        !PlayerProfile->Identity.DisplayName.IsEmpty()
+        ? PlayerProfile->Identity.DisplayName.ToString()
+        : TEXT("JUGADOR CONTROLADO");
+    const int32 ShirtNumber = IsValid(PlayerProfile)
+        ? PlayerProfile->Identity.ShirtNumber : 0;
+
+    const float Energy = FMath::Clamp(Human->GetPlayerEnergyPercent(), 0.0f, 1.0f);
     float KickCharge = 0.0f;
-    const bool bCharging = PlayerCharacter->GetKickChargePercent(KickCharge);
-    const float CardHeight = (bCharging ? 111.0f : 74.0f) * UIScale;
-    const float CardY = FMath::Max(8.0f, Canvas->SizeY - CardHeight - 22.0f * UIScale);
+    const bool bCharging = Human->GetKickChargePercent(KickCharge);
+    const double Now = FPlatformTime::Seconds();
+    // Notices are edge-triggered: they cannot reappear on every HUD frame.
+    if (!CurrentId.IsNone())
+    {
+        if (!bHudIdentityInitialized)
+        {
+            ObservedHudPlayerId = CurrentId;
+            bHudIdentityInitialized = true;
+        }
+        else if (CurrentId != ObservedHudPlayerId)
+        {
+            ObservedHudPlayerId = CurrentId;
+            bLowEnergyNoticeArmed = true;
+            PlayerContextNoticeText = TEXT("CAMBIO DE JUGADOR: ") + FullPlayerName;
+            PlayerContextNoticeAccent = FLinearColor(0.28f, 0.86f, 0.67f, 1.0f);
+            PlayerContextNoticeStartedAt = Now;
+            PlayerContextNoticeExpiresAt = Now + 3.0;
+        }
+    }
+    if (Energy >= 0.40f)
+    {
+        bLowEnergyNoticeArmed = true;
+    }
+    else if (Energy <= 0.25f && bLowEnergyNoticeArmed)
+    {
+        bLowEnergyNoticeArmed = false;
+        PlayerContextNoticeText = TEXT("ENERGÍA BAJA: CONSIDERÁ UN CAMBIO");
+        PlayerContextNoticeAccent = FLinearColor(1.0f, 0.71f, 0.25f, 1.0f);
+        PlayerContextNoticeStartedAt = Now;
+        PlayerContextNoticeExpiresAt = Now + 3.5;
+    }
 
-    DrawRect(FLinearColor(0.018f, 0.035f, 0.050f, 0.81f),
+    const float UIScale = SoccerHudPresentation5B::GetScale(Canvas);
+    const float CardWidth = FMath::Max(170.0f,
+        FMath::Min(312.0f * UIScale, Canvas->SizeX * 0.43f));
+    const float CardX = 18.0f * UIScale;
+    const float CardHeight = (bCharging ? 203.0f : 159.0f) * UIScale;
+    const float CardY = FMath::Max(9.0f,
+        Canvas->SizeY - CardHeight - 19.0f * UIScale);
+    const float Left = CardX + 12.0f * UIScale;
+    const float Right = CardX + CardWidth - 12.0f * UIScale;
+    const float BarWidth = FMath::Max(40.0f, Right - Left);
+    const float BarHeight = 10.0f * UIScale;
+    const FLinearColor TeamAccent = SoccerHudPresentation5B::GetClubAccent(
+        MatchManager, ESoccerTeam::PlayerTeam);
+
+    DrawRect(FLinearColor(0.018f, 0.035f, 0.050f, 0.85f),
         CardX, CardY, CardWidth, CardHeight);
-    DrawRect(FLinearColor(0.20f, 0.78f, 0.58f, 1.0f),
-        CardX, CardY, 3.0f * UIScale, CardHeight);
+    DrawRect(TeamAccent, CardX, CardY, 3.0f * UIScale, CardHeight);
 
-    const float TextScale = 1.02f * UIScale;
+    // Shirt number and player name are the main hierarchy of the contextual HUD.
+    const float ShirtWidth = 39.0f * UIScale;
+    const float ShirtTop = CardY + 11.0f * UIScale;
+    DrawRect(FLinearColor(TeamAccent.R, TeamAccent.G, TeamAccent.B, 0.27f),
+        Left, ShirtTop, ShirtWidth, 34.0f * UIScale);
+    const FString ShirtText = ShirtNumber > 0
+        ? FString::Printf(TEXT("%d"), ShirtNumber) : TEXT("--");
+    float ShirtTextW = 0.0f;
+    float ShirtTextH = 0.0f;
+    const float ShirtScale = 1.22f * UIScale;
+    GetTextSize(ShirtText, ShirtTextW, ShirtTextH, StatusFont, ShirtScale);
+    DrawText(ShirtText, FLinearColor::White,
+        Left + (ShirtWidth - ShirtTextW) * 0.5f,
+        ShirtTop + (34.0f * UIScale - ShirtTextH) * 0.5f,
+        StatusFont, ShirtScale);
+
+    const float NameX = Left + ShirtWidth + 10.0f * UIScale;
+    const float NameMaxWidth = FMath::Max(50.0f, Right - NameX);
+    FString VisibleName = FullPlayerName;
+    float NameScale = 1.07f * UIScale;
+    float NameWidth = 0.0f;
+    float NameHeight = 0.0f;
+    GetTextSize(VisibleName, NameWidth, NameHeight, StatusFont, NameScale);
+    if (NameWidth > NameMaxWidth && NameWidth > 0.0f)
+    {
+        NameScale = FMath::Max(0.78f * UIScale,
+            NameScale * NameMaxWidth / NameWidth);
+        GetTextSize(VisibleName, NameWidth, NameHeight, StatusFont, NameScale);
+    }
+    for (int32 TextLen = FullPlayerName.Len() - 1;
+        NameWidth > NameMaxWidth && TextLen >= 3; --TextLen)
+    {
+        VisibleName = FullPlayerName.Left(TextLen) + TEXT("...");
+        GetTextSize(VisibleName, NameWidth, NameHeight, StatusFont, NameScale);
+    }
+    DrawText(VisibleName, FLinearColor(0.96f, 0.99f, 1.0f, 1.0f),
+        NameX, CardY + 12.0f * UIScale, StatusFont, NameScale);
+
+    const FString PositionText = SoccerHudContext5C::GetPositionName(
+        Human->GetPlayerRole());
+    DrawText(PositionText, FLinearColor(0.70f, 0.84f, 0.88f, 1.0f),
+        NameX, CardY + 32.0f * UIScale, StatusFont, 0.86f * UIScale);
+
+    // The current action uses its own line; avoid squeezing the role and
+    // action into an unreadable single label on 1280x720 displays.
+    const FString ActionText = SoccerHudContext5C::GetCurrentAction(
+        Human, MatchManager, bCharging);
+    const float ContextY = CardY + 54.0f * UIScale;
+    DrawRect(FLinearColor(0.07f, 0.16f, 0.17f, 0.88f),
+        Left, ContextY, BarWidth, 20.0f * UIScale);
+    DrawRect(TeamAccent, Left, ContextY, 2.0f * UIScale, 20.0f * UIScale);
+    float ActionScale = 0.92f * UIScale;
+    float ActionWidth = 0.0f;
+    float ActionHeight = 0.0f;
+    GetTextSize(ActionText, ActionWidth, ActionHeight, StatusFont, ActionScale);
+    if (ActionWidth > BarWidth - 17.0f * UIScale && ActionWidth > 0.0f)
+    {
+        ActionScale *= (BarWidth - 17.0f * UIScale) / ActionWidth;
+    }
+    DrawText(ActionText, FLinearColor(0.79f, 0.98f, 0.90f, 1.0f),
+        Left + 9.0f * UIScale, ContextY + 3.0f * UIScale,
+        StatusFont, ActionScale);
+
+    const float EnergyLabelY = CardY + 82.0f * UIScale;
     DrawText(TEXT("ENERGÍA"), FLinearColor::White,
-        BarLeft, CardY + 8.0f * UIScale, StatusFont, TextScale);
-    DrawText(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Energy * 100.0f)),
-        FLinearColor(0.80f, 0.95f, 0.85f, 1.0f),
-        CardX + CardWidth - 49.0f * UIScale,
-        CardY + 8.0f * UIScale, StatusFont, TextScale);
-    const float EnergyY = CardY + 32.0f * UIScale;
+        Left, EnergyLabelY, StatusFont, 0.99f * UIScale);
+    const FString EnergyText = FString::Printf(TEXT("%d%%"),
+        FMath::RoundToInt(Energy * 100.0f));
+    float EnergyTextWidth = 0.0f;
+    float EnergyTextHeight = 0.0f;
+    GetTextSize(EnergyText, EnergyTextWidth, EnergyTextHeight,
+        StatusFont, 0.99f * UIScale);
+    DrawText(EnergyText, FLinearColor(0.87f, 0.96f, 0.91f, 1.0f),
+        Right - EnergyTextWidth, EnergyLabelY, StatusFont, 0.99f * UIScale);
+
+    const float EnergyBarY = CardY + 107.0f * UIScale;
     DrawRect(FLinearColor(0.08f, 0.13f, 0.16f, 1.0f),
-        BarLeft, EnergyY, BarWidth, BarHeight);
+        Left, EnergyBarY, BarWidth, BarHeight);
     const FLinearColor EnergyColor = Energy >= 0.50f
         ? FLinearColor(0.22f, 0.86f, 0.47f, 1.0f)
         : (Energy >= 0.25f ? FLinearColor(1.0f, 0.73f, 0.22f, 1.0f)
             : FLinearColor(1.0f, 0.32f, 0.26f, 1.0f));
-    DrawRect(EnergyColor, BarLeft, EnergyY, BarWidth * Energy, BarHeight);
+    DrawRect(EnergyColor, Left, EnergyBarY,
+        BarWidth * Energy, BarHeight);
 
-    DrawText(FString::Printf(TEXT("PUNTOS  %d"), PlayerCharacter->GetScore()),
-        FLinearColor(0.78f, 0.82f, 0.85f, 1.0f),
-        BarLeft, CardY + 49.0f * UIScale, StatusFont, 0.88f * UIScale);
+    DrawText(FString::Printf(TEXT("PUNTOS  %d"), Human->GetScore()),
+        FLinearColor(0.79f, 0.84f, 0.88f, 1.0f),
+        Left, CardY + 133.0f * UIScale, StatusFont, 0.88f * UIScale);
 
     if (bCharging)
     {
         DrawText(TEXT("FUERZA DE DISPARO"), FLinearColor::White,
-            BarLeft, CardY + 70.0f * UIScale, StatusFont, 0.94f * UIScale);
-        const float KickY = CardY + 91.0f * UIScale;
+            Left, CardY + 157.0f * UIScale, StatusFont, 0.93f * UIScale);
+        const float KickY = CardY + 181.0f * UIScale;
         DrawRect(FLinearColor(0.08f, 0.13f, 0.16f, 1.0f),
-            BarLeft, KickY, BarWidth, BarHeight);
+            Left, KickY, BarWidth, BarHeight);
         DrawRect(FLinearColor(1.0f, 0.69f, 0.19f, 1.0f),
-            BarLeft, KickY, BarWidth * FMath::Clamp(KickCharge, 0.0f, 1.0f), BarHeight);
+            Left, KickY, BarWidth * FMath::Clamp(KickCharge, 0.0f, 1.0f), BarHeight);
+    }
+
+    // Only one optional toast is visible, and it sits above this card.
+    if (!PlayerContextNoticeText.IsEmpty() && Now < PlayerContextNoticeExpiresAt)
+    {
+        const float NoticeMaxWidth = FMath::Min(
+            Canvas->SizeX - 2.0f * Left, CardWidth + 65.0f * UIScale);
+        float NoticeScale = 0.96f * UIScale;
+        float NoticeWidth = 0.0f;
+        float NoticeHeight = 0.0f;
+        GetTextSize(PlayerContextNoticeText, NoticeWidth, NoticeHeight,
+            StatusFont, NoticeScale);
+        if (NoticeWidth > NoticeMaxWidth - 24.0f * UIScale && NoticeWidth > 0.0f)
+        {
+            NoticeScale *= (NoticeMaxWidth - 24.0f * UIScale) / NoticeWidth;
+            GetTextSize(PlayerContextNoticeText, NoticeWidth, NoticeHeight,
+                StatusFont, NoticeScale);
+        }
+        const float NoticeBoxHeight = NoticeHeight + 17.0f * UIScale;
+        const float NoticeY = CardY - NoticeBoxHeight - 7.0f * UIScale;
+        if (NoticeY >= 8.0f * UIScale)
+        {
+            const float FadeIn = FMath::Clamp(static_cast<float>(
+                (Now - PlayerContextNoticeStartedAt) / 0.15), 0.0f, 1.0f);
+            const float FadeOut = FMath::Clamp(static_cast<float>(
+                (PlayerContextNoticeExpiresAt - Now) / 0.42), 0.0f, 1.0f);
+            const float Fade = FMath::Min(FadeIn, FadeOut);
+            const float NoticeBoxWidth = NoticeWidth + 24.0f * UIScale;
+            DrawRect(FLinearColor(0.016f, 0.043f, 0.054f, 0.86f * Fade),
+                CardX, NoticeY, NoticeBoxWidth, NoticeBoxHeight);
+            DrawRect(FLinearColor(PlayerContextNoticeAccent.R,
+                PlayerContextNoticeAccent.G, PlayerContextNoticeAccent.B, Fade),
+                CardX, NoticeY, 3.0f * UIScale, NoticeBoxHeight);
+            DrawText(PlayerContextNoticeText,
+                FLinearColor(1.0f, 1.0f, 1.0f, Fade),
+                CardX + 12.0f * UIScale, NoticeY + 8.0f * UIScale,
+                StatusFont, NoticeScale);
+        }
     }
 }
+
 
 void AGameHUD::DrawRightStatusCard(
     const FString& Message, const FLinearColor& TextColor, float FontScale)
@@ -543,42 +741,15 @@ void AGameHUD::DrawRightStatusCard(
 
 void AGameHUD::DrawQuickTacticsFeedback()
 {
-    if (Canvas == nullptr || QuickTacticsFeedbackText.IsEmpty() ||
+    if (QuickTacticsFeedbackText.IsEmpty() ||
         FPlatformTime::Seconds() > QuickTacticsFeedbackExpiryRealTime)
     {
         return;
     }
-    UFont* StatusFont = GEngine != nullptr ? GEngine->GetSmallFont() : nullptr;
-    if (StatusFont == nullptr)
-    {
-        return;
-    }
-
-    const float UIScale = SoccerHudPresentation5B::GetScale(Canvas);
-    const float PaddingX = 13.0f * UIScale;
-    const float PaddingY = 8.0f * UIScale;
-    float TextScale = 1.12f * UIScale;
-    float TextWidth = 0.0f;
-    float TextHeight = 0.0f;
-    GetTextSize(QuickTacticsFeedbackText, TextWidth, TextHeight, StatusFont, TextScale);
-    const float MaxWidth = FMath::Max(115.0f, Canvas->SizeX * 0.36f);
-    if (TextWidth + 2.0f * PaddingX > MaxWidth)
-    {
-        TextScale *= (MaxWidth - 2.0f * PaddingX) / TextWidth;
-        GetTextSize(QuickTacticsFeedbackText, TextWidth, TextHeight, StatusFont, TextScale);
-    }
-    const float BoxWidth = TextWidth + 2.0f * PaddingX;
-    const float BoxHeight = TextHeight + 2.0f * PaddingY;
-    const float BoxX = FMath::Max(10.0f, Canvas->SizeX - BoxWidth - 20.0f * UIScale);
-    const float BoxY = FMath::Max(10.0f, Canvas->SizeY - BoxHeight - 25.0f * UIScale);
-    DrawRect(FLinearColor(0.018f, 0.070f, 0.058f, 0.88f),
-        BoxX, BoxY, BoxWidth, BoxHeight);
-    DrawRect(FLinearColor(0.27f, 0.90f, 0.59f, 1.0f),
-        BoxX, BoxY, 3.0f * UIScale, BoxHeight);
-    DrawText(QuickTacticsFeedbackText,
-        FLinearColor(0.80f, 1.0f, 0.88f, 1.0f),
-        BoxX + PaddingX, BoxY + PaddingY, StatusFont, TextScale);
+    DrawRightStatusCard(QuickTacticsFeedbackText,
+        FLinearColor(0.43f, 0.97f, 0.68f, 1.0f), 1.07f);
 }
+
 
 void AGameHUD::DrawInstantReplayOverlay()
 {
@@ -992,6 +1163,10 @@ void AGameHUD::DrawHumanPassRequestIndicator()
         {
             StatusText += FString::Printf(TEXT("  %.1f s"), RemainingTime);
         }
+    }
+    if (RequestType == ESoccerHumanPassRequestType::None)
+    {
+        return;
     }
     DrawRightStatusCard(StatusText, StatusColor, 1.1f);
 
