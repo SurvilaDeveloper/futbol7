@@ -888,10 +888,13 @@ void USoccerFormationMenuWidget::BuildWidgetTree()
 
 	USizeBox* CloseSizeBox = WidgetTree->ConstructWidget<USizeBox>();
 	StyleCloseSizeBox = CloseSizeBox;
-	CloseSizeBox->SetWidthOverride(230.0f);
-	CloseSizeBox->SetHeightOverride(46.0f);
-	CloseButton = MakeButton(WidgetTree, TEXT("VOLVER AL PARTIDO"), 16);
-	CloseButton->SetBackgroundColor(FLinearColor(0.11f, 0.16f, 0.21f, 0.92f));
+	CloseSizeBox->SetWidthOverride(250.0f);
+	CloseSizeBox->SetHeightOverride(54.0f);
+	CloseButton = MakeButton(
+		WidgetTree, TEXT("VOLVER AL PARTIDO"), 18,
+		FLinearColor(0.04f, 0.15f, 0.08f, 1.0f)
+	);
+	CloseButton->SetBackgroundColor(FLinearColor(0.32f, 0.82f, 0.52f, 1.0f));
 	CloseButton->OnClicked.AddDynamic(this, &USoccerFormationMenuWidget::HandleCloseClicked);
 	CloseSizeBox->AddChild(CloseButton);
 	AddHorizontalChild(HeaderRow, CloseSizeBox, FMargin(0.0f, 0.0f, 125.0f, 0.0f), ESlateSizeRule::Automatic, VAlign_Center);
@@ -4522,11 +4525,15 @@ void USoccerFormationMenuWidget::ApplyLiveStyle()
 	if (StyleDimBorder) StyleDimBorder->SetBrushColor(StyleEditor->GetColor(TEXT("DimColor"), FLinearColor(0.f, 0.f, 0.f, .22f)));
 	if (StyleCloseSizeBox)
 	{
-        const float DesiredCloseWidth = StyleEditor->GetNumber(TEXT("CloseWidth"), 230.f);
+        // Keep "Volver al partido" visually consistent with the larger, light
+        // green play/continue buttons, while retaining wider user preferences.
+        const float DesiredCloseWidth = FMath::Max(
+            250.f, StyleEditor->GetNumber(TEXT("CloseWidth"), 230.f));
         StyleCloseSizeBox->SetWidthOverride(LogicalSize.X > 1.f
-            ? FMath::Min(DesiredCloseWidth, FMath::Max(125.f, LogicalSize.X * .24f))
+            ? FMath::Min(DesiredCloseWidth, FMath::Max(160.f, LogicalSize.X * .24f))
             : DesiredCloseWidth);
-		StyleCloseSizeBox->SetHeightOverride(StyleEditor->GetNumber(TEXT("CloseHeight"), 46.f));
+		StyleCloseSizeBox->SetHeightOverride(FMath::Max(
+            54.f, StyleEditor->GetNumber(TEXT("CloseHeight"), 46.f)));
 	}
 	if (StyleTabRow)
 	{

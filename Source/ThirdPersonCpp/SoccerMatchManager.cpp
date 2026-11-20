@@ -4656,9 +4656,11 @@ bool ASoccerMatchManager::TryStartVisualSubstitution(
 	const float CharacterWorldZ = OutgoingCharacter->GetActorLocation().Z;
 	const float TeamLongitudinalSign =
 		Request.Team == ESoccerTeam::PlayerTeam ? -1.0f : 1.0f;
-	const FVector IncomingWaitingLocation = BuildSubstitutionFieldLocation(
+	const float IncomingLongitudinalOffsetCm =
 		TeamLongitudinalSign *
-			FMath::Max(0.0f, SubstitutionIncomingWaitingLongitudinalOffsetCm),
+		FMath::Max(0.0f, SubstitutionIncomingWaitingLongitudinalOffsetCm);
+	const FVector IncomingWaitingLocation = BuildSubstitutionFieldLocation(
+		IncomingLongitudinalOffsetCm,
 		FMath::Max(50.0f, SubstitutionOutsideTouchlineDistanceCm),
 		CharacterWorldZ
 	);
@@ -4713,9 +4715,17 @@ bool ASoccerMatchManager::TryStartVisualSubstitution(
 	VisualSubstitutionOutgoingCharacter = OutgoingCharacter;
 	VisualSubstitutionIncomingProxy = IncomingProxy;
 	VisualSubstitutionOutgoingTarget = OutgoingTargetLocation;
-	VisualSubstitutionIncomingTarget =
-		GetFormationSlotWorldLocation(Request.Team, *FormationSlot);
-	VisualSubstitutionIncomingTarget.Z = CharacterWorldZ;
+	// Finish the presentation just inside the pitch, not at the slot's
+	// static pre-match location. Once the actor is registered as the incoming
+	// player, the normal AI can move directly from here to its current tactical
+	// destination (which changes with the ball, team phase and coach plan).
+	// Negative outside-touchline distance means INSIDE the touchline.
+	constexpr float IncomingEntryInsideDistanceCm = 100.0f;
+	VisualSubstitutionIncomingTarget = BuildSubstitutionFieldLocation(
+		IncomingLongitudinalOffsetCm,
+		-IncomingEntryInsideDistanceCm,
+		CharacterWorldZ
+	);
 	VisualSubstitutionElapsedSeconds = 0.0f;
 	VisualSubstitutionPhase = ESoccerVisualSubstitutionPhase::OutgoingLeaving;
 

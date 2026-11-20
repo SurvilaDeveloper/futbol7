@@ -298,9 +298,21 @@ void USoccerSubstitutionMenuWidget::BuildWidgetTree()
 	UHorizontalBox* Header = WidgetTree->ConstructWidget<UHorizontalBox>();
 	AddVertical(Main, Header, FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 	AddHorizontal(Header, MakeText(WidgetTree, TEXT("CAMBIOS"), 30), FMargin(0.0f, 0.0f, 20.0f, 0.0f), ESlateSizeRule::Fill);
-	CloseMenuButton = MakeButton(WidgetTree, TEXT("VOLVER AL PARTIDO"), 16, FLinearColor(0.11f, 0.16f, 0.21f, 1.0f));
+	CloseMenuButton = MakeButton(
+		WidgetTree, TEXT("VOLVER AL PARTIDO"), 18,
+		FLinearColor(0.32f, 0.82f, 0.52f, 1.0f)
+	);
+	if (UTextBlock* CloseLabel = Cast<UTextBlock>(CloseMenuButton->GetContent()))
+	{
+		CloseLabel->SetColorAndOpacity(FSlateColor(
+			FLinearColor(0.04f, 0.15f, 0.08f, 1.0f)));
+	}
 	CloseMenuButton->OnClicked.AddDynamic(this, &USoccerSubstitutionMenuWidget::HandleCloseClicked);
-	AddHorizontal(Header, CloseMenuButton);
+	USizeBox* CloseButtonSizeBox = WidgetTree->ConstructWidget<USizeBox>();
+	CloseButtonSizeBox->SetMinDesiredWidth(240.0f);
+	CloseButtonSizeBox->SetMinDesiredHeight(54.0f);
+	CloseButtonSizeBox->AddChild(CloseMenuButton);
+	AddHorizontal(Header, CloseButtonSizeBox);
 
 	SummaryText = MakeText(WidgetTree, TEXT("--"), 18, MutedText);
 	SummaryText->SetAutoWrapText(true);
