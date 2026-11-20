@@ -2471,6 +2471,20 @@ void ASoccerCharacterBase::FinalizeTackleContactTracking()
         true
     );
 
+    // Stage 5H: clean ball-only slide. Entries with an opponent are recorded
+    // after the referee decision in SubmitFoulIncident, never here.
+    if (CurrentTackleContactSummary.bBallContactApplied &&
+        !CurrentTackleContactSummary.bOpponentContactOccurred)
+    {
+        if (UWorld* World5H = GetWorld())
+        {
+            for (TActorIterator<ASoccerMatchManager> It(World5H); It; ++It)
+            {
+                It->RecordBallOnlyTackle5H(this);
+                break;
+            }
+        }
+    }
     LastTackleContactSummary = CurrentTackleContactSummary;
     bTackleContactTrackingInitialized = false;
 

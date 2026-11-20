@@ -147,12 +147,28 @@ void USoccerPeriodSummaryWidget::BuildScreen5F()
     AddColumn(SummaryTabs5G, PlayerTabButton5G, 1.0f);
     AddVertical(Content, SummaryTabs5G, FMargin(10.0f, 0.0f, 10.0f, 8.0f));
 
-	USizeBox* ScrollHeight = WidgetTree->ConstructWidget<USizeBox>();
-	ScrollHeight->SetHeightOverride(315.0f);
+    // Second level of navigation keeps both individual tables readable at 720p.
+    // The attack table retains the exact aligned six-column design from 5G.
+    IndividualPages5H = WidgetTree->ConstructWidget<UHorizontalBox>();
+    AttackingPageButton5H = WidgetTree->ConstructWidget<UButton>();
+    DefensivePageButton5H = WidgetTree->ConstructWidget<UButton>();
+    AttackingPageButton5H->AddChild(NewText(WidgetTree, TEXT("ATAQUE"), 14, White));
+    DefensivePageButton5H->AddChild(NewText(WidgetTree, TEXT("PASES Y DEFENSA"), 14, White));
+    AttackingPageButton5H->OnClicked.AddDynamic(this,
+        &USoccerPeriodSummaryWidget::ShowAttackIndividual5H);
+    DefensivePageButton5H->OnClicked.AddDynamic(this,
+        &USoccerPeriodSummaryWidget::ShowDefenseIndividual5H);
+    AddColumn(IndividualPages5H, AttackingPageButton5H, 1.0f);
+    AddColumn(IndividualPages5H, DefensivePageButton5H, 1.0f);
+    AddVertical(Content, IndividualPages5H, FMargin(10.0f, 0.0f, 10.0f, 5.0f));
+    IndividualPages5H->SetVisibility(ESlateVisibility::Collapsed);
+
+    StatisticsHeightBox5H = WidgetTree->ConstructWidget<USizeBox>();
+    StatisticsHeightBox5H->SetHeightOverride(315.0f);
 	StatisticsScroll = WidgetTree->ConstructWidget<UScrollBox>();
 	StatisticsScroll->SetScrollBarVisibility(ESlateVisibility::Visible);
-	ScrollHeight->SetContent(StatisticsScroll);
-	AddVertical(Content, ScrollHeight, FMargin(0.0f, 0.0f, 0.0f, 9.0f));
+    StatisticsHeightBox5H->SetContent(StatisticsScroll);
+    AddVertical(Content, StatisticsHeightBox5H, FMargin(0.0f, 0.0f, 0.0f, 9.0f));
 
 	StatusText = NewText(WidgetTree, TEXT(""), 14, Muted);
 	AddVertical(Content, StatusText, FMargin(0.0f, 0.0f, 0.0f, 8.0f));
@@ -204,6 +220,22 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
         PlayerTabButton5G->SetBackgroundColor(bShowingPlayers5G ?
             Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
     }
+    if (IsValid(IndividualPages5H))
+    {
+        IndividualPages5H->SetVisibility(bShowingPlayers5G
+            ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+    }
+    if (IsValid(StatisticsHeightBox5H))
+    {
+        StatisticsHeightBox5H->SetHeightOverride(bShowingPlayers5G ? 278.0f : 315.0f);
+    }
+    if (IsValid(AttackingPageButton5H) && IsValid(DefensivePageButton5H))
+    {
+        AttackingPageButton5H->SetBackgroundColor(!bShowingDefense5H ?
+            Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
+        DefensivePageButton5H->SetBackgroundColor(bShowingDefense5H ?
+            Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
+    }
     if (bShowingPlayers5G)
     {
         RefreshPlayerStatistics5G();
@@ -226,6 +258,27 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
 	AddNumbers(TEXT("SUSTITUCIONES"),
 		MatchManager->GetMatchSquadState(ESoccerTeam::PlayerTeam).SubstitutionHistory.Num(),
 		MatchManager->GetMatchSquadState(ESoccerTeam::OpponentTeam).SubstitutionHistory.Num());
+
+    // Team totals are the sums of confirmed individual events, not estimates.
+    int32 PassAttempts5H[2] = {0, 0};
+    int32 PassCompleted5H[2] = {0, 0};
+    int32 Recoveries5H[2] = {0, 0};
+    int32 Interceptions5H[2] = {0, 0};
+    int32 Tackles5H[2] = {0, 0};
+    for (const FSoccerPlayerMatchStatistics5G& Player : MatchManager->GetPlayerStatistics5G())
+    {
+        const int32 Index = Player.Team == ESoccerTeam::PlayerTeam ? 0 : 1;
+        PassAttempts5H[Index] += Player.PassesAttempted;
+        PassCompleted5H[Index] += Player.PassesCompleted;
+        Recoveries5H[Index] += Player.Recoveries;
+        Interceptions5H[Index] += Player.Interceptions;
+        Tackles5H[Index] += Player.CleanTackles;
+    }
+    AddNumbers(TEXT("PASES INTENTADOS"), PassAttempts5H[0], PassAttempts5H[1]);
+    AddNumbers(TEXT("PASES COMPLETADOS"), PassCompleted5H[0], PassCompleted5H[1]);
+    AddNumbers(TEXT("RECUPERACIONES"), Recoveries5H[0], Recoveries5H[1]);
+    AddNumbers(TEXT("INTERCEPCIONES"), Interceptions5H[0], Interceptions5H[1]);
+    AddNumbers(TEXT("ENTRADAS LIMPIAS"), Tackles5H[0], Tackles5H[1]);
 	StatisticsScroll->ScrollToStart();
 }
 
@@ -234,6 +287,23 @@ void USoccerPeriodSummaryWidget::ChangeSummaryTab5G(bool bPlayers)
     if (bShowingPlayers5G == bPlayers) return;
     bShowingPlayers5G = bPlayers;
     RefreshStatistics5F();
+}
+
+void USoccerPeriodSummaryWidget::ChangeIndividualPage5H(bool bDefensive)
+{
+    if (bShowingDefense5H == bDefensive || !bShowingPlayers5G) return;
+    bShowingDefense5H = bDefensive;
+    RefreshStatistics5F();
+}
+
+void USoccerPeriodSummaryWidget::ShowAttackIndividual5H()
+{
+    ChangeIndividualPage5H(false);
+}
+
+void USoccerPeriodSummaryWidget::ShowDefenseIndividual5H()
+{
+    ChangeIndividualPage5H(true);
 }
 
 void USoccerPeriodSummaryWidget::ShowTeamStatistics5G()
@@ -265,12 +335,23 @@ void USoccerPeriodSummaryWidget::AddPlayerStatisticsRow5G(
         : PlayerStats.DisplayName;
     AddColumn(Row, NewText(WidgetTree, PlayerLabel, 16, White,
         ETextJustify::Left), PlayerNameWidth5G);
-    const int32 NumericValues[] = {
+    const int32 PassingPercent5H = PlayerStats.PassesAttempted > 0
+        ? FMath::Clamp(FMath::RoundToInt(100.0f * PlayerStats.PassesCompleted /
+            PlayerStats.PassesAttempted), 0, 100)
+        : 0;
+    const int32 OffensiveValues5H[] = {
         PlayerStats.Goals, PlayerStats.Shots, PlayerStats.ShotsOnTarget,
         PlayerStats.Assists, PlayerStats.Saves, PlayerStats.OwnGoals
     };
-    for (int32 Value : NumericValues)
+    const int32 DefensiveValues5H[] = {
+        PlayerStats.PassesAttempted, PlayerStats.PassesCompleted, PassingPercent5H,
+        PlayerStats.Recoveries, PlayerStats.Interceptions, PlayerStats.CleanTackles
+    };
+    const int32* NumericValues = bShowingDefense5H
+        ? DefensiveValues5H : OffensiveValues5H;
+    for (int32 NumericIndex5H = 0; NumericIndex5H < 6; ++NumericIndex5H)
     {
+        const int32 Value = NumericValues[NumericIndex5H];
         AddColumn(Row, NewText(WidgetTree, FString::FromInt(Value), 16,
             Value > 0 ? Green : Muted), PlayerStatWidth5G);
     }
@@ -293,6 +374,10 @@ void USoccerPeriodSummaryWidget::RefreshPlayerStatistics5G()
         if (A.Assists != B.Assists) return A.Assists > B.Assists;
         if (A.ShotsOnTarget != B.ShotsOnTarget)
             return A.ShotsOnTarget > B.ShotsOnTarget;
+        if (A.Interceptions != B.Interceptions)
+            return A.Interceptions > B.Interceptions;
+        if (A.Recoveries != B.Recoveries)
+            return A.Recoveries > B.Recoveries;
         return A.DisplayName < B.DisplayName;
     });
 
@@ -312,9 +397,14 @@ void USoccerPeriodSummaryWidget::RefreshPlayerStatistics5G()
         if (Player.Goals > 0 && (!TopScorer || Player.Goals > TopScorer->Goals))
             TopScorer = &Player;
         // A basic, explicit performance indicator using registered events.
+        // Balanced event score (not an official match rating): attackers,
+        // defenders, midfielders and keepers can all contribute.
         const float Score = Player.Goals * 5.0f + Player.Assists * 3.0f +
             Player.ShotsOnTarget * 1.5f + Player.Saves * 2.0f +
-            Player.Shots * 0.25f - Player.OwnGoals * 4.0f;
+            Player.Shots * 0.25f - Player.OwnGoals * 4.0f +
+            Player.PassesCompleted * 0.18f + Player.Recoveries * 0.75f +
+            Player.Interceptions * 0.95f + Player.CleanTackles * 1.15f -
+            (Player.PassesAttempted - Player.PassesCompleted) * 0.07f;
         if (Score > BestScore)
         {
             BestScore = Score;
@@ -328,7 +418,9 @@ void USoccerPeriodSummaryWidget::RefreshPlayerStatistics5G()
     StatisticsScroll->AddChild(Highlights);
 
     UTextBlock* Legend = NewText(WidgetTree,
-        TEXT("G: goles  ·  R: remates  ·  AL: al arco  ·  AS: asistencias  ·  AT: atajadas  ·  AG: autogoles"),
+        bShowingDefense5H
+            ? TEXT("P: pases intentados  ·  PC: completados  ·  %: precisión  ·  REC: recuperaciones  ·  INT: intercepciones  ·  ENT: entradas limpias")
+            : TEXT("G: goles  ·  R: remates  ·  AL: al arco  ·  AS: asistencias  ·  AT: atajadas  ·  AG: autogoles"),
         13, Muted);
     StatisticsScroll->AddChild(Legend);
 
@@ -347,11 +439,17 @@ void USoccerPeriodSummaryWidget::RefreshPlayerStatistics5G()
         AddColumn(ClubHeaderRow, NewText(WidgetTree,
             GetClubName(MatchManager, Team), 17, Green, ETextJustify::Left),
             PlayerNameWidth5G);
-        const TCHAR* ColumnCaptions[] = {
+        const TCHAR* AttackCaptions5H[] = {
             TEXT("G"), TEXT("R"), TEXT("AL"), TEXT("AS"), TEXT("AT"), TEXT("AG")
         };
-        for (const TCHAR* Caption : ColumnCaptions)
+        const TCHAR* DefenseCaptions5H[] = {
+            TEXT("P"), TEXT("PC"), TEXT("%"), TEXT("REC"), TEXT("INT"), TEXT("ENT")
+        };
+        const TCHAR* const* ColumnCaptions = bShowingDefense5H
+            ? DefenseCaptions5H : AttackCaptions5H;
+        for (int32 ColumnIndex5H = 0; ColumnIndex5H < 6; ++ColumnIndex5H)
         {
+            const TCHAR* Caption = ColumnCaptions[ColumnIndex5H];
             AddColumn(ClubHeaderRow, NewText(WidgetTree, Caption, 16, Green),
                 PlayerStatWidth5G);
         }
@@ -452,6 +550,18 @@ FReply USoccerPeriodSummaryWidget::NativeOnPreviewKeyDown(
     if (Key == EKeys::Two || Key == EKeys::Gamepad_RightShoulder)
     {
         ChangeSummaryTab5G(true);
+        return FReply::Handled();
+    }
+    if (bShowingPlayers5G &&
+        (Key == EKeys::Three || Key == EKeys::Gamepad_DPad_Left))
+    {
+        ChangeIndividualPage5H(false);
+        return FReply::Handled();
+    }
+    if (bShowingPlayers5G &&
+        (Key == EKeys::Four || Key == EKeys::Gamepad_DPad_Right))
+    {
+        ChangeIndividualPage5H(true);
         return FReply::Handled();
     }
 	if (Key == EKeys::Enter || Key == EKeys::SpaceBar ||

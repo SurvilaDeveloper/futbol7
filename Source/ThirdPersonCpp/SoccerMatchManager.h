@@ -127,6 +127,12 @@ struct FSoccerPlayerMatchStatistics5G
     int32 Shots = 0;
     int32 ShotsOnTarget = 0;
     int32 Saves = 0;
+    // Stage 5H: actions confirmed by the pass/touch, possession and tackle systems.
+    int32 PassesAttempted = 0;
+    int32 PassesCompleted = 0;
+    int32 Recoveries = 0;
+    int32 Interceptions = 0;
+    int32 CleanTackles = 0;
 };
 
 enum class ESoccerConfirmedDecision5D : uint8
@@ -371,6 +377,10 @@ public:
 	/* Tackle referee: evaluates, records and may start the corresponding match restart. */
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Fouls")
 	FSoccerFoulDecision SubmitFoulIncident(const FSoccerFoulIncident& Incident);
+
+    // Called once when a sliding tackle ends with a valid ball-only contact.
+    // Does not alter physics or referee decisions.
+    void RecordBallOnlyTackle5H(ASoccerCharacterBase* Tackler);
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match")
 		ESoccerTeamPhase GetTeamPhase(ESoccerTeam Team) const;
@@ -1164,6 +1174,12 @@ bool IsPenaltyMatchStateActive() const;
     FSoccerPlayerMatchStatistics5G* FindOrAddPlayerStatistics5G(
         ASoccerCharacterBase* Character);
     void ClearAssistCandidate5G();
+    // Physical, controlled possession only (not loose-ball tactical ownership).
+    void TrackControlledPossession5H(ASoccerCharacterBase* NewController);
+    bool bHasPreviousControllerTeam5H = false;
+    ESoccerTeam PreviousControllerTeam5H = ESoccerTeam::PlayerTeam;
+    TWeakObjectPtr<ASoccerCharacterBase> PreviousController5H;
+    float PreviousControllerTime5H = -1000.0f;
     // A confirmed completed pass can provide an assist, but never an attempted
     // or intercepted pass. Candidate expires and is checked at the shot.
     TWeakObjectPtr<ASoccerCharacterBase> AssistPasser5G;

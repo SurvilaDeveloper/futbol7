@@ -203,6 +203,50 @@ FSoccerPlayerMatchStatistics5G* ASoccerMatchManager::FindOrAddPlayerStatistics5G
     return &PlayerStatistics5G[NewRecordIndex5G];
 }
 
+void ASoccerMatchManager::TrackControlledPossession5H(
+    ASoccerCharacterBase* NewController)
+{
+    if (!IsValid(NewController) || GetWorld() == nullptr ||
+        MatchPlayState != ESoccerMatchPlayState::Playing ||
+        IsRestartContextActive() || !IsMatchPeriodGameplayActive())
+    {
+        return;
+    }
+
+    const float Now = GetWorld()->GetTimeSeconds();
+    const ESoccerTeam Team = NewController->GetTeam();
+    // A new controlled possession after rival possession is a recovery.
+    // Using an actual controller avoids counting rebounds and repeated ticks.
+    if (bHasPreviousControllerTeam5H &&
+        PreviousControllerTeam5H != Team &&
+        Now - PreviousControllerTime5H <= 12.0f)
+    {
+        if (FSoccerPlayerMatchStatistics5G* Player =
+            FindOrAddPlayerStatistics5G(NewController))
+        {
+            ++Player->Recoveries;
+        }
+    }
+    bHasPreviousControllerTeam5H = true;
+    PreviousControllerTeam5H = Team;
+    PreviousController5H = NewController;
+    PreviousControllerTime5H = Now;
+}
+
+void ASoccerMatchManager::RecordBallOnlyTackle5H(
+    ASoccerCharacterBase* Tackler)
+{
+    if (!IsValid(Tackler) || !IsMatchPeriodGameplayActive() ||
+        MatchPlayState != ESoccerMatchPlayState::Playing || IsRestartContextActive())
+    {
+        return;
+    }
+    if (FSoccerPlayerMatchStatistics5G* Player = FindOrAddPlayerStatistics5G(Tackler))
+    {
+        ++Player->CleanTackles;
+    }
+}
+
 void ASoccerMatchManager::ClearAssistCandidate5G()
 {
     AssistPasser5G.Reset();
@@ -773,6 +817,13 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 	DrawIndividualMarkingDebug();
 
 	UpdateMatchClock(DeltaTime);
+    if (MatchPlayState != ESoccerMatchPlayState::Playing ||
+        IsRestartContextActive() || !IsMatchPeriodGameplayActive())
+    {
+        bHasPreviousControllerTeam5H = false;
+        PreviousController5H.Reset();
+        PreviousControllerTime5H = -1000.0f;
+    }
 	UpdateControlledPossession5D(DeltaTime);
 	UpdatePendingMatchSubstitutions();
 	UpdateVisualSubstitution(DeltaTime);
@@ -1342,6 +1393,9 @@ void ASoccerMatchManager::InitializeMatchClock()
 {
 	MatchStatistics5D = FSoccerMatchStatistics5D();
     PlayerStatistics5G.Empty();
+    bHasPreviousControllerTeam5H = false;
+    PreviousController5H.Reset();
+    PreviousControllerTime5H = -1000.0f;
     ClearAssistCandidate5G();
     PendingShotShooter5G.Reset();
     PendingShotAssister5G.Reset();
@@ -5253,6 +5307,7 @@ bool ASoccerMatchManager::RegisterControlledBallPossession(
 	PossessionTeam = ConvertTeamToPossessionTeam(
 		NewPossessingCharacter->GetTeam()
 	);
+    TrackControlledPossession5H(NewPossessingCharacter);
 
 	ClearFreeBallChaserMemory();
 
@@ -5285,6 +5340,12 @@ void ASoccerMatchManager::RegisterOpenPlayPassIntent(
 		return;
 	}
 
+    // One registered open-play pass intent represents one attempted pass.
+    if (FSoccerPlayerMatchStatistics5G* PasserStats =
+        FindOrAddPlayerStatistics5G(Passer))
+    {
+        ++PasserStats->PassesAttempted;
+    }
     // A new pass replaces any previously completed assist opportunity.
     ClearAssistCandidate5G();
 	bOpenPlayPassIntentActive = true;
@@ -5564,6 +5625,20 @@ FSoccerFoulDecision ASoccerMatchManager::SubmitFoulIncident(
         Decision.Reason = bCleanBallFirstTiming
             ? TEXT("pelota primero, contacto bajo/controlado")
             : TEXT("sin infraccion sancionable");
+    }
+
+    // Successful sliding entries need real applied ball contact, with no foul.
+    // Ball-only entries are handled once at tackle completion (below).
+    if (!Decision.bIsFoul && bValidBallTouch &&
+        Incident.InstigatorCharacter != nullptr &&
+        MatchPlayState == ESoccerMatchPlayState::Playing &&
+        !IsRestartContextActive() && IsMatchPeriodGameplayActive())
+    {
+        if (FSoccerPlayerMatchStatistics5G* TacklerStats =
+            FindOrAddPlayerStatistics5G(Incident.InstigatorCharacter))
+        {
+            ++TacklerStats->CleanTackles;
+        }
     }
 
     const TCHAR* SeverityText = TEXT("NONE");
@@ -14667,6 +14742,7 @@ void ASoccerMatchManager::DetectPossession()
 
 		PossessingCharacter = Candidate;
 		PossessionTeam = ConvertTeamToPossessionTeam(Candidate->GetTeam());
+        TrackControlledPossession5H(Candidate);
 
 		return;
 	}
@@ -22729,6 +22805,12 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
     {
         ClearAssistCandidate5G();
     }
+    const bool bLiveOpenPlayTouch5H =
+        MatchPlayState == ESoccerMatchPlayState::Playing &&
+        !IsRestartContextActive() && IsMatchPeriodGameplayActive();
+    ASoccerCharacterBase* OriginPasser5H =
+        bLiveOpenPlayTouch5H && IsOpenPlayPassIntentValid()
+            ? OpenPlayPasser : nullptr;
     ASoccerCharacterBase* CompletedPasser5G =
         bOpenPlayPassIntentActive &&
         OpenPlayIntendedReceiver == TouchingCharacter &&
@@ -22744,6 +22826,26 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 	{
 		return false;
 	}
+
+    // A legal deliberate first contact ends the registered pass exactly once.
+    // Opponent contact counts as an interception (even when the ball remains
+    // loose); teammate contact counts as a completed pass. Offside was excluded.
+    if (IsValid(OriginPasser5H) && OriginPasser5H != TouchingCharacter)
+    {
+        if (OriginPasser5H->GetTeam() == TouchingCharacter->GetTeam())
+        {
+            if (FSoccerPlayerMatchStatistics5G* PasserStats =
+                FindOrAddPlayerStatistics5G(OriginPasser5H))
+            {
+                ++PasserStats->PassesCompleted;
+            }
+        }
+        else if (FSoccerPlayerMatchStatistics5G* DefenderStats =
+            FindOrAddPlayerStatistics5G(TouchingCharacter))
+        {
+            ++DefenderStats->Interceptions;
+        }
+    }
 
     // Confirm an assist candidate only after the touch passes the referee's
     // legality checks. An offside reception is not a completed pass.

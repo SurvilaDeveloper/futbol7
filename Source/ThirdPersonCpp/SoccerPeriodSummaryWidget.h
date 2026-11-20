@@ -7,6 +7,8 @@
 class ASoccerMatchManager;
 struct FSoccerPlayerMatchStatistics5G;
 class UButton;
+class UHorizontalBox;
+class USizeBox;
 class UScrollBox;
 class UTextBlock;
 
@@ -34,6 +36,11 @@ private:
     void RefreshPlayerStatistics5G();
     void AddPlayerStatisticsRow5G(const FSoccerPlayerMatchStatistics5G& Row, int32 RowIndex);
     void ChangeSummaryTab5G(bool bPlayers);
+    void ChangeIndividualPage5H(bool bDefensive);
+    UFUNCTION()
+    void ShowAttackIndividual5H();
+    UFUNCTION()
+    void ShowDefenseIndividual5H();
     UFUNCTION()
     void ShowTeamStatistics5G();
     UFUNCTION()
@@ -64,6 +71,15 @@ private:
     UPROPERTY(Transient)
     UButton* PlayerTabButton5G = nullptr;
     bool bShowingPlayers5G = false;
+    bool bShowingDefense5H = false;
+    UPROPERTY(Transient)
+    UHorizontalBox* IndividualPages5H = nullptr;
+    UPROPERTY(Transient)
+    UButton* AttackingPageButton5H = nullptr;
+    UPROPERTY(Transient)
+    UButton* DefensivePageButton5H = nullptr;
+    UPROPERTY(Transient)
+    USizeBox* StatisticsHeightBox5H = nullptr;
 
 	UPROPERTY(Transient)
 	UButton* ContinueButton = nullptr;
