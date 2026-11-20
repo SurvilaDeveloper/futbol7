@@ -31,6 +31,12 @@ namespace SoccerPeriodSummary5F
 	const FLinearColor Green(0.16f, 0.73f, 0.53f, 1.0f);
 	const FLinearColor Cyan(0.34f, 0.75f, 0.91f, 1.0f);
 
+	// The player table header and data rows MUST use identical column weights
+	// and horizontal padding. Never position the headings with spaces in text.
+	constexpr float PlayerNameWidth5G = 3.8f;
+	constexpr float PlayerStatWidth5G = 0.8f;
+	constexpr float PlayerRowHorizontalPadding5G = 10.0f;
+
 	UTextBlock* NewText(UWidgetTree* Tree, const FString& Value, int32 FontSize,
 		const FLinearColor& Color, ETextJustify::Type Justification = ETextJustify::Center)
 	{
@@ -128,12 +134,21 @@ void USoccerPeriodSummaryWidget::BuildScreen5F()
 	PossessionText = NewText(WidgetTree, TEXT("POSESIÓN CONTROLADA"), 17, Muted);
 	AddVertical(Content, PossessionText, FMargin(0.0f, 2.0f, 0.0f, 14.0f));
 
-	UTextBlock* Header = NewText(WidgetTree, TEXT("LOCAL                            ESTADÍSTICA                           RIVAL"),
-		13, Muted);
-	AddVertical(Content, Header, FMargin(0.0f, 0.0f, 0.0f, 8.0f));
+    // The two views use the same scroll region: adding individual players
+    // cannot push the continue button off-screen at 1280x720.
+    UHorizontalBox* SummaryTabs5G = WidgetTree->ConstructWidget<UHorizontalBox>();
+    TeamTabButton5G = WidgetTree->ConstructWidget<UButton>();
+    PlayerTabButton5G = WidgetTree->ConstructWidget<UButton>();
+    TeamTabButton5G->AddChild(NewText(WidgetTree, TEXT("EQUIPOS"), 17, White));
+    PlayerTabButton5G->AddChild(NewText(WidgetTree, TEXT("FUTBOLISTAS"), 17, White));
+    TeamTabButton5G->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::ShowTeamStatistics5G);
+    PlayerTabButton5G->OnClicked.AddDynamic(this, &USoccerPeriodSummaryWidget::ShowPlayerStatistics5G);
+    AddColumn(SummaryTabs5G, TeamTabButton5G, 1.0f);
+    AddColumn(SummaryTabs5G, PlayerTabButton5G, 1.0f);
+    AddVertical(Content, SummaryTabs5G, FMargin(10.0f, 0.0f, 10.0f, 8.0f));
 
 	USizeBox* ScrollHeight = WidgetTree->ConstructWidget<USizeBox>();
-	ScrollHeight->SetHeightOverride(335.0f);
+	ScrollHeight->SetHeightOverride(315.0f);
 	StatisticsScroll = WidgetTree->ConstructWidget<UScrollBox>();
 	StatisticsScroll->SetScrollBarVisibility(ESlateVisibility::Visible);
 	ScrollHeight->SetContent(StatisticsScroll);
@@ -182,6 +197,19 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
 		? FString::Printf(TEXT("POSESIÓN CONTROLADA        %d%%  -  %d%%"), LocalPercent, 100 - LocalPercent)
 		: TEXT("POSESIÓN CONTROLADA        SIN DATOS")));
 
+    if (IsValid(TeamTabButton5G) && IsValid(PlayerTabButton5G))
+    {
+        TeamTabButton5G->SetBackgroundColor(bShowingPlayers5G ?
+            FLinearColor(0.12f, 0.25f, 0.30f, 1.0f) : Green);
+        PlayerTabButton5G->SetBackgroundColor(bShowingPlayers5G ?
+            Green : FLinearColor(0.12f, 0.25f, 0.30f, 1.0f));
+    }
+    if (bShowingPlayers5G)
+    {
+        RefreshPlayerStatistics5G();
+        return;
+    }
+
 	StatisticsScroll->ClearChildren();
 	int32 RowIndex = 0;
 	const auto AddNumbers = [this, &RowIndex](const FString& Label, int32 Left, int32 Right)
@@ -199,6 +227,148 @@ void USoccerPeriodSummaryWidget::RefreshStatistics5F()
 		MatchManager->GetMatchSquadState(ESoccerTeam::PlayerTeam).SubstitutionHistory.Num(),
 		MatchManager->GetMatchSquadState(ESoccerTeam::OpponentTeam).SubstitutionHistory.Num());
 	StatisticsScroll->ScrollToStart();
+}
+
+void USoccerPeriodSummaryWidget::ChangeSummaryTab5G(bool bPlayers)
+{
+    if (bShowingPlayers5G == bPlayers) return;
+    bShowingPlayers5G = bPlayers;
+    RefreshStatistics5F();
+}
+
+void USoccerPeriodSummaryWidget::ShowTeamStatistics5G()
+{
+    ChangeSummaryTab5G(false);
+}
+
+void USoccerPeriodSummaryWidget::ShowPlayerStatistics5G()
+{
+    ChangeSummaryTab5G(true);
+}
+
+void USoccerPeriodSummaryWidget::AddPlayerStatisticsRow5G(
+    const FSoccerPlayerMatchStatistics5G& PlayerStats, int32 RowIndex)
+{
+    if (!WidgetTree || !StatisticsScroll) return;
+    using namespace SoccerPeriodSummary5F;
+
+    UBorder* RowBackground = WidgetTree->ConstructWidget<UBorder>();
+    RowBackground->SetBrushColor(RowIndex % 2 == 0
+        ? FLinearColor(0.065f, 0.115f, 0.145f, 1.0f)
+        : FLinearColor(0.042f, 0.085f, 0.110f, 1.0f));
+    RowBackground->SetPadding(FMargin(PlayerRowHorizontalPadding5G, 7.0f));
+    UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+    RowBackground->SetContent(Row);
+    FString PlayerLabel = PlayerStats.ShirtNumber > 0
+        ? FString::Printf(TEXT("%d · %s"), PlayerStats.ShirtNumber,
+            *PlayerStats.DisplayName)
+        : PlayerStats.DisplayName;
+    AddColumn(Row, NewText(WidgetTree, PlayerLabel, 16, White,
+        ETextJustify::Left), PlayerNameWidth5G);
+    const int32 NumericValues[] = {
+        PlayerStats.Goals, PlayerStats.Shots, PlayerStats.ShotsOnTarget,
+        PlayerStats.Assists, PlayerStats.Saves, PlayerStats.OwnGoals
+    };
+    for (int32 Value : NumericValues)
+    {
+        AddColumn(Row, NewText(WidgetTree, FString::FromInt(Value), 16,
+            Value > 0 ? Green : Muted), PlayerStatWidth5G);
+    }
+    StatisticsScroll->AddChild(RowBackground);
+}
+
+void USoccerPeriodSummaryWidget::RefreshPlayerStatistics5G()
+{
+    if (!IsValid(MatchManager) || !IsValid(StatisticsScroll)) return;
+    using namespace SoccerPeriodSummary5F;
+    StatisticsScroll->ClearChildren();
+
+    TArray<FSoccerPlayerMatchStatistics5G> Players = MatchManager->GetPlayerStatistics5G();
+    Players.Sort([](const FSoccerPlayerMatchStatistics5G& A,
+                    const FSoccerPlayerMatchStatistics5G& B)
+    {
+        if (A.Team != B.Team)
+            return A.Team == ESoccerTeam::PlayerTeam;
+        if (A.Goals != B.Goals) return A.Goals > B.Goals;
+        if (A.Assists != B.Assists) return A.Assists > B.Assists;
+        if (A.ShotsOnTarget != B.ShotsOnTarget)
+            return A.ShotsOnTarget > B.ShotsOnTarget;
+        return A.DisplayName < B.DisplayName;
+    });
+
+    if (Players.Num() == 0)
+    {
+        UTextBlock* EmptyLabel = NewText(WidgetTree,
+            TEXT("Todavía no hay acciones individuales registradas."), 18, Muted);
+        StatisticsScroll->AddChild(EmptyLabel);
+        return;
+    }
+
+    const FSoccerPlayerMatchStatistics5G* TopScorer = nullptr;
+    const FSoccerPlayerMatchStatistics5G* Standout = nullptr;
+    float BestScore = 0.0f;
+    for (const FSoccerPlayerMatchStatistics5G& Player : Players)
+    {
+        if (Player.Goals > 0 && (!TopScorer || Player.Goals > TopScorer->Goals))
+            TopScorer = &Player;
+        // A basic, explicit performance indicator using registered events.
+        const float Score = Player.Goals * 5.0f + Player.Assists * 3.0f +
+            Player.ShotsOnTarget * 1.5f + Player.Saves * 2.0f +
+            Player.Shots * 0.25f - Player.OwnGoals * 4.0f;
+        if (Score > BestScore)
+        {
+            BestScore = Score;
+            Standout = &Player;
+        }
+    }
+    UTextBlock* Highlights = NewText(WidgetTree,
+        FString::Printf(TEXT("GOLEADOR: %s    |    DESTACADO POR ESTADÍSTICAS: %s"),
+            TopScorer ? *TopScorer->DisplayName : TEXT("Sin datos"),
+            Standout ? *Standout->DisplayName : TEXT("Sin datos")), 15, Cyan);
+    StatisticsScroll->AddChild(Highlights);
+
+    UTextBlock* Legend = NewText(WidgetTree,
+        TEXT("G: goles  ·  R: remates  ·  AL: al arco  ·  AS: asistencias  ·  AT: atajadas  ·  AG: autogoles"),
+        13, Muted);
+    StatisticsScroll->AddChild(Legend);
+
+    for (int32 TeamIndex = 0; TeamIndex < 2; ++TeamIndex)
+    {
+        const ESoccerTeam Team = TeamIndex == 0
+            ? ESoccerTeam::PlayerTeam : ESoccerTeam::OpponentTeam;
+        // Use the very same horizontal-box grid as each player row.
+        // The previous single text string with spaces could never line up
+        // with the proportional columns of the numeric values.
+        UBorder* ClubHeaderBackground = WidgetTree->ConstructWidget<UBorder>();
+        ClubHeaderBackground->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
+        ClubHeaderBackground->SetPadding(FMargin(PlayerRowHorizontalPadding5G, 5.0f));
+        UHorizontalBox* ClubHeaderRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+        ClubHeaderBackground->SetContent(ClubHeaderRow);
+        AddColumn(ClubHeaderRow, NewText(WidgetTree,
+            GetClubName(MatchManager, Team), 17, Green, ETextJustify::Left),
+            PlayerNameWidth5G);
+        const TCHAR* ColumnCaptions[] = {
+            TEXT("G"), TEXT("R"), TEXT("AL"), TEXT("AS"), TEXT("AT"), TEXT("AG")
+        };
+        for (const TCHAR* Caption : ColumnCaptions)
+        {
+            AddColumn(ClubHeaderRow, NewText(WidgetTree, Caption, 16, Green),
+                PlayerStatWidth5G);
+        }
+        StatisticsScroll->AddChild(ClubHeaderBackground);
+        int32 RowIndex = 0;
+        for (const FSoccerPlayerMatchStatistics5G& Player : Players)
+        {
+            if (Player.Team != Team) continue;
+            AddPlayerStatisticsRow5G(Player, RowIndex++);
+        }
+        if (RowIndex == 0)
+        {
+            StatisticsScroll->AddChild(NewText(WidgetTree,
+                TEXT("Sin acciones registradas para este club."), 14, Muted));
+        }
+    }
+    StatisticsScroll->ScrollToStart();
 }
 
 void USoccerPeriodSummaryWidget::AddStatisticRow5F(
@@ -274,6 +444,16 @@ FReply USoccerPeriodSummaryWidget::NativeOnPreviewKeyDown(
 	const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
 	const FKey Key = InKeyEvent.GetKey();
+    if (Key == EKeys::One || Key == EKeys::Gamepad_LeftShoulder)
+    {
+        ChangeSummaryTab5G(false);
+        return FReply::Handled();
+    }
+    if (Key == EKeys::Two || Key == EKeys::Gamepad_RightShoulder)
+    {
+        ChangeSummaryTab5G(true);
+        return FReply::Handled();
+    }
 	if (Key == EKeys::Enter || Key == EKeys::SpaceBar ||
 		Key == EKeys::Gamepad_FaceButton_Bottom)
 	{

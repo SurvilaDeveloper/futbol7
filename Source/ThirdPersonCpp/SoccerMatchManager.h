@@ -112,6 +112,23 @@ struct FSoccerMatchStatistics5D
     FSoccerMatchTeamStatistics5D OpponentTeam;
 };
 
+// Stage 5G: in-memory statistics for a stable player identity. No actor
+// references are retained in the public history (substitutions can reuse actors).
+struct FSoccerPlayerMatchStatistics5G
+{
+    FString PlayerKey;
+    FName PlayerId = NAME_None;
+    FString DisplayName;
+    ESoccerTeam Team = ESoccerTeam::PlayerTeam;
+    int32 ShirtNumber = 0;
+    int32 Goals = 0;
+    int32 OwnGoals = 0;
+    int32 Assists = 0;
+    int32 Shots = 0;
+    int32 ShotsOnTarget = 0;
+    int32 Saves = 0;
+};
+
 enum class ESoccerConfirmedDecision5D : uint8
 {
     Offside,
@@ -168,6 +185,12 @@ public:
     const FSoccerMatchStatistics5D& GetMatchStatistics5D() const
     {
         return MatchStatistics5D;
+    }
+
+    // Individual totals for both clubs, retaining player identity after changes.
+    const TArray<FSoccerPlayerMatchStatistics5G>& GetPlayerStatistics5G() const
+    {
+        return PlayerStatistics5G;
     }
 
     // Stage 5E: call only AFTER a genuine shot has launched the physical ball.
@@ -1136,6 +1159,19 @@ bool IsPenaltyMatchStateActive() const;
         ESoccerConfirmedDecision5D DecisionType);
     void UpdateControlledPossession5D(float DeltaTime);
     FSoccerMatchStatistics5D MatchStatistics5D;
+    TArray<FSoccerPlayerMatchStatistics5G> PlayerStatistics5G;
+
+    FSoccerPlayerMatchStatistics5G* FindOrAddPlayerStatistics5G(
+        ASoccerCharacterBase* Character);
+    void ClearAssistCandidate5G();
+    // A confirmed completed pass can provide an assist, but never an attempted
+    // or intercepted pass. Candidate expires and is checked at the shot.
+    TWeakObjectPtr<ASoccerCharacterBase> AssistPasser5G;
+    TWeakObjectPtr<ASoccerCharacterBase> AssistReceiver5G;
+    float AssistPassWorldTime5G = -1000.0f;
+    TWeakObjectPtr<ASoccerCharacterBase> PendingShotShooter5G;
+    TWeakObjectPtr<ASoccerCharacterBase> PendingShotAssister5G;
+
 
     // One shot at a time: stores ownership and whether the outgoing physics
     // trajectory was heading into the opponent's goal mouth.

@@ -5,6 +5,7 @@
 #include "SoccerPeriodSummaryWidget.generated.h"
 
 class ASoccerMatchManager;
+struct FSoccerPlayerMatchStatistics5G;
 class UButton;
 class UScrollBox;
 class UTextBlock;
@@ -30,6 +31,13 @@ private:
 	void RefreshContinueHint5F();
 	void AddStatisticRow5F(const FString& Label, const FString& LocalValue,
 		const FString& RivalValue, int32 RowIndex);
+    void RefreshPlayerStatistics5G();
+    void AddPlayerStatisticsRow5G(const FSoccerPlayerMatchStatistics5G& Row, int32 RowIndex);
+    void ChangeSummaryTab5G(bool bPlayers);
+    UFUNCTION()
+    void ShowTeamStatistics5G();
+    UFUNCTION()
+    void ShowPlayerStatistics5G();
 
 	UFUNCTION()
 	void HandleContinueClicked5F();
@@ -51,6 +59,12 @@ private:
 	UTextBlock* StatusText = nullptr;
 	UPROPERTY(Transient)
 	UScrollBox* StatisticsScroll = nullptr;
+    UPROPERTY(Transient)
+    UButton* TeamTabButton5G = nullptr;
+    UPROPERTY(Transient)
+    UButton* PlayerTabButton5G = nullptr;
+    bool bShowingPlayers5G = false;
+
 	UPROPERTY(Transient)
 	UButton* ContinueButton = nullptr;
 };

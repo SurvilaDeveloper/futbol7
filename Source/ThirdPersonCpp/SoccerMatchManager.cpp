@@ -164,6 +164,52 @@ bool ASoccerMatchManager::IsBallHeadingIntoOpponentGoal5E(
         CrossingLocalForStats.Z <= SoccerFieldDimensions::GoalHeightCm;
 }
 
+FSoccerPlayerMatchStatistics5G* ASoccerMatchManager::FindOrAddPlayerStatistics5G(
+    ASoccerCharacterBase* Character)
+{
+    if (!IsValid(Character)) return nullptr;
+
+    const ESoccerTeam Team = Character->GetTeam();
+    const USoccerPlayerProfile* Profile = Character->GetPlayerProfile();
+    const FName ProfileId = IsValid(Profile) ? Profile->Identity.PlayerId : NAME_None;
+    // An ID identifies the person across substitutions. If no content profile
+    // exists, this transient actor ID is only valid for the current match.
+    const FString Identity = !ProfileId.IsNone()
+        ? ProfileId.ToString()
+        : FString::Printf(TEXT("ACTOR_%u"), Character->GetUniqueID());
+    const FString Key = FString::Printf(TEXT("%d|%s"),
+        static_cast<int32>(Team), *Identity);
+
+    for (FSoccerPlayerMatchStatistics5G& Record : PlayerStatistics5G)
+    {
+        if (Record.PlayerKey == Key) return &Record;
+    }
+
+    FSoccerPlayerMatchStatistics5G Record;
+    Record.PlayerKey = Key;
+    Record.PlayerId = ProfileId;
+    Record.Team = Team;
+    if (IsValid(Profile))
+    {
+        Record.DisplayName = Profile->Identity.DisplayName.ToString();
+        Record.ShirtNumber = Profile->Identity.ShirtNumber;
+    }
+    if (Record.DisplayName.IsEmpty())
+    {
+        Record.DisplayName = !ProfileId.IsNone()
+            ? ProfileId.ToString() : Character->GetName();
+    }
+    const int32 NewRecordIndex5G = PlayerStatistics5G.Add(Record);
+    return &PlayerStatistics5G[NewRecordIndex5G];
+}
+
+void ASoccerMatchManager::ClearAssistCandidate5G()
+{
+    AssistPasser5G.Reset();
+    AssistReceiver5G.Reset();
+    AssistPassWorldTime5G = -1000.0f;
+}
+
 void ASoccerMatchManager::RegisterShot5E(
     ASoccerCharacterBase* ShootingCharacter)
 {
@@ -181,6 +227,23 @@ void ASoccerMatchManager::RegisterShot5E(
         ShotTeamForStats == ESoccerTeam::PlayerTeam
             ? MatchStatistics5D.PlayerTeam : MatchStatistics5D.OpponentTeam;
     ++TeamTotalsForStats.Shots;
+    if (FSoccerPlayerMatchStatistics5G* PlayerStats =
+        FindOrAddPlayerStatistics5G(ShootingCharacter))
+    {
+        ++PlayerStats->Shots;
+    }
+    PendingShotShooter5G = ShootingCharacter;
+    PendingShotAssister5G.Reset();
+    const float ShotTime = GetWorld()->GetTimeSeconds();
+    if (AssistReceiver5G.Get() == ShootingCharacter &&
+        AssistPasser5G.IsValid() &&
+        AssistPasser5G.Get() != ShootingCharacter &&
+        AssistPasser5G->GetTeam() == ShotTeamForStats &&
+        ShotTime - AssistPassWorldTime5G <= 12.0f)
+    {
+        PendingShotAssister5G = AssistPasser5G;
+    }
+    ClearAssistCandidate5G();
     bPendingShot5E = true;
     PendingShotTeam5E = ShotTeamForStats;
     PendingShotWorldTime5E = GetWorld()->GetTimeSeconds();
@@ -209,6 +272,16 @@ void ASoccerMatchManager::RegisterGoalkeeperSave5E(
             ? MatchStatistics5D.PlayerTeam : MatchStatistics5D.OpponentTeam;
     ++ShootingTotalsForStats.ShotsOnTarget;
     ++GoalkeeperTotalsForStats.GoalkeeperSaves;
+    if (FSoccerPlayerMatchStatistics5G* ShooterStats =
+        FindOrAddPlayerStatistics5G(PendingShotShooter5G.Get()))
+    {
+        ++ShooterStats->ShotsOnTarget;
+    }
+    if (FSoccerPlayerMatchStatistics5G* KeeperStats =
+        FindOrAddPlayerStatistics5G(SavingCharacter))
+    {
+        ++KeeperStats->Saves;
+    }
     bPendingShotClassifiedOnTarget5E = true;
 }
 
@@ -1268,6 +1341,10 @@ void ASoccerMatchManager::UpdateGroundBodyContests(float DeltaTime)
 void ASoccerMatchManager::InitializeMatchClock()
 {
 	MatchStatistics5D = FSoccerMatchStatistics5D();
+    PlayerStatistics5G.Empty();
+    ClearAssistCandidate5G();
+    PendingShotShooter5G.Reset();
+    PendingShotAssister5G.Reset();
     bPendingShot5E = false;
     bPendingShotProjectedOnGoal5E = false;
     bPendingShotClassifiedOnTarget5E = false;
@@ -5170,6 +5247,8 @@ bool ASoccerMatchManager::RegisterControlledBallPossession(
     // A controlled new possession ends the previous shot trajectory. In the
     // goalkeeper path the save is recorded first, at physical contact.
     bPendingShot5E = false;
+    PendingShotShooter5G.Reset();
+    PendingShotAssister5G.Reset();
 	PossessingCharacter = NewPossessingCharacter;
 	PossessionTeam = ConvertTeamToPossessionTeam(
 		NewPossessingCharacter->GetTeam()
@@ -5206,6 +5285,8 @@ void ASoccerMatchManager::RegisterOpenPlayPassIntent(
 		return;
 	}
 
+    // A new pass replaces any previously completed assist opportunity.
+    ClearAssistCandidate5G();
 	bOpenPlayPassIntentActive = true;
 	OpenPlayPasser = Passer;
 	OpenPlayIntendedReceiver = IntendedReceiver;
@@ -21800,9 +21881,70 @@ void ASoccerMatchManager::HandleGoalScored(ESoccerTeam ScoringTeam)
             ScoringTeam == ESoccerTeam::PlayerTeam
                 ? MatchStatistics5D.PlayerTeam : MatchStatistics5D.OpponentTeam;
         ++ScorerTotalsForStats.ShotsOnTarget;
+        if (FSoccerPlayerMatchStatistics5G* ShooterStats =
+            FindOrAddPlayerStatistics5G(PendingShotShooter5G.Get()))
+        {
+            ++ShooterStats->ShotsOnTarget;
+        }
         bPendingShotClassifiedOnTarget5E = true;
     }
+
+    // Attribute the scorer only when the last confirmed contact agrees with
+    // the attacking shot, or when a goalkeeper merely deflected that shot.
+    ASoccerCharacterBase* CreditedScorer = nullptr;
+    const bool bRecentScoringShot = IsPendingShotRecent5E() &&
+        PendingShotTeam5E == ScoringTeam && PendingShotShooter5G.IsValid();
+    const bool bKeeperDeflection = IsValid(LastTouchCharacter) &&
+        LastTouchCharacter->GetTeam() != ScoringTeam &&
+        Cast<ASoccerAICharacter>(LastTouchCharacter) != nullptr &&
+        Cast<ASoccerAICharacter>(LastTouchCharacter)->GetPlayerRole() ==
+            ESoccerPlayerRole::Goalkeeper;
+
+    if (bRecentScoringShot &&
+        (LastTouchCharacter == PendingShotShooter5G.Get() || bKeeperDeflection))
+    {
+        CreditedScorer = PendingShotShooter5G.Get();
+    }
+    else if (!bRecentScoringShot && IsValid(LastTouchCharacter) &&
+        LastTouchCharacter->GetTeam() == ScoringTeam)
+    {
+        CreditedScorer = LastTouchCharacter;
+    }
+
+    if (IsValid(CreditedScorer))
+    {
+        if (FSoccerPlayerMatchStatistics5G* ScorerStats =
+            FindOrAddPlayerStatistics5G(CreditedScorer))
+        {
+            ++ScorerStats->Goals;
+        }
+        if (bRecentScoringShot && CreditedScorer == PendingShotShooter5G.Get() &&
+            PendingShotAssister5G.IsValid() &&
+            PendingShotAssister5G.Get() != CreditedScorer &&
+            PendingShotAssister5G->GetTeam() == ScoringTeam)
+        {
+            if (FSoccerPlayerMatchStatistics5G* AssistStats =
+                FindOrAddPlayerStatistics5G(PendingShotAssister5G.Get()))
+            {
+                ++AssistStats->Assists;
+            }
+        }
+    }
+    else if (IsValid(LastTouchCharacter) &&
+        LastTouchCharacter->GetTeam() != ScoringTeam && !bKeeperDeflection)
+    {
+        // Only display an own goal if the last legal touch is truly opposing;
+        // the scoreboard remains the referee's authoritative team result.
+        if (FSoccerPlayerMatchStatistics5G* OwnGoalStats =
+            FindOrAddPlayerStatistics5G(LastTouchCharacter))
+        {
+            ++OwnGoalStats->OwnGoals;
+        }
+    }
     bPendingShot5E = false;
+    PendingShotShooter5G.Reset();
+    PendingShotAssister5G.Reset();
+    ClearAssistCandidate5G();
 
 	PendingKickoffTeam =
 		GetOppositeTeam(ScoringTeam);
@@ -22283,6 +22425,7 @@ bool ASoccerMatchManager::RegisterPassiveBallDeflection(
 		);
 	}
 
+    ClearAssistCandidate5G();
 	ClearOpenPlayPassIntent();
 
 	/*
@@ -22580,6 +22723,19 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 		);
 	}
 
+    // Stage 5G: only a received intended pass may become an assist.
+    // A touch by any other player interrupts an earlier candidate.
+    if (AssistReceiver5G.IsValid() && AssistReceiver5G.Get() != TouchingCharacter)
+    {
+        ClearAssistCandidate5G();
+    }
+    ASoccerCharacterBase* CompletedPasser5G =
+        bOpenPlayPassIntentActive &&
+        OpenPlayIntendedReceiver == TouchingCharacter &&
+        IsValid(OpenPlayPasser) &&
+        OpenPlayPasser->GetTeam() == TouchingCharacter->GetTeam()
+            ? OpenPlayPasser : nullptr;
+
 	// El primer toque posterior al golpeo termina la reserva del receptor,
 	// incluso si ese toque luego deriva en una infraccion de offside.
 	ClearOpenPlayPassIntent();
@@ -22588,6 +22744,15 @@ bool ASoccerMatchManager::TryRegisterIntentionalBallTouch(
 	{
 		return false;
 	}
+
+    // Confirm an assist candidate only after the touch passes the referee's
+    // legality checks. An offside reception is not a completed pass.
+    if (IsValid(CompletedPasser5G))
+    {
+        AssistPasser5G = CompletedPasser5G;
+        AssistReceiver5G = TouchingCharacter;
+        AssistPassWorldTime5G = GetWorld() ? GetWorld()->GetTimeSeconds() : -1000.0f;
+    }
 
 	bHasPassiveDeflectionTacticalAttackTeam = false;
 	bHasLastTouchTeam = true;
