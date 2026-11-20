@@ -1,4 +1,4 @@
-﻿//SoccerMatchManager.h
+//SoccerMatchManager.h
 
 #pragma once
 
@@ -89,6 +89,35 @@ struct FSoccerMatchAnnouncement
     float DurationSeconds = 3.5f;
 };
 
+// Stage 5D: match analytics use authoritative decisions and controlled-ball time.
+// Possession percentages exclude loose-ball intervals; no shots are inferred.
+struct FSoccerMatchTeamStatistics5D
+{
+    float ControlledPossessionSeconds = 0.0f;
+    int32 FreeKicksWon = 0; // includes free kicks awarded for offside
+    int32 OffsidesCommitted = 0;
+    int32 PenaltiesWon = 0;
+    int32 CornersWon = 0;
+    int32 ThrowInsWon = 0;
+    int32 GoalKicksWon = 0;
+};
+
+struct FSoccerMatchStatistics5D
+{
+    FSoccerMatchTeamStatistics5D PlayerTeam;
+    FSoccerMatchTeamStatistics5D OpponentTeam;
+};
+
+enum class ESoccerConfirmedDecision5D : uint8
+{
+    Offside,
+    FreeKick,
+    Penalty,
+    Corner,
+    ThrowIn,
+    GoalKick
+};
+
 UCLASS()
 class THIRDPERSONCPP_API ASoccerMatchManager : public AActor
 {
@@ -129,6 +158,12 @@ public:
     const FSoccerMatchAnnouncement& GetLatestMatchAnnouncement() const
     {
         return LatestMatchAnnouncement;
+    }
+
+    // Read-only cumulative statistics for the current match.
+    const FSoccerMatchStatistics5D& GetMatchStatistics5D() const
+    {
+        return MatchStatistics5D;
     }
 
 	virtual void Tick(float DeltaTime) override;
@@ -1075,6 +1110,11 @@ bool IsPenaltyMatchStateActive() const;
     );
     FString GetAnnouncementClubName(ESoccerTeam Team) const;
     FSoccerMatchAnnouncement LatestMatchAnnouncement;
+
+    void RecordConfirmedDecision5D(ESoccerTeam BenefitingTeam,
+        ESoccerConfirmedDecision5D DecisionType);
+    void UpdateControlledPossession5D(float DeltaTime);
+    FSoccerMatchStatistics5D MatchStatistics5D;
 
 	TUniquePtr<ISoccerMatchState> ActiveMatchState;
 	ESoccerMatchStateTransition PendingMatchStateTransition = ESoccerMatchStateTransition::None;

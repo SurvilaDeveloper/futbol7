@@ -60,6 +60,8 @@ private:
     void DrawMatchAnnouncement();
 
 	void DrawMatchScoreboard();
+	void DrawCompactPossession5D();
+	void DrawPeriodSummary5D();
 
 	void DrawMatchClock();
 

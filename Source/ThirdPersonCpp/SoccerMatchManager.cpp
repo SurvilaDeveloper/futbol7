@@ -85,6 +85,64 @@ void ASoccerMatchManager::PublishMatchAnnouncement(
     LatestMatchAnnouncement.DurationSeconds = FMath::Clamp(DurationSeconds, 1.0f, 8.0f);
 }
 
+// Stage 5D: counter updates belong to the confirmed referee decision, not to
+// HUD text. Restart state transitions cannot duplicate these statistics.
+void ASoccerMatchManager::RecordConfirmedDecision5D(
+    ESoccerTeam BenefitingTeam, ESoccerConfirmedDecision5D DecisionType)
+{
+    FSoccerMatchTeamStatistics5D& Beneficiary =
+        BenefitingTeam == ESoccerTeam::PlayerTeam
+        ? MatchStatistics5D.PlayerTeam : MatchStatistics5D.OpponentTeam;
+    FSoccerMatchTeamStatistics5D& Opponent =
+        BenefitingTeam == ESoccerTeam::PlayerTeam
+        ? MatchStatistics5D.OpponentTeam : MatchStatistics5D.PlayerTeam;
+
+    switch (DecisionType)
+    {
+    case ESoccerConfirmedDecision5D::Offside:
+        ++Opponent.OffsidesCommitted;
+        ++Beneficiary.FreeKicksWon;
+        break;
+    case ESoccerConfirmedDecision5D::FreeKick:
+        ++Beneficiary.FreeKicksWon;
+        break;
+    case ESoccerConfirmedDecision5D::Penalty:
+        ++Beneficiary.PenaltiesWon;
+        break;
+    case ESoccerConfirmedDecision5D::Corner:
+        ++Beneficiary.CornersWon;
+        break;
+    case ESoccerConfirmedDecision5D::ThrowIn:
+        ++Beneficiary.ThrowInsWon;
+        break;
+    case ESoccerConfirmedDecision5D::GoalKick:
+        ++Beneficiary.GoalKicksWon;
+        break;
+    }
+}
+
+void ASoccerMatchManager::UpdateControlledPossession5D(float DeltaTime)
+{
+    // Track only known ball control in live play. Exclude pauses, restarts,
+    // half-time, replay and loose-ball time rather than guessing a team.
+    if (DeltaTime <= 0.0f || !bCurrentHalfClockStarted ||
+        !IsMatchPeriodGameplayActive() ||
+        MatchPlayState != ESoccerMatchPlayState::Playing ||
+        (GetWorld() != nullptr && UGameplayStatics::IsGamePaused(GetWorld())))
+    {
+        return;
+    }
+    const float SafeSeconds = FMath::Clamp(DeltaTime, 0.0f, 0.20f);
+    if (PossessionTeam == ESoccerPossessionTeam::PlayerTeam)
+    {
+        MatchStatistics5D.PlayerTeam.ControlledPossessionSeconds += SafeSeconds;
+    }
+    else if (PossessionTeam == ESoccerPossessionTeam::OpponentTeam)
+    {
+        MatchStatistics5D.OpponentTeam.ControlledPossessionSeconds += SafeSeconds;
+    }
+}
+
 FString ASoccerMatchManager::GetAnnouncementClubName(ESoccerTeam Team) const
 {
     const USoccerClubProfile* Club = GetClubProfileForTeam(Team);
@@ -551,6 +609,7 @@ void ASoccerMatchManager::Tick(float DeltaTime)
 	DrawIndividualMarkingDebug();
 
 	UpdateMatchClock(DeltaTime);
+	UpdateControlledPossession5D(DeltaTime);
 	UpdatePendingMatchSubstitutions();
 	UpdateVisualSubstitution(DeltaTime);
 	if (VisualSubstitutionPhase != ESoccerVisualSubstitutionPhase::None)
@@ -1117,6 +1176,7 @@ void ASoccerMatchManager::UpdateGroundBodyContests(float DeltaTime)
 
 void ASoccerMatchManager::InitializeMatchClock()
 {
+	MatchStatistics5D = FSoccerMatchStatistics5D();
 	CurrentMatchPeriod = ESoccerMatchPeriod::FirstHalf;
 	CurrentHalfElapsedSeconds = 0.0f;
 	TotalMatchElapsedSeconds = 0.0f;
@@ -7214,6 +7274,7 @@ void ASoccerMatchManager::HandleOffsideOffense(
 		RestartLocation
 	);
 
+    RecordConfirmedDecision5D(RestartTeam, ESoccerConfirmedDecision5D::Offside);
     PublishMatchAnnouncement(
         TEXT("FUERA DE JUEGO"),
         FString::Printf(TEXT("TIRO LIBRE PARA %s"), *GetAnnouncementClubName(RestartTeam)),
@@ -7337,6 +7398,7 @@ void ASoccerMatchManager::StartDirectFreeKickRestart(
 	))
 	{
         PlayRefereeWhistle(RefereeWhistleStoppageSound);
+        RecordConfirmedDecision5D(RestartTeam, ESoccerConfirmedDecision5D::FreeKick);
         PublishMatchAnnouncement(
             TEXT("TIRO LIBRE"),
             FString::Printf(TEXT("PARA %s"), *GetAnnouncementClubName(RestartTeam)),
@@ -7651,6 +7713,7 @@ bool ASoccerMatchManager::StartPenaltyKickRestart(
     );
     if (bActivated)
     {
+        RecordConfirmedDecision5D(RestartTeam, ESoccerConfirmedDecision5D::Penalty);
         PublishMatchAnnouncement(
             TEXT("PENAL"),
             FString::Printf(TEXT("PARA %s"), *GetAnnouncementClubName(RestartTeam)),
@@ -11493,18 +11556,21 @@ void ASoccerMatchManager::BeginBallOutOfPlayDelay(
     const FString ClubName = GetAnnouncementClubName(RestartTeam);
     if (RestartType == ESoccerRestartType::ThrowIn)
     {
+        RecordConfirmedDecision5D(RestartTeam, ESoccerConfirmedDecision5D::ThrowIn);
         PublishMatchAnnouncement(TEXT("SAQUE LATERAL"),
             FString::Printf(TEXT("PARA %s"), *ClubName),
             FLinearColor(0.35f, 0.78f, 0.94f, 1.0f));
     }
     else if (RestartType == ESoccerRestartType::CornerKick)
     {
+        RecordConfirmedDecision5D(RestartTeam, ESoccerConfirmedDecision5D::Corner);
         PublishMatchAnnouncement(TEXT("CÓRNER"),
             FString::Printf(TEXT("PARA %s"), *ClubName),
             FLinearColor(0.35f, 0.78f, 0.94f, 1.0f));
     }
     else if (RestartType == ESoccerRestartType::GoalKick)
     {
+        RecordConfirmedDecision5D(RestartTeam, ESoccerConfirmedDecision5D::GoalKick);
         PublishMatchAnnouncement(TEXT("SAQUE DE ARCO"),
             FString::Printf(TEXT("PARA %s"), *ClubName),
             FLinearColor(0.35f, 0.78f, 0.94f, 1.0f));

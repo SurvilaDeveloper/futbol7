@@ -835,6 +835,17 @@ void AGameHUD::DrawHUD()
     }
 
     DrawMatchAnnouncement();
+    DrawCompactPossession5D();
+    if (IsValid(MatchManager) &&
+        (MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::HalfTime ||
+         MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime))
+    {
+        DrawPeriodSummary5D();
+        // In breaks there is no controlled player action; keep the result legible.
+        DrawSoccerDebugTextFeed();
+        DrawSoccerDebugPanel();
+        return;
+    }
     DrawHumanPassRequestIndicator();
     DrawHumanJumpHeaderIndicator();
     DrawQuickTacticsFeedback();
@@ -1497,6 +1508,204 @@ void AGameHUD::DrawMatchAnnouncement()
             MatchAnnouncementAccent.B, Opacity),
         Canvas->SizeX * 0.5f - DetailWidth * 0.5f,
         Y + PaddingY + TitleHeight + Gap, DetailFont, DetailScale);
+}
+
+// Stage 5D: match data in a deliberately separate strip below the clock.
+// These shares only describe recognized CONTROLLED possession, not all play time.
+void AGameHUD::DrawCompactPossession5D()
+{
+    if (Canvas == nullptr || !IsValid(MatchManager) ||
+        !MatchManager->ShouldShowMatchClockHUD() ||
+        !MatchManager->IsMatchPeriodGameplayActive())
+    {
+        return;
+    }
+    const FSoccerMatchStatistics5D& Stats = MatchManager->GetMatchStatistics5D();
+    const float HomeSeconds = Stats.PlayerTeam.ControlledPossessionSeconds;
+    const float AwaySeconds = Stats.OpponentTeam.ControlledPossessionSeconds;
+    const float Total = HomeSeconds + AwaySeconds;
+    if (Total < 1.0f) return;
+
+    UFont* Font = GEngine != nullptr ? GEngine->GetSmallFont() : nullptr;
+    if (Font == nullptr) return;
+    const float UIScale = SoccerHudPresentation5B::GetScale(Canvas);
+    const float BoxWidth = FMath::Min(350.0f * UIScale,
+        Canvas->SizeX - 24.0f * UIScale);
+    const float BoxHeight = 36.0f * UIScale;
+    const float BoxX = (Canvas->SizeX - BoxWidth) * 0.5f;
+    const float BoxY = HUDTopBandBottomY + 5.0f * UIScale;
+    const float Share = FMath::Clamp(HomeSeconds / Total, 0.0f, 1.0f);
+    const int32 HomePct = FMath::RoundToInt(Share * 100.0f);
+    const FString Label = FString::Printf(TEXT("POSESIÓN CONTROLADA   %d%% - %d%%"),
+        HomePct, 100 - HomePct);
+    float LabelWidth = 0.0f, LabelHeight = 0.0f;
+    float LabelScale = 0.91f * UIScale;
+    GetTextSize(Label, LabelWidth, LabelHeight, Font, LabelScale);
+    if (LabelWidth > BoxWidth - 16.0f * UIScale && LabelWidth > 0.0f)
+    {
+        LabelScale *= (BoxWidth - 16.0f * UIScale) / LabelWidth;
+        GetTextSize(Label, LabelWidth, LabelHeight, Font, LabelScale);
+    }
+    DrawRect(FLinearColor(0.015f, 0.037f, 0.049f, 0.87f),
+        BoxX, BoxY, BoxWidth, BoxHeight);
+    DrawText(Label, FLinearColor(0.91f, 0.96f, 0.98f, 1.0f),
+        BoxX + (BoxWidth - LabelWidth) * 0.5f, BoxY + 4.0f * UIScale,
+        Font, LabelScale);
+    const float BarX = BoxX + 10.0f * UIScale;
+    const float BarY = BoxY + 26.0f * UIScale;
+    const float BarW = BoxWidth - 20.0f * UIScale;
+    const float BarH = 5.0f * UIScale;
+    DrawRect(SoccerHudPresentation5B::GetClubAccent(MatchManager,
+        ESoccerTeam::OpponentTeam), BarX, BarY, BarW, BarH);
+    DrawRect(SoccerHudPresentation5B::GetClubAccent(MatchManager,
+        ESoccerTeam::PlayerTeam), BarX, BarY, BarW * Share, BarH);
+    HUDTopBandBottomY = BoxY + BoxHeight;
+    HUDRightStatusNextY = HUDTopBandBottomY + 9.0f * UIScale;
+}
+
+void AGameHUD::DrawPeriodSummary5D()
+{
+    if (Canvas == nullptr || !IsValid(MatchManager) ||
+        (MatchManager->GetCurrentMatchPeriod() != ESoccerMatchPeriod::HalfTime &&
+         MatchManager->GetCurrentMatchPeriod() != ESoccerMatchPeriod::FullTime) ||
+        IsClubSelectionMenuVisible() || IsFormationMenuVisible() ||
+        IsQuickTacticsMenuVisible() || IsSubstitutionMenuVisible())
+    {
+        return;
+    }
+
+    UFont* Font = GEngine != nullptr ? GEngine->GetSmallFont() : nullptr;
+    UFont* TitleFont = GEngine != nullptr ? GEngine->GetMediumFont() : nullptr;
+    if (Font == nullptr || TitleFont == nullptr) return;
+
+    const FSoccerMatchStatistics5D& Stats = MatchManager->GetMatchStatistics5D();
+    const FSoccerMatchTeamStatistics5D& Local = Stats.PlayerTeam;
+    const FSoccerMatchTeamStatistics5D& Rival = Stats.OpponentTeam;
+    const float TotalPossession = Local.ControlledPossessionSeconds +
+        Rival.ControlledPossessionSeconds;
+    const float Share = TotalPossession > 0.01f
+        ? Local.ControlledPossessionSeconds / TotalPossession : 0.5f;
+    const bool bHasPossession = TotalPossession > 0.01f;
+    const int32 LocalPercent = FMath::RoundToInt(Share * 100.0f);
+
+    const float UIScale = SoccerHudPresentation5B::GetScale(Canvas);
+    const float BoxW = FMath::Min(540.0f * UIScale, Canvas->SizeX - 24.0f * UIScale);
+    const float BoxH = 288.0f * UIScale;
+    const float X = (Canvas->SizeX - BoxW) * 0.5f;
+    // Always below the referee's four-second decision banner if it is active.
+    const float PreferredY = FMath::Max(Canvas->SizeY * 0.36f,
+        HUDMainAnnouncementBottomY + 10.0f * UIScale);
+    const float Y = FMath::Min(PreferredY,
+        FMath::Max(HUDTopBandBottomY + 10.0f * UIScale,
+            Canvas->SizeY - BoxH - 9.0f * UIScale));
+    const float InnerX = X + 16.0f * UIScale;
+    const float InnerW = BoxW - 32.0f * UIScale;
+    const float CenterX = X + BoxW * 0.5f;
+
+    DrawRect(FLinearColor(0.014f, 0.035f, 0.050f, 0.93f), X, Y, BoxW, BoxH);
+    const FLinearColor LocalAccent = SoccerHudPresentation5B::GetClubAccent(MatchManager,
+        ESoccerTeam::PlayerTeam);
+    const FLinearColor RivalAccent = SoccerHudPresentation5B::GetClubAccent(MatchManager,
+        ESoccerTeam::OpponentTeam);
+    DrawRect(LocalAccent, X, Y, BoxW * 0.5f, 3.0f * UIScale);
+    DrawRect(RivalAccent, CenterX, Y, BoxW * 0.5f, 3.0f * UIScale);
+
+    const bool bFinal = MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime;
+    const FString Heading = bFinal ? TEXT("RESUMEN FINAL") : TEXT("RESUMEN DEL PRIMER TIEMPO");
+    float HeadingScale = 1.18f * UIScale;
+    float HeadingW = 0.0f, HeadingH = 0.0f;
+    GetTextSize(Heading, HeadingW, HeadingH, TitleFont, HeadingScale);
+    if (HeadingW > InnerW && HeadingW > 0.0f) HeadingScale *= InnerW / HeadingW;
+    GetTextSize(Heading, HeadingW, HeadingH, TitleFont, HeadingScale);
+    DrawText(Heading, FLinearColor::White,
+        CenterX - HeadingW * 0.5f, Y + 12.0f * UIScale, TitleFont, HeadingScale);
+
+    const FString Names[2] = {
+        SoccerHudPresentation5B::GetClubName(MatchManager, ESoccerTeam::PlayerTeam),
+        SoccerHudPresentation5B::GetClubName(MatchManager, ESoccerTeam::OpponentTeam)};
+    const float NameMaxW = InnerW * 0.39f;
+    for (int32 i=0; i<2; ++i)
+    {
+        FString Visible = Names[i];
+        float Width=0.0f, Height=0.0f;
+        float Scale=1.00f * UIScale;
+        GetTextSize(Visible, Width, Height, Font, Scale);
+        if (Width > NameMaxW && Width > 0.0f)
+        {
+            Scale = FMath::Max(0.65f * UIScale, Scale * NameMaxW / Width);
+            GetTextSize(Visible, Width, Height, Font, Scale);
+        }
+        for (int32 k=Names[i].Len()-1; Width > NameMaxW && k>=3; --k)
+        {
+            Visible = Names[i].Left(k) + TEXT("...");
+            GetTextSize(Visible, Width, Height, Font, Scale);
+        }
+        const float TeamTextX = i == 0 ? InnerX : X + BoxW - 16.0f * UIScale - Width;
+        DrawText(Visible, FLinearColor(0.86f, 0.95f, 0.96f, 1.0f),
+            TeamTextX, Y + 45.0f * UIScale, Font, Scale);
+    }
+    const FString Goals = FString::Printf(TEXT("%d - %d"),
+        MatchManager->GetPlayerTeamScore(), MatchManager->GetOpponentTeamScore());
+    float GoalsW=0.0f, GoalsH=0.0f;
+    GetTextSize(Goals, GoalsW, GoalsH, TitleFont, 1.15f * UIScale);
+    DrawText(Goals, FLinearColor::White, CenterX - GoalsW*0.5f,
+        Y + 45.0f * UIScale, TitleFont, 1.15f * UIScale);
+
+    const float BarX = InnerX;
+    const float BarY = Y + 93.0f * UIScale;
+    const float BarWidth = InnerW;
+    DrawText(TEXT("POSESIÓN CONTROLADA"), FLinearColor(0.69f,0.82f,0.85f,1.0f),
+        InnerX, Y + 72.0f * UIScale, Font, 0.87f * UIScale);
+    const FString PossessionValue = bHasPossession
+        ? FString::Printf(TEXT("%d%%  -  %d%%"), LocalPercent, 100-LocalPercent)
+        : TEXT("--   /   --");
+    float PossW=0.0f, PossH=0.0f;
+    GetTextSize(PossessionValue, PossW, PossH, Font, 0.91f * UIScale);
+    DrawText(PossessionValue, FLinearColor::White,
+        X + BoxW - 16.0f * UIScale - PossW, Y + 72.0f * UIScale,
+        Font, 0.91f * UIScale);
+    DrawRect(RivalAccent, BarX, BarY, BarWidth, 8.0f * UIScale);
+    DrawRect(LocalAccent, BarX, BarY, BarWidth * Share, 8.0f * UIScale);
+
+    // Values represent confirmed referee decisions; offsides are attributed to
+    // the offending side and other decisions to the beneficiary side.
+    struct FDisplayStat5D { const TCHAR* Label; int32 Left; int32 Right; };
+    const FDisplayStat5D Rows[] = {
+        { TEXT("CÓRNERS"), Local.CornersWon, Rival.CornersWon },
+        { TEXT("TIROS LIBRES"), Local.FreeKicksWon, Rival.FreeKicksWon },
+        { TEXT("OFFSIDES"), Local.OffsidesCommitted, Rival.OffsidesCommitted },
+        { TEXT("PENALES"), Local.PenaltiesWon, Rival.PenaltiesWon },
+        { TEXT("CAMBIOS"),
+            MatchManager->GetMatchSquadState(ESoccerTeam::PlayerTeam).SubstitutionHistory.Num(),
+            MatchManager->GetMatchSquadState(ESoccerTeam::OpponentTeam).SubstitutionHistory.Num() }
+    };
+    const int32 NumberOfRows = static_cast<int32>(sizeof(Rows) / sizeof(Rows[0]));
+    for (int32 i = 0; i < NumberOfRows; ++i)
+    {
+        const float RowY = Y + (114.0f + i*27.0f) * UIScale;
+        if ((i % 2) == 0)
+        {
+            DrawRect(FLinearColor(0.065f,0.12f,0.145f,0.55f),
+                InnerX, RowY - 2.0f * UIScale, InnerW, 25.0f * UIScale);
+        }
+        const FString LeftValue = FString::FromInt(Rows[i].Left);
+        const FString RightValue = FString::FromInt(Rows[i].Right);
+        float LeftW=0.0f, LeftH=0.0f, RightW=0.0f, RightH=0.0f;
+        float LabelW=0.0f, LabelH=0.0f;
+        const float RowScale = 1.00f * UIScale;
+        GetTextSize(LeftValue, LeftW, LeftH, Font, RowScale);
+        GetTextSize(RightValue, RightW, RightH, Font, RowScale);
+        GetTextSize(Rows[i].Label, LabelW, LabelH, Font, 0.91f * UIScale);
+        DrawText(LeftValue, FLinearColor::White,
+            InnerX + 13.0f * UIScale, RowY, Font, RowScale);
+        DrawText(Rows[i].Label, FLinearColor(0.72f,0.86f,0.89f,1.0f),
+            CenterX - LabelW * 0.5f, RowY, Font, 0.91f * UIScale);
+        DrawText(RightValue, FLinearColor::White,
+            X + BoxW - 29.0f * UIScale - RightW, RowY, Font, RowScale);
+    }
+    DrawText(TEXT("Posesión: solo tiempo con control confirmado de pelota"),
+        FLinearColor(0.60f,0.73f,0.76f,1.0f), InnerX,
+        Y + 262.0f * UIScale, Font, 0.76f * UIScale);
 }
 
 void AGameHUD::DrawMatchScoreboard()
