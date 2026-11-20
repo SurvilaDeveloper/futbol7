@@ -17,6 +17,7 @@
 #include "SoccerFormationMenuWidget.h"
 #include "SoccerQuickTacticsWidget.h"
 #include "SoccerSubstitutionMenuWidget.h"
+#include "SoccerPeriodSummaryWidget.h"
 #include "SoccerTacticalPresetManager.h"
 
 #include "Engine/Engine.h"
@@ -164,6 +165,7 @@ void AGameHUD::OpenInitialMatchMenu()
 
 void AGameHUD::ShowClubSelectionMenu()
 {
+	if (IsPeriodSummaryVisible5F()) return;
 	if (!IsValid(MatchManager))
 	{
 		FindMatchManager();
@@ -235,6 +237,7 @@ void AGameHUD::HandleClubSelectionConfirmed()
 
 void AGameHUD::ShowFormationMenu()
 {
+	if (IsPeriodSummaryVisible5F()) return;
 	if (IsClubSelectionMenuVisible() || IsSubstitutionMenuVisible())
 	{
 		return;
@@ -316,6 +319,7 @@ bool AGameHUD::IsFormationMenuVisible() const
 
 void AGameHUD::ShowQuickTacticsMenu()
 {
+	if (IsPeriodSummaryVisible5F()) return;
 	if (IsClubSelectionMenuVisible() || IsFormationMenuVisible() || IsSubstitutionMenuVisible())
 	{
 		return;
@@ -389,6 +393,7 @@ bool AGameHUD::IsQuickTacticsMenuVisible() const
 
 void AGameHUD::ShowSubstitutionMenu()
 {
+	if (IsPeriodSummaryVisible5F()) return;
 	if (IsClubSelectionMenuVisible() || IsFormationMenuVisible() || IsQuickTacticsMenuVisible())
 	{
 		return;
@@ -807,6 +812,74 @@ void AGameHUD::DrawInstantReplayOverlay()
         HintFont, HintScale);
 }
 
+bool AGameHUD::IsPeriodSummaryVisible5F() const
+{
+	return IsValid(PeriodSummaryWidget5F) && PeriodSummaryWidget5F->IsInViewport();
+}
+
+void AGameHUD::DismissFinalSummary5F()
+{
+	if (IsValid(MatchManager) &&
+		MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime)
+	{
+		bFinalSummaryDismissed5F = true;
+		UpdatePeriodSummary5F();
+	}
+}
+
+void AGameHUD::UpdatePeriodSummary5F()
+{
+	if (!IsValid(MatchManager))
+	{
+		return;
+	}
+	const ESoccerMatchPeriod Period = MatchManager->GetCurrentMatchPeriod();
+	if (Period == ESoccerMatchPeriod::FirstHalf)
+	{
+		// A new match in the same world must be allowed to show its final recap.
+		bFinalSummaryDismissed5F = false;
+	}
+	const bool bHalfTime = Period == ESoccerMatchPeriod::HalfTime;
+	const bool bFullTime = Period == ESoccerMatchPeriod::FullTime;
+	const bool bOtherMenu = IsClubSelectionMenuVisible() ||
+		IsFormationMenuVisible() || IsQuickTacticsMenuVisible() ||
+		IsSubstitutionMenuVisible();
+	const bool bShouldShow = (bHalfTime || (bFullTime && !bFinalSummaryDismissed5F)) &&
+		!bOtherMenu;
+	APlayerController* PlayerController = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+	if (!bShouldShow || PlayerController == nullptr)
+	{
+		if (IsPeriodSummaryVisible5F())
+		{
+			PeriodSummaryWidget5F->RemoveFromParent();
+			if (PlayerController && !bOtherMenu)
+			{
+				PlayerController->bShowMouseCursor = bPeriodSummaryPreviousCursor5F;
+				PlayerController->SetInputMode(FInputModeGameOnly());
+			}
+		}
+		return;
+	}
+	if (!IsValid(PeriodSummaryWidget5F))
+	{
+		PeriodSummaryWidget5F = CreateWidget<USoccerPeriodSummaryWidget>(
+			PlayerController, USoccerPeriodSummaryWidget::StaticClass());
+	}
+	if (IsValid(PeriodSummaryWidget5F) && !PeriodSummaryWidget5F->IsInViewport())
+	{
+		bPeriodSummaryPreviousCursor5F = PlayerController->bShowMouseCursor;
+		PeriodSummaryWidget5F->InitializeForMatch(MatchManager);
+		PeriodSummaryWidget5F->AddToViewport(180);
+		PlayerController->bShowMouseCursor = true;
+		PlayerController->bEnableClickEvents = true;
+		FInputModeUIOnly InputMode;
+		InputMode.SetWidgetToFocus(PeriodSummaryWidget5F->TakeWidget());
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		PlayerController->SetInputMode(InputMode);
+		PeriodSummaryWidget5F->SetKeyboardFocus();
+	}
+}
+
 void AGameHUD::DrawHUD()
 {
     Super::DrawHUD();
@@ -820,6 +893,7 @@ void AGameHUD::DrawHUD()
     HUDRightStatusNextY = 0.0f;
     HUDMainAnnouncementBottomY = 0.0f;
     ObserveMatchAnnouncement();
+	UpdatePeriodSummary5F();
 
     // Keep the result visible in replay, but hide normal play controls.
     DrawMatchScoreboard();
@@ -840,10 +914,12 @@ void AGameHUD::DrawHUD()
         (MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::HalfTime ||
          MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime))
     {
-        DrawPeriodSummary5D();
-        // In breaks there is no controlled player action; keep the result legible.
-        DrawSoccerDebugTextFeed();
-        DrawSoccerDebugPanel();
+        // The interactive 5F screen owns the full report. Retain the legacy
+        // Canvas report only as a fallback if UMG cannot be constructed.
+        if (!IsPeriodSummaryVisible5F() && !bFinalSummaryDismissed5F)
+        {
+            DrawPeriodSummary5D();
+        }
         return;
     }
     DrawHumanPassRequestIndicator();

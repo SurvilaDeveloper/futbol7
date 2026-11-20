@@ -11,6 +11,7 @@ class USoccerClubSelectionWidget;
 class USoccerQuickTacticsWidget;
 class USoccerSubstitutionMenuWidget;
 class USoccerTacticalPresetManager;
+class USoccerPeriodSummaryWidget;
 
 UCLASS()
 class THIRDPERSONCPP_API AGameHUD : public AHUD
@@ -41,6 +42,10 @@ public:
 
 	void ShowQuickTacticsFeedback(const FString& Message);
 
+	// Called only by the full-time statistics overlay.
+	void DismissFinalSummary5F();
+
+
 private:
 	void OpenInitialMatchMenu();
 
@@ -62,6 +67,9 @@ private:
 	void DrawMatchScoreboard();
 	void DrawCompactPossession5D();
 	void DrawPeriodSummary5D();
+	void UpdatePeriodSummary5F();
+	bool IsPeriodSummaryVisible5F() const;
+
 
 	void DrawMatchClock();
 
@@ -95,6 +103,12 @@ private:
 
 	UPROPERTY()
 		USoccerTacticalPresetManager* TacticalPresetManager = nullptr;
+
+	UPROPERTY(Transient)
+	USoccerPeriodSummaryWidget* PeriodSummaryWidget5F = nullptr;
+	bool bFinalSummaryDismissed5F = false;
+	bool bPeriodSummaryPreviousCursor5F = false;
+
 
 	// Calculated every DrawHUD: keeps overlays separated at different resolutions.
 	float HUDTopBandBottomY = 0.0f;

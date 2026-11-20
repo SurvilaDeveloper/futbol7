@@ -388,6 +388,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match|Time")
 	float GetHalfTimeRemainingSeconds() const;
 
+	// Stage 5F. The break remains active until the player requests the
+	// second-half kickoff. Requesting early never skips the field-side swap.
+	UFUNCTION(BlueprintCallable, Category = "Soccer|Match|Time")
+	void RequestHalfTimeContinue5F();
+
+	UFUNCTION(BlueprintPure, Category = "Soccer|Match|Time")
+	bool IsHalfTimeContinueRequested5F() const;
+
+
 	UFUNCTION(BlueprintPure, Category = "Soccer|Match|Time")
 	bool IsMatchPeriodGameplayActive() const;
 
@@ -3913,6 +3922,12 @@ bool IsPenaltyMatchStateActive() const;
 	// Once regulation time is passed in open play, the award cannot increase.
 	// If a restart is already under way, finish measuring it before locking.
 	bool bCurrentHalfAddedTimeLocked = false;
+
+	// Enable to keep the statistics on screen until Continue is pressed.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Match|Time")
+	bool bRequireHalfTimeContinue5F = true;
+
+	bool bHalfTimeContinueRequested5F = false;
 
 	float HalfTimeElapsedSeconds = 0.0f;
 	bool bCurrentHalfClockStarted = false;

@@ -1281,6 +1281,7 @@ void ASoccerMatchManager::InitializeMatchClock()
 	FirstHalfActualElapsedSeconds = 0.0f;
 	bLateRestartRequiresLivePlay = false;
 	bCurrentHalfAddedTimeLocked = false;
+	bHalfTimeContinueRequested5F = false;
 	HalfTimeElapsedSeconds = 0.0f;
 	bCurrentHalfClockStarted = false;
 	SetMatchPeriodHumanMoveLock(false);
@@ -1358,7 +1359,8 @@ void ASoccerMatchManager::UpdateMatchClock(float DeltaTime)
 
 		if (
 			bMinimumHalfTimeElapsed &&
-			(bTransitionComplete || bTransitionTimedOut)
+			(bTransitionComplete || bTransitionTimedOut) &&
+			(!bRequireHalfTimeContinue5F || bHalfTimeContinueRequested5F)
 		)
 		{
 			CompleteHalfTime();
@@ -1553,6 +1555,20 @@ void ASoccerMatchManager::StartCurrentHalfClockIfNeeded()
 	bCurrentHalfClockStarted = true;
 }
 
+void ASoccerMatchManager::RequestHalfTimeContinue5F()
+{
+	if (CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime)
+	{
+		bHalfTimeContinueRequested5F = true;
+	}
+}
+
+bool ASoccerMatchManager::IsHalfTimeContinueRequested5F() const
+{
+	return CurrentMatchPeriod == ESoccerMatchPeriod::HalfTime &&
+		bHalfTimeContinueRequested5F;
+}
+
 void ASoccerMatchManager::BeginHalfTime()
 {
 	if (CurrentMatchPeriod != ESoccerMatchPeriod::FirstHalf)
@@ -1562,6 +1578,7 @@ void ASoccerMatchManager::BeginHalfTime()
 
 	FirstHalfActualElapsedSeconds = CurrentHalfElapsedSeconds;
 	TotalMatchElapsedSeconds = FirstHalfActualElapsedSeconds;
+	bHalfTimeContinueRequested5F = false;
 	HalfTimeElapsedSeconds = 0.0f;
 	bCurrentHalfClockStarted = false;
     CurrentMatchPeriod = ESoccerMatchPeriod::HalfTime;
@@ -1582,6 +1599,7 @@ void ASoccerMatchManager::CompleteHalfTime()
 		return;
 	}
 
+	bHalfTimeContinueRequested5F = false;
 	CurrentMatchPeriod = ESoccerMatchPeriod::SecondHalf;
 	CurrentHalfElapsedSeconds = 0.0f;
 	TotalMatchElapsedSeconds = FirstHalfActualElapsedSeconds;
