@@ -30,6 +30,7 @@ private:
     UFUNCTION() void HandleConfirmAbort5M();
     UFUNCTION() void HandleCancelAbort5M();
     UFUNCTION() void HandlePlay5M();
+    UFUNCTION() void HandleMainMenu6A();
     UFUNCTION() void HandleSeeField5M();
 
     UPROPERTY(Transient) UTextBlock* TitleText5M = nullptr;
@@ -39,6 +40,7 @@ private:
     UPROPERTY(Transient) UButton* ConfirmAbortButton5M = nullptr;
     UPROPERTY(Transient) UButton* CancelAbortButton5M = nullptr;
     UPROPERTY(Transient) UButton* PlayButton5M = nullptr;
+    UPROPERTY(Transient) UButton* MainMenuButton6A = nullptr;
     UPROPERTY(Transient) UButton* SeeFieldButton5M = nullptr;
     int32 CurrentMode5M = 0; // 0 paused, 1 confirm, 2 aborted, 3 finished
 };

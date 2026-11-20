@@ -24,7 +24,8 @@ public:
     UPROPERTY(BlueprintAssignable)
     FSoccerHistoryClosed5L OnHistoryClosed;
 
-    void OpenHistory();
+    // True when opened from the main menu; false from club selection.
+    void OpenHistory(bool bFromMainMenu = false);
 
 protected:
     virtual void NativeOnInitialized() override;
@@ -52,6 +53,7 @@ private:
     UPROPERTY(Transient) UScrollBox* Details = nullptr;
     UPROPERTY(Transient) UTextBlock* SummaryHeading = nullptr;
     UPROPERTY(Transient) UTextBlock* RecordCount = nullptr;
+    UPROPERTY(Transient) UTextBlock* ReturnButtonLabel = nullptr;
     UPROPERTY(Transient) UButton* ReportButton = nullptr;
     UPROPERTY(Transient) UButton* PlayersButton = nullptr;
     UPROPERTY(Transient) UButton* EventsButton = nullptr;

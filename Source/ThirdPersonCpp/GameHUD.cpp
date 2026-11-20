@@ -986,6 +986,27 @@ void AGameHUD::StartNewMatch5M()
     UGameplayStatics::OpenLevel(World5M, FName(*CurrentMap5M), true);
 }
 
+void AGameHUD::ReturnToMainMenu6A()
+{
+    UWorld* CurrentWorld6A = GetWorld();
+    if (!CurrentWorld6A || !IsValid(MatchManager)) return;
+    // No silent abandonment: during play, the user must pause and confirm abort.
+    const bool bAtFullTime =
+        MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime;
+    const bool bAborted = MatchManager->IsMatchAborted5M();
+    const bool bChoosingOpponent = !bOpponentConfirmedForSession5M &&
+        IsClubSelectionMenuVisible();
+    if (!bAtFullTime && !bAborted && !bChoosingOpponent) return;
+
+    UE_LOG(LogTemp, Display,
+        TEXT("[MainMenu6A] Returning to main menu; fulltime=%d aborted=%d prematch=%d"),
+        bAtFullTime ? 1 : 0, bAborted ? 1 : 0, bChoosingOpponent ? 1 : 0);
+    if (UGameplayStatics::IsGamePaused(CurrentWorld6A))
+        UGameplayStatics::SetGamePaused(CurrentWorld6A, false);
+    UGameplayStatics::OpenLevel(CurrentWorld6A,
+        FName(TEXT("/Game/ThirdPersonCPP/Maps/SoccerMainMenuMap")), true);
+}
+
 void AGameHUD::DismissPostMatchMenu5M()
 {
     if (!IsValid(MatchManager) ||

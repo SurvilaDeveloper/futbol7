@@ -1,5 +1,6 @@
 #include "SoccerClubSelectionWidget.h"
 #include "SoccerUITheme.h"
+#include "GameHUD.h"
 
 #include "SoccerClubProfile.h"
 #include "SoccerClubIdButton.h"
@@ -171,6 +172,11 @@ FReply USoccerClubSelectionWidget::NativeOnPreviewKeyDown(
         FSoccerUINavigation::IsEditingText(WidgetTree))
         return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 
+    if (Key == EKeys::Escape || Key == EKeys::Gamepad_FaceButton_Right)
+    {
+        HandleMainMenuClicked6A();
+        return FReply::Handled();
+    }
     if (Key == EKeys::H)
     {
         HandleHistoryClicked();
@@ -189,7 +195,9 @@ FReply USoccerClubSelectionWidget::NativeOnPreviewKeyDown(
     if (Vertical != 0) { NavigateOpponentGrid(Vertical); return FReply::Handled(); }
     if (FSoccerUINavigation::IsAccept(Key))
     {
-        if (IsValid(HistoryButton) && HistoryButton->HasKeyboardFocus())
+        if (IsValid(MainMenuButton6A) && MainMenuButton6A->HasKeyboardFocus())
+            HandleMainMenuClicked6A();
+        else if (IsValid(HistoryButton) && HistoryButton->HasKeyboardFocus())
             HandleHistoryClicked();
         else if (IsValid(ViewSquadsButton) && ViewSquadsButton->HasKeyboardFocus())
             HandleViewSquadsClicked();
@@ -579,6 +587,15 @@ void USoccerClubSelectionWidget::HandleViewSquadsClicked()
     OpenSquadViewer();
 }
 
+void USoccerClubSelectionWidget::HandleMainMenuClicked6A()
+{
+    if (APlayerController* PC = GetOwningPlayer())
+    {
+        if (AGameHUD* Hud = Cast<AGameHUD>(PC->GetHUD()))
+            Hud->ReturnToMainMenu6A();
+    }
+}
+
 void USoccerClubSelectionWidget::HandleHistoryClicked()
 {
     APlayerController* PC = GetOwningPlayer();
@@ -739,6 +756,14 @@ void USoccerClubSelectionWidget::BuildWidgetTree()
     // Both actions share the same pre-match footer; viewing squads never
     // starts a match or changes which opposing club is selected.
     UHorizontalBox* Footer = WidgetTree->ConstructWidget<UHorizontalBox>();
+    MainMenuButton6A = MakeClubSelectionButton(WidgetTree, TEXT("MENÚ PRINCIPAL"));
+    MainMenuButton6A->OnClicked.AddDynamic(
+        this, &USoccerClubSelectionWidget::HandleMainMenuClicked6A);
+    UHorizontalBoxSlot* MainMenuFooterSlot6A =
+        Footer->AddChildToHorizontalBox(MainMenuButton6A);
+    MainMenuFooterSlot6A->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+    MainMenuFooterSlot6A->SetPadding(FMargin(0.0f, 0.0f, 7.0f, 0.0f));
+
     ViewSquadsButton = MakeClubSelectionButton(
         WidgetTree, TEXT("VER PLANTELES"));
     ViewSquadsButton->OnClicked.AddDynamic(

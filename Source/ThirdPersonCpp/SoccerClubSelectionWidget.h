@@ -67,6 +67,7 @@ private:
     void HandleViewSquadsClicked();
     UFUNCTION()
     void HandleHistoryClicked();
+    UFUNCTION() void HandleMainMenuClicked6A();
     UFUNCTION()
     void HandleHistoryClosed();
 
@@ -117,6 +118,7 @@ private:
     UButton* ViewSquadsButton = nullptr;
     UPROPERTY(Transient)
     UButton* HistoryButton = nullptr;
+    UPROPERTY(Transient) UButton* MainMenuButton6A = nullptr;
 
     UPROPERTY(Transient)
     UButton* ConfirmButton = nullptr;

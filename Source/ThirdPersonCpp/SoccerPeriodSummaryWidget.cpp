@@ -208,6 +208,17 @@ void USoccerPeriodSummaryWidget::BuildScreen5F()
         &USoccerPeriodSummaryWidget::HandlePlayAgain5M);
     AddColumn(BottomActions5M, PlayAgainButton5M, 1.0f);
     PlayAgainButton5M->SetVisibility(ESlateVisibility::Collapsed);
+    MainMenuButton6A = WidgetTree->ConstructWidget<UButton>();
+    MainMenuButton6A->SetBackgroundColor(FLinearColor(0.15f, 0.31f, 0.39f, 1.0f));
+    USizeBox* MenuContentSize6A = WidgetTree->ConstructWidget<USizeBox>();
+    MenuContentSize6A->SetMinDesiredHeight(55.0f);
+    MenuContentSize6A->SetContent(NewText(WidgetTree,
+        TEXT("MENÚ PRINCIPAL"), 18, White));
+    MainMenuButton6A->AddChild(MenuContentSize6A);
+    MainMenuButton6A->OnClicked.AddDynamic(this,
+        &USoccerPeriodSummaryWidget::HandleMainMenu6A);
+    AddColumn(BottomActions5M, MainMenuButton6A, 1.0f);
+    MainMenuButton6A->SetVisibility(ESlateVisibility::Collapsed);
     AddVertical(Content, BottomActions5M, FMargin(20.0f, 0.0f, 20.0f, 0.0f));
 }
 
@@ -820,6 +831,8 @@ void USoccerPeriodSummaryWidget::RefreshContinueHint5F()
 	const bool bFinal = MatchManager->GetCurrentMatchPeriod() == ESoccerMatchPeriod::FullTime;
     if (IsValid(PlayAgainButton5M))
         PlayAgainButton5M->SetVisibility(bFinal ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+    if (IsValid(MainMenuButton6A))
+        MainMenuButton6A->SetVisibility(bFinal ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
     // At full time this is a secondary CLOSE action, not a PLAY action.
     ContinueButton->SetBackgroundColor(bFinal
         ? FLinearColor(0.15f, 0.31f, 0.39f, 1.0f)
@@ -849,6 +862,16 @@ void USoccerPeriodSummaryWidget::NativeTick(const FGeometry& MyGeometry, float I
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	RefreshContinueHint5F();
+}
+
+void USoccerPeriodSummaryWidget::HandleMainMenu6A()
+{
+    if (!IsValid(MatchManager) ||
+        MatchManager->GetCurrentMatchPeriod() != ESoccerMatchPeriod::FullTime)
+        return;
+    if (APlayerController* PC = GetOwningPlayer())
+        if (AGameHUD* Hud = Cast<AGameHUD>(PC->GetHUD()))
+            Hud->ReturnToMainMenu6A();
 }
 
 void USoccerPeriodSummaryWidget::HandlePlayAgain5M()

@@ -156,14 +156,24 @@ void USoccerMatchHistoryWidget::BuildHistoryScreen()
     Vertical(Layout, Text(WidgetTree,
         TEXT("Izq/Der: partido  |  1/2/3/4: pestañas  |  Esc/B: volver"),
         13, Muted), 6.0f);
-    UButton* Close = Button(WidgetTree, TEXT("VOLVER A SELECCIÓN DE CLUB"));
+    UButton* Close = WidgetTree->ConstructWidget<UButton>();
+    ReturnButtonLabel = Text(WidgetTree, TEXT("VOLVER A SELECCIÓN DE CLUB"), 16, White);
+    Close->AddChild(ReturnButtonLabel);
     Close->SetBackgroundColor(FLinearColor(0.14f, 0.47f, 0.37f, 1.0f));
     Close->OnClicked.AddDynamic(this, &USoccerMatchHistoryWidget::HandleClose);
     Vertical(Layout, Close, 0);
 }
 
-void USoccerMatchHistoryWidget::OpenHistory()
+void USoccerMatchHistoryWidget::OpenHistory(bool bFromMainMenu)
 {
+    // The same history widget can be opened from two different screens.
+    // Update the button each time, including when a widget instance is reused.
+    if (IsValid(ReturnButtonLabel))
+    {
+        ReturnButtonLabel->SetText(FText::FromString(bFromMainMenu
+            ? TEXT("VOLVER AL MENÚ PRINCIPAL")
+            : TEXT("VOLVER A SELECCIÓN DE CLUB")));
+    }
     FSoccerMatchHistory5L::LoadRecent(Matches, 100);
     TArray<FSoccerArchivedMatch5L> AllSavedMatches5M;
     FSoccerMatchHistory5L::LoadRecent(AllSavedMatches5M, 10000);

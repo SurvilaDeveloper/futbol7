@@ -49,6 +49,7 @@ public:
     void ResumeMatch5M();
     void AbortMatch5M();
     void StartNewMatch5M();
+    void ReturnToMainMenu6A();
     void DismissPostMatchMenu5M();
 
 
