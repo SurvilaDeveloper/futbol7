@@ -102,6 +102,10 @@ public:
 
     void SetPossessed(bool bNewPossessed);
 
+    // Training-only parity: override effective runtime values observed in a match.
+    // Does not modify the BP_SoccerBall asset or any match instance.
+    void ApplyTrainingBallParity6G(float InHorizontalLaunchScale, float InAirLinearDamping);
+
     /*
      * Applies a deterministic velocity after a head/chest contact.
      * The ball remains free and its trajectory revision changes immediately.

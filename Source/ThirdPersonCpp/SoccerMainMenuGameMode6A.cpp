@@ -15,6 +15,15 @@ ASoccerMainMenuGameMode6A::ASoccerMainMenuGameMode6A()
     PlayerControllerClass = APlayerController::StaticClass();
 }
 
+void ASoccerMainMenuGameMode6A::InitGame(const FString& MapName,
+    const FString& Options, FString& ErrorMessage)
+{
+    Super::InitGame(MapName, Options, ErrorMessage);
+    // Optional map travel parameter from "Elegir otro ejercicio".
+    bOpenTrainingSelectorOnStart6B =
+        UGameplayStatics::ParseOption(Options, TEXT("TrainingSelector")) == TEXT("1");
+}
+
 void ASoccerMainMenuGameMode6A::BeginPlay()
 {
     Super::BeginPlay();
@@ -47,5 +56,9 @@ void ASoccerMainMenuGameMode6A::CreateMainMenu6A()
     Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
     PC->SetInputMode(Mode);
     MainMenuWidget6A->FocusFirstAction6A();
+    if (bOpenTrainingSelectorOnStart6B)
+    {
+        MainMenuWidget6A->OpenTrainingSelector6B();
+    }
     UE_LOG(LogTemp, Display, TEXT("[MainMenu6A] Main menu ready"));
 }

@@ -24,6 +24,13 @@
 #include "SoccerDebugManager.h"
 #include "SoccerPlayerProfile.h"
 #include "GameHUD.h"
+// Training 6F: runtime comparison of editable Blueprint values in match/training.
+#include "UObject/UnrealType.h"
+#include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
+#include "GameFramework/GameModeBase.h"
+
 
 namespace
 {
@@ -159,6 +166,9 @@ void AThirdPersonCppCharacter::SetupPlayerInputComponent(class UInputComponent* 
 	// Direct debug binding: no Project Settings Action Mapping is required.
 	PlayerInputComponent->BindKey(EKeys::NumPadSix, IE_Pressed, this, &AThirdPersonCppCharacter::DebugStartOpponentPenalty);
 	PlayerInputComponent->BindKey(EKeys::NumPadSeven, IE_Pressed, this, &AThirdPersonCppCharacter::DebugStartPlayerTeamPenalty);
+	// F6: write live editor/Blueprint properties and movement samples to Saved/DribbleDiagnostics.
+	PlayerInputComponent->BindKey(EKeys::F6, IE_Pressed, this, &AThirdPersonCppCharacter::ToggleDribbleComparison6F);
+
 	// Stage 9N: the substitution debug keys (NumPad 0-5) were retired.
 	// Human substitutions now use the N menu and the rival coach evaluates
 	// substitutions automatically during the match.
@@ -768,6 +778,7 @@ bool AThirdPersonCppCharacter::GetHumanJumpHeaderHUDStatus(
 void AThirdPersonCppCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	UpdateDribbleComparison6F(DeltaTime);
 
 	// Restarts and goalkeeper hand possession are authoritative. Clear any
 	// direct ball action immediately, before assisted aerial/chase logic has a
@@ -3928,6 +3939,27 @@ bool AThirdPersonCppCharacter::UpdateHumanDribbleRepositionMovement(
 	return true;
 }
 
+FString AThirdPersonCppCharacter::GetPhysicalDribbleDiagnostics6E() const
+{
+    const float CurrentPlayerSpeed = GetVelocity().Size2D();
+    const float BaseRequestedSpeed = FMath::Clamp(
+        DribbleTouchSpeed + CurrentPlayerSpeed * DribbleTouchPlayerSpeedMultiplier,
+        DribbleTouchSpeed,
+        DribbleTouchMaxSpeed);
+    // Do not call GetProfileAdjustedDribbleTouchSpeed here: that function
+    // consumes randomness when a profile is installed and would affect play.
+    const float MaximumWalkSpeed = GetCharacterMovement()
+        ? GetCharacterMovement()->MaxWalkSpeed : 0.0f;
+    const FString LastTouchText = LastPhysicalDribbleCommandedSpeed6E >= 0.0f
+        ? FString::Printf(TEXT("%.0f"), LastPhysicalDribbleCommandedSpeed6E)
+        : TEXT("sin toque");
+    return FString::Printf(
+        TEXT("Jugador %.0f / max %.0f cm/s | Toque base %.0f | Ult. toque %s cm/s | Param %.0f + v*%.2f, tope %.0f"),
+        CurrentPlayerSpeed, MaximumWalkSpeed, BaseRequestedSpeed,
+        *LastTouchText, DribbleTouchSpeed,
+        DribbleTouchPlayerSpeedMultiplier, DribbleTouchMaxSpeed);
+}
+
 void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 {
 	if (ControlledBall == nullptr)
@@ -4313,6 +4345,7 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 			false
 		);
 
+		LastPhysicalDribbleCommandedSpeed6E = TouchSpeedToUse;
 		ControlledBall->DribbleTouch(
 			CurrentDribbleDirection,
 			TouchSpeedToUse,
@@ -8840,4 +8873,145 @@ void AThirdPersonCppCharacter::ReleaseHumanPhysicalPossession(
 	{
 		EnterManualControl();
 	}
+}
+
+
+// ============================================================================
+// TRAINING 6F - READ-ONLY MATCH VS TRAINING DIAGNOSTICS
+// F6 starts/stops the recording. No tuning value or physical state is modified.
+// ============================================================================
+namespace
+{
+    void AppendEditableProperties6F(FString& Text, const UObject* Object, const TCHAR* Heading)
+    {
+        Text += FString::Printf(TEXT("\n[%s]\n"), Heading);
+        if (!IsValid(Object))
+        {
+            Text += TEXT("Object missing\n");
+            return;
+        }
+        Text += FString::Printf(TEXT("Class=%s\nObject=%s\n"),
+            *Object->GetClass()->GetPathName(), *Object->GetPathName());
+        for (TFieldIterator<FProperty> It(Object->GetClass(), EFieldIteratorFlags::IncludeSuper); It; ++It)
+        {
+            FProperty* Property = *It;
+            if (!Property || !Property->HasAnyPropertyFlags(CPF_Edit) ||
+                Property->HasAnyPropertyFlags(CPF_Deprecated)) continue;
+            // Primitive values are directly comparable and avoid exporting full
+            // nested asset graphs. Struct and object refs are still represented
+            // by their normal UObject text rather than traversed recursively.
+            FString Value;
+            const void* FieldAddress = Property->ContainerPtrToValuePtr<void>(Object);
+            Property->ExportTextItem(Value, FieldAddress, nullptr,
+                const_cast<UObject*>(Object), PPF_None);
+            Value.ReplaceInline(TEXT("\r"), TEXT(" "));
+            Value.ReplaceInline(TEXT("\n"), TEXT(" "));
+            Text += FString::Printf(TEXT("%s=%s\n"), *Property->GetName(), *Value);
+        }
+    }
+
+    ASoccerBall* ResolveDribbleBall6F(const AThirdPersonCppCharacter* Player, ASoccerBall* Current)
+    {
+        if (IsValid(Current)) return Current;
+        if (!Player || !Player->GetWorld()) return nullptr;
+        ASoccerBall* Closest = nullptr;
+        float MinDistSq = TNumericLimits<float>::Max();
+        for (TActorIterator<ASoccerBall> It(Player->GetWorld()); It; ++It)
+        {
+            const float DistSq = FVector::DistSquared2D(It->GetActorLocation(), Player->GetActorLocation());
+            if (DistSq < MinDistSq) { MinDistSq = DistSq; Closest = *It; }
+        }
+        return Closest;
+    }
+}
+
+void AThirdPersonCppCharacter::ToggleDribbleComparison6F()
+{
+    if (!IsLocallyControlled() || !GetWorld()) return;
+    if (bDribbleComparisonRecording6F)
+    {
+        bDribbleComparisonRecording6F = false;
+        UE_LOG(LogTemp, Display, TEXT("[Dribble6F] Recording stopped: %s"), *DribbleComparisonCsvPath6F);
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 6.f, FColor::Green,
+            FString::Printf(TEXT("DRIBBLE 6F: CSV saved in Saved/DribbleDiagnostics (%s)"), *DribbleComparisonMode6F));
+        return;
+    }
+
+    const AGameModeBase* GameMode = GetWorld()->GetAuthGameMode();
+    const FString GameModeName = GameMode ? GameMode->GetClass()->GetName() : TEXT("UnknownGameMode");
+    DribbleComparisonMode6F = GameModeName.Contains(TEXT("Training"), ESearchCase::IgnoreCase)
+        ? TEXT("Training") : TEXT("Match");
+    const FString Folder = FPaths::ProjectSavedDir() / TEXT("DribbleDiagnostics");
+    IFileManager::Get().MakeDirectory(*Folder, true);
+    const FString Base = DribbleComparisonMode6F + TEXT("_") +
+        FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
+    DribbleComparisonCsvPath6F = Folder / (Base + TEXT(".csv"));
+    const FString SnapshotPath = Folder / (Base + TEXT("_properties.txt"));
+    ASoccerBall* Ball = ResolveDribbleBall6F(this, ControlledBall);
+
+    FString Properties = TEXT("TRAINING 6F - RUNTIME PROPERTIES (not C++ constructor defaults)\n");
+    Properties += FString::Printf(TEXT("Mode=%s\nGameMode=%s\nDate=%s\nPossessingBall=%s\nProfile=%s\n"),
+        *DribbleComparisonMode6F, *GameModeName,
+        *FDateTime::Now().ToString(), IsPossessingBall() ? TEXT("Yes") : TEXT("No"),
+        HasPlayerProfile() ? *GetPlayerProfileId().ToString() : TEXT("NONE"));
+    if (HasPlayerProfile() && GetPlayerProfile())
+    {
+        Properties += FString::Printf(TEXT("Profile.Pace=%.3f\nProfile.Acceleration=%.3f\nProfile.BallControl=%.3f\nProfile.Dribbling=%.3f\n"),
+            (float)GetPlayerProfile()->Attributes.Physical.Pace,
+            (float)GetPlayerProfile()->Attributes.Physical.Acceleration,
+            (float)GetPlayerProfile()->Attributes.Technical.BallControl,
+            (float)GetPlayerProfile()->Attributes.Technical.Dribbling);
+    }
+    AppendEditableProperties6F(Properties, this, TEXT("PLAYER - ThirdPersonCharacter effective UPROPERTY values"));
+    AppendEditableProperties6F(Properties, GetCharacterMovement(), TEXT("PLAYER MOVEMENT COMPONENT"));
+    AppendEditableProperties6F(Properties, Ball, TEXT("BALL - BP_SoccerBall effective UPROPERTY values"));
+    AppendEditableProperties6F(Properties,
+        Ball ? Ball->FindComponentByClass<UStaticMeshComponent>() : nullptr,
+        TEXT("BALL STATIC MESH COMPONENT"));
+    FFileHelper::SaveStringToFile(Properties, *SnapshotPath);
+
+    const FString Header = TEXT("time_s,possessing,player_speed_cm_s,player_max_speed_cm_s,ball_speed_cm_s,distance_cm,forward_cm,ball_x,ball_y,ball_z,last_touch_cm_s,base_touch_cm_s,profile_ballcontrol_0_1,ball_linear_damping,ball_angular_damping\n");
+    FFileHelper::SaveStringToFile(Header, *DribbleComparisonCsvPath6F);
+    DribbleComparisonSampleAccum6F = 0.f;
+    DribbleComparisonStartedAt6F = GetWorld()->GetTimeSeconds();
+    bDribbleComparisonRecording6F = true;
+    UE_LOG(LogTemp, Display, TEXT("[Dribble6F] %s started: %s ; properties: %s"),
+        *DribbleComparisonMode6F, *DribbleComparisonCsvPath6F, *SnapshotPath);
+    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 7.f, FColor::Yellow,
+        FString::Printf(TEXT("DRIBBLE 6F: RECORDING %s - F6 to stop"), *DribbleComparisonMode6F));
+}
+
+void AThirdPersonCppCharacter::UpdateDribbleComparison6F(float DeltaSeconds)
+{
+    if (!bDribbleComparisonRecording6F || !IsLocallyControlled() || !GetWorld()) return;
+    DribbleComparisonSampleAccum6F += DeltaSeconds;
+    if (DribbleComparisonSampleAccum6F < 0.20f) return; // 5 samples per second
+    DribbleComparisonSampleAccum6F = 0.f;
+    ASoccerBall* Ball = ResolveDribbleBall6F(this, ControlledBall);
+    if (!IsValid(Ball)) return;
+
+    const FVector Relative = Ball->GetActorLocation() - GetActorLocation();
+    const FVector Velocity = GetVelocity();
+    const float Speed = Velocity.Size2D();
+    const FVector Forward = Speed > 5.f ? Velocity.GetSafeNormal2D() : GetActorForwardVector();
+    const float BaseTouch = FMath::Clamp(
+        DribbleTouchSpeed + Speed * DribbleTouchPlayerSpeedMultiplier,
+        DribbleTouchSpeed, DribbleTouchMaxSpeed);
+    const UCharacterMovementComponent* Movement = GetCharacterMovement();
+    const UStaticMeshComponent* BallMesh6F = Ball->FindComponentByClass<UStaticMeshComponent>();
+    const float LinearDamping = BallMesh6F ? BallMesh6F->GetLinearDamping() : -1.f;
+    const float AngularDamping = BallMesh6F ? BallMesh6F->GetAngularDamping() : -1.f;
+    const FString Line = FString::Printf(
+        TEXT("%.2f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.3f,%.3f\n"),
+        GetWorld()->GetTimeSeconds() - DribbleComparisonStartedAt6F,
+        IsPossessingBall() ? 1 : 0, Speed,
+        Movement ? Movement->MaxWalkSpeed : -1.f,
+        Ball->GetBallPhysicsVelocity().Size2D(), Relative.Size2D(),
+        FVector::DotProduct(Relative, Forward),
+        Ball->GetActorLocation().X, Ball->GetActorLocation().Y, Ball->GetActorLocation().Z,
+        LastPhysicalDribbleCommandedSpeed6E, BaseTouch,
+        HasPlayerProfile() ? GetPlayerProfileBallControlAlpha() : -1.f,
+        LinearDamping, AngularDamping);
+    FFileHelper::SaveStringToFile(Line, *DribbleComparisonCsvPath6F,
+        FFileHelper::EEncodingOptions::AutoDetect, &IFileManager::Get(), FILEWRITE_Append);
 }

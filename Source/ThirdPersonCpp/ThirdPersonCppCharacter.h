@@ -48,6 +48,10 @@ public:
 
 	bool GetAimCursorScreenPosition(float& OutScreenX, float& OutScreenY) const;
 
+	// Read-only diagnostics: values used by the normal physical dribble system.
+	FString GetPhysicalDribbleDiagnostics6E() const;
+
+
 	UFUNCTION(BlueprintPure, Category = "Soccer|Control")
 		bool IsPossessingBall() const;
 
@@ -458,6 +462,15 @@ protected:
 
 	float GetEnergyAdjustedFastRunSpeed() const;
 	bool IsSelectedMovementSpeed(float Speed) const;
+
+    // Training 6F - opt-in, read-only diagnostics (F6 in game).
+    void ToggleDribbleComparison6F();
+    void UpdateDribbleComparison6F(float DeltaSeconds);
+    bool bDribbleComparisonRecording6F = false;
+    float DribbleComparisonStartedAt6F = 0.f;
+    float DribbleComparisonSampleAccum6F = 0.f;
+    FString DribbleComparisonCsvPath6F;
+    FString DribbleComparisonMode6F;
 
 private:
 
@@ -910,6 +923,8 @@ private:
 	bool bHasDesiredDribbleDirection = false;
 
 	float LastDribbleTouchTime = -1000.0f;
+	float LastPhysicalDribbleCommandedSpeed6E = -1.0f;
+
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling")
 		float DribbleTouchPlayerSpeedMultiplier = 1.0f;

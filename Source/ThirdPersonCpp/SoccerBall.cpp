@@ -2452,6 +2452,17 @@ void ASoccerBall::ApplyTackleContactAtLocation(
     MarkTrajectoryChanged();
 }
 
+void ASoccerBall::ApplyTrainingBallParity6G(float InHorizontalLaunchScale, float InAirLinearDamping)
+{
+    HorizontalLaunchSpeedScale = FMath::Clamp(InHorizontalLaunchScale, 0.1f, 2.0f);
+    AirLinearDamping = FMath::Max(0.0f, InAirLinearDamping);
+
+    // Tick already switches between ground and air damping. Do not force an
+    // airborne damping value onto a grounded ball at startup.
+    UE_LOG(LogTemp, Display, TEXT("[Training6G] Ball runtime tuning: HorizontalLaunchSpeedScale=%.3f, AirLinearDamping=%.3f"),
+        HorizontalLaunchSpeedScale, AirLinearDamping);
+}
+
 void ASoccerBall::SetPossessed(bool bNewPossessed)
 {
     if (BallMesh == nullptr)

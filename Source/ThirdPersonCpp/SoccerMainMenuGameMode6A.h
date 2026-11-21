@@ -14,10 +14,13 @@ class THIRDPERSONCPP_API ASoccerMainMenuGameMode6A : public AGameModeBase
 
 public:
     ASoccerMainMenuGameMode6A();
+    virtual void InitGame(const FString& MapName, const FString& Options,
+        FString& ErrorMessage) override;
     virtual void BeginPlay() override;
 
 private:
     void CreateMainMenu6A();
+    bool bOpenTrainingSelectorOnStart6B = false;
 
     UPROPERTY(Transient)
     USoccerMainMenuWidget6A* MainMenuWidget6A = nullptr;

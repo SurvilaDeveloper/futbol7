@@ -1,5 +1,6 @@
 #include "SoccerMainMenuWidget6A.h"
 #include "SoccerMatchHistoryWidget.h"
+#include "Training/Shared/SoccerTrainingSelectorWidget6B.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
@@ -112,8 +113,9 @@ void USoccerMainMenuWidget6A::BuildMenu6A()
     PlayButton6A->OnClicked.AddDynamic(this, &USoccerMainMenuWidget6A::HandlePlay6A);
     AddRow(Content, PlayButton6A, 12.0f);
 
-    AddRow(Content, Action(WidgetTree,
-        TEXT("ENTRENAMIENTO  ·  PRÓXIMAMENTE"), false, false), 12.0f);
+    TrainingButton6B = Action(WidgetTree, TEXT("ENTRENAMIENTO"));
+    TrainingButton6B->OnClicked.AddDynamic(this, &USoccerMainMenuWidget6A::HandleTraining6B);
+    AddRow(Content, TrainingButton6B, 12.0f);
 
     HistoryButton6A = Action(WidgetTree, TEXT("HISTORIAL DE PARTIDOS"));
     HistoryButton6A->OnClicked.AddDynamic(this, &USoccerMainMenuWidget6A::HandleHistory6A);
@@ -148,6 +150,9 @@ void USoccerMainMenuWidget6A::UpdateFocusColors6A()
     if (IsValid(PlayButton6A))
         PlayButton6A->SetBackgroundColor(PlayButton6A->HasKeyboardFocus()
             ? FLinearColor(0.46f, 0.98f, 0.62f, 1.0f) : Green);
+    if (IsValid(TrainingButton6B))
+        TrainingButton6B->SetBackgroundColor(TrainingButton6B->HasKeyboardFocus()
+            ? FLinearColor(0.22f, 0.52f, 0.55f, 1.0f) : Secondary);
     if (IsValid(HistoryButton6A))
         HistoryButton6A->SetBackgroundColor(HistoryButton6A->HasKeyboardFocus()
             ? FLinearColor(0.22f, 0.52f, 0.55f, 1.0f) : Secondary);
@@ -160,6 +165,7 @@ void USoccerMainMenuWidget6A::Navigate6A(int32 Step)
 {
     TArray<UButton*> Choices;
     Choices.Add(PlayButton6A);
+    Choices.Add(TrainingButton6B);
     Choices.Add(HistoryButton6A);
     Choices.Add(QuitButton6A);
     int32 Current = 0;
@@ -181,6 +187,49 @@ void USoccerMainMenuWidget6A::HandlePlay6A()
     UE_LOG(LogTemp, Display, TEXT("[MainMenu6A] Opening soccer match map"));
     UGameplayStatics::OpenLevel(this,
         FName(TEXT("/Game/ThirdPersonCPP/Maps/SoccerMainMap")), true);
+}
+
+void USoccerMainMenuWidget6A::HandleTraining6B()
+{
+    OpenTrainingSelector6B();
+}
+
+void USoccerMainMenuWidget6A::OpenTrainingSelector6B()
+{
+    APlayerController* PC = GetOwningPlayer();
+    if (!IsValid(PC)) return;
+    if (!IsValid(TrainingWidget6B))
+        TrainingWidget6B = CreateWidget<USoccerTrainingSelectorWidget6B>(
+            PC, USoccerTrainingSelectorWidget6B::StaticClass());
+    if (!IsValid(TrainingWidget6B)) return;
+    TrainingWidget6B->OnTrainingSelectorClosed6B.RemoveDynamic(
+        this, &USoccerMainMenuWidget6A::HandleTrainingClosed6B);
+    TrainingWidget6B->OnTrainingSelectorClosed6B.AddDynamic(
+        this, &USoccerMainMenuWidget6A::HandleTrainingClosed6B);
+    SetVisibility(ESlateVisibility::Hidden);
+    if (!TrainingWidget6B->IsInViewport()) TrainingWidget6B->AddToViewport(160);
+    TrainingWidget6B->SetVisibility(ESlateVisibility::Visible);
+    PC->bShowMouseCursor = true;
+    FInputModeUIOnly Mode;
+    Mode.SetWidgetToFocus(TrainingWidget6B->TakeWidget());
+    Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    PC->SetInputMode(Mode);
+    TrainingWidget6B->FocusFirstExercise6B();
+}
+
+void USoccerMainMenuWidget6A::HandleTrainingClosed6B()
+{
+    SetVisibility(ESlateVisibility::Visible);
+    APlayerController* PC = GetOwningPlayer();
+    if (!IsValid(PC)) return;
+    PC->bShowMouseCursor = true;
+    FInputModeUIOnly Mode;
+    if (IsValid(TrainingButton6B))
+        Mode.SetWidgetToFocus(TrainingButton6B->TakeWidget());
+    else Mode.SetWidgetToFocus(TakeWidget());
+    Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+    PC->SetInputMode(Mode);
+    if (IsValid(TrainingButton6B)) TrainingButton6B->SetKeyboardFocus();
 }
 
 void USoccerMainMenuWidget6A::HandleHistory6A()
@@ -250,7 +299,9 @@ FReply USoccerMainMenuWidget6A::NativeOnPreviewKeyDown(
     if (Key == EKeys::Enter || Key == EKeys::SpaceBar ||
         Key == EKeys::Gamepad_FaceButton_Bottom)
     {
-        if (IsValid(HistoryButton6A) && HistoryButton6A->HasKeyboardFocus())
+        if (IsValid(TrainingButton6B) && TrainingButton6B->HasKeyboardFocus())
+            HandleTraining6B();
+        else if (IsValid(HistoryButton6A) && HistoryButton6A->HasKeyboardFocus())
             HandleHistory6A();
         else if (IsValid(QuitButton6A) && QuitButton6A->HasKeyboardFocus())
             HandleQuit6A();
