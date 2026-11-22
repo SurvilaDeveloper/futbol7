@@ -113,6 +113,12 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
     if (Header6H) Header6H->SetText(FText::FromString(bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
         ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
+    if (Body6H)
+    {
+        FSlateFontInfo BodyFont6P = Body6H->Font;
+        BodyFont6P.Size = 20;
+        Body6H->SetFont(BodyFont6P);
+    }
     if (Body6H) Body6H->SetText(FText::FromString(bShot
         ? TEXT("Vas a realizar diez remates al arco desde distintas posiciones. Los primeros cuatro son libres; los seis siguientes incluyen barreras.\n\n"
                "No necesitas tomar posesi\u00f3n. Con el mouse, apunta al arco usando la cruz verde "
@@ -155,12 +161,17 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
     {
         if (Body6H)
         {
+            // The ten-shot report needs a smaller font to remain visible
+            // inside the existing 6H results panel.
+            FSlateFontInfo BodyFont6P = Body6H->Font;
+            BodyFont6P.Size = bShot ? 15 : 20;
+            Body6H->SetFont(BodyFont6P);
             const FString Summary6H = bShot
                 ? FString::Printf(TEXT("Remates realizados: %d / %d\nGoles: %d\nFallos: %d\nEfectividad: %.0f%%\n\nTiempo total: %.1f segundos"),
                     Mode->GetShotsCompleted6N(), Mode->GetShotAttemptsTotal6N(),
                     Mode->GetGoalsScored6N(), Mode->GetShotsCompleted6N() - Mode->GetGoalsScored6N(),
                     100.f * Mode->GetGoalsScored6N() / FMath::Max(1, Mode->GetShotsCompleted6N()),
-                    Mode->GetElapsedTime6B())
+                    Mode->GetElapsedTime6B()) + TEXT("\n\n") + Mode->GetShotResultsReport6P()
                 : bAutoPass
                 ? FString::Printf(TEXT("Completaste las cuatro marcas con autopases.\n\nTiempo empleado: %.1f segundos\nP\u00e9rdidas de control: %d"),
                     Mode->GetElapsedTime6B(), Mode->GetLostControlCount6B())
@@ -170,7 +181,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         }
         if (Feedback6H)
         {
-            const FString Result = bShot ? TEXT("Serie de diez remates terminada. Puedes repetirla para mejorar tus resultados.")
+            const FString Result = bShot ? TEXT("Revisa la causa de cada resultado. Sin resolucion significa que no se observo el cruce ni un contacto con barrera.")
                 : !Mode->IsTimeEvaluationEnabled6H()
                 ? TEXT("Evaluaci\u00f3n pendiente: todav\u00eda no definimos el tiempo de aprobaci\u00f3n.")
                 : Mode->GetElapsedTime6B() <= Mode->GetApprovalTime6H()

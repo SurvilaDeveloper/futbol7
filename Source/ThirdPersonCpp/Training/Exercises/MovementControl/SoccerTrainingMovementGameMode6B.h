@@ -10,6 +10,12 @@ class AThirdPersonCppCharacter;
 class USoccerPlayerProfile;
 class AStaticMeshActor;
 
+// 6P: keep the cause of each shot result separate from the goal counter.
+enum class ETrainingShotOutcome6P : uint8
+{
+    Goal, Wide, OverBar, Barrier, Unresolved
+};
+
 /** Standalone first dribbling lesson: guide the ball through four checkpoints. */
 UCLASS()
 class THIRDPERSONCPP_API ASoccerTrainingMovementGameMode6B : public AGameModeBase
@@ -32,6 +38,8 @@ public:
     int32 GetShotsCompleted6N() const { return ShotsCompleted6N; }
     int32 GetGoalsScored6N() const { return GoalsScored6N; }
     int32 GetShotAttemptsTotal6N() const { return 10; }
+    FString GetLastShotFeedback6P() const;
+    FString GetShotResultsReport6P() const;
     bool IsBetweenShotAttempts6N() const { return bBetweenShotAttempts6N; }
     void RegisterChargedShotRelease6M(float ChargeFraction);
     // Called only after an autopass click while the player possesses the ball.
@@ -97,6 +105,12 @@ private:
     float BarrierHeightCm6O = 175.f;
     UPROPERTY(EditAnywhere, Category="Training|Charged Shot|Barriers", meta=(ClampMin="120.0", ClampMax="600.0"))
     float BarrierWidthCm6O = 300.f;
+    // Results are reset when the exercise starts. A barrier contact is
+    // registered independently, even when the shot later reaches the goal.
+    TArray<ETrainingShotOutcome6P> ShotOutcomes6P;
+    TArray<float> ShotCharges6P;
+    TArray<bool> ShotBarrierContacts6P;
+    bool bBarrierContactThisShot6P = false;
     bool bBetweenShotAttempts6N = false;
     float NextAttemptAt6N = 0.f;
     bool bShotReleased6M = false;
@@ -130,7 +144,11 @@ private:
     void EnsureTrainingBallParity6G();
     void DrawCheckpoint6B() const;
     void TickChargedShot6M(float DeltaSeconds);
-    void ResolveShotAttempt6N(bool bGoal);
+    void ResolveShotAttempt6N(ETrainingShotOutcome6P Outcome);
+    UFUNCTION()
+    void OnPracticeBarrierHit6P(AActor* SelfActor, AActor* OtherActor,
+        FVector NormalImpulse, const FHitResult& Hit);
+    static FString ShotOutcomeLabel6P(ETrainingShotOutcome6P Outcome);
     void PrepareShotAttempt6N();
     void ClearPracticeBarriers6O();
     void SetupPracticeBarriers6O(const FVector& BallLocal);

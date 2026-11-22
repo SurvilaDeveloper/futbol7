@@ -167,9 +167,12 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
                 FMath::Max(0.001f, Current.X - PreviousBallLocal6M.X), 0.f, 1.f);
             const FVector Crossing = FMath::Lerp(PreviousBallLocal6M, Current, Fraction);
             const float Radius = PracticeBall6B->GetBallRadiusCm();
-            bGoalScored6M = FMath::Abs(Crossing.Y) + Radius < SoccerFieldDimensions::GoalHalfWidthCm &&
-                Crossing.Z + Radius < SoccerFieldDimensions::GoalHeightCm && Crossing.Z >= 0.f;
-            ResolveShotAttempt6N(bGoalScored6M);
+            const bool bInsidePosts = FMath::Abs(Crossing.Y) + Radius < SoccerFieldDimensions::GoalHalfWidthCm;
+            const bool bUnderCrossbar = Crossing.Z + Radius < SoccerFieldDimensions::GoalHeightCm && Crossing.Z >= 0.f;
+            const ETrainingShotOutcome6P Outcome = !bInsidePosts ? ETrainingShotOutcome6P::Wide
+                : !bUnderCrossbar ? ETrainingShotOutcome6P::OverBar
+                : ETrainingShotOutcome6P::Goal;
+            ResolveShotAttempt6N(Outcome);
             return;
         }
     }
@@ -180,7 +183,10 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
     if (SinceRelease > 15.f ||
         (bShotInFlight6M && SinceRelease > 3.f && BallVelocity.Size() < 35.f))
     {
-        ResolveShotAttempt6N(false);
+        // No definitive goal-line crossing. A barrier collision is evidence;
+        // otherwise keep an unresolved result instead of guessing the cause.
+        ResolveShotAttempt6N(bBarrierContactThisShot6P
+            ? ETrainingShotOutcome6P::Barrier : ETrainingShotOutcome6P::Unresolved);
     }
 }
 
@@ -229,6 +235,7 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     bHavePreviousBall6M = false;
     bGoalScored6M = false;
     ShotCharge6M = 0.f;
+    bBarrierContactThisShot6P = false;
     UE_LOG(LogTemp, Display, TEXT("[Training6N] Ready: attempt %d/10"), ShotAttemptIndex6N + 1);
 }
 
@@ -286,20 +293,103 @@ void ASoccerTrainingMovementGameMode6B::SetupPracticeBarriers6O(const FVector& B
         Mesh->SetCollisionProfileName(TEXT("BlockAll"));
         Mesh->SetWorldScale3D(FVector(WallThickness / 100.f,
             ObstacleWidth / 100.f, WallHeight / 100.f));
+        // Physics contact is reported by the actor hit delegate. The ball is
+        // checked in the handler so touching the barrier with the player
+        // does not count as a blocked shot.
+        Mesh->SetNotifyRigidBodyCollision(true);
+        Barrier->OnActorHit.AddDynamic(this, &ASoccerTrainingMovementGameMode6B::OnPracticeBarrierHit6P);
         PracticeBarriers6O.Add(Barrier);
     }
     UE_LOG(LogTemp, Display, TEXT("[Training6O] Shot %d: %d obstacles, width %.0f cm, height %.0f cm"),
         ShotAttemptIndex6N + 1, PracticeBarriers6O.Num(), WallWidth, WallHeight);
 }
 
-void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(bool bGoal)
+void ASoccerTrainingMovementGameMode6B::OnPracticeBarrierHit6P(
+    AActor* SelfActor, AActor* OtherActor, FVector NormalImpulse, const FHitResult& Hit)
+{
+    (void)SelfActor;
+    (void)NormalImpulse;
+    (void)Hit;
+    if (bChargedShotLesson6M && IsExerciseRunning6H() &&
+        bShotReleased6M && !bBetweenShotAttempts6N &&
+        IsValid(PracticeBall6B) && OtherActor == PracticeBall6B)
+    {
+        bBarrierContactThisShot6P = true;
+        bShotInFlight6M = true;
+        UE_LOG(LogTemp, Display, TEXT("[Training6P] Ball touched practice barrier in attempt %d"),
+            ShotAttemptIndex6N + 1);
+    }
+}
+
+FString ASoccerTrainingMovementGameMode6B::ShotOutcomeLabel6P(ETrainingShotOutcome6P Outcome)
+{
+    switch (Outcome)
+    {
+    case ETrainingShotOutcome6P::Goal: return TEXT("GOL");
+    case ETrainingShotOutcome6P::Wide: return TEXT("DESVIADO");
+    case ETrainingShotOutcome6P::OverBar: return TEXT("SOBRE EL TRAVESANO");
+    case ETrainingShotOutcome6P::Barrier: return TEXT("BARRERA");
+    default: return TEXT("SIN RESOLUCION");
+    }
+}
+
+FString ASoccerTrainingMovementGameMode6B::GetLastShotFeedback6P() const
+{
+    if (ShotOutcomes6P.Num() == 0) return TEXT("");
+    const int32 Index = ShotOutcomes6P.Num() - 1;
+    FString Message = FString::Printf(TEXT("Intento %d: %s"),
+        Index + 1, *ShotOutcomeLabel6P(ShotOutcomes6P[Index]));
+    if (ShotBarrierContacts6P.IsValidIndex(Index) && ShotBarrierContacts6P[Index] &&
+        ShotOutcomes6P[Index] != ETrainingShotOutcome6P::Barrier)
+    {
+        Message += TEXT(" (toco la barrera)");
+    }
+    return Message;
+}
+
+FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
+{
+    int32 Wide = 0, Over = 0, Blocked = 0, Unresolved = 0, BarrierTouches = 0;
+    for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
+    {
+        switch (ShotOutcomes6P[Index])
+        {
+        case ETrainingShotOutcome6P::Wide: ++Wide; break;
+        case ETrainingShotOutcome6P::OverBar: ++Over; break;
+        case ETrainingShotOutcome6P::Barrier: ++Blocked; break;
+        case ETrainingShotOutcome6P::Unresolved: ++Unresolved; break;
+        default: break;
+        }
+        if (ShotBarrierContacts6P.IsValidIndex(Index) && ShotBarrierContacts6P[Index])
+            ++BarrierTouches;
+    }
+    FString Report = FString::Printf(
+        TEXT("Desviados: %d  |  Sobre travesano: %d\nBarrera: %d  |  Sin resolucion: %d  |  Contactos barrera: %d\n"),
+        Wide, Over, Blocked, Unresolved, BarrierTouches);
+    for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
+    {
+        if (Index % 2 == 0 && Index > 0) Report += TEXT("\n");
+        else if (Index % 2 == 1) Report += TEXT("   |   ");
+        const float Charge = ShotCharges6P.IsValidIndex(Index) ? ShotCharges6P[Index] * 100.f : 0.f;
+        Report += FString::Printf(TEXT("%02d: %s (%.0f%%)"),
+            Index + 1, *ShotOutcomeLabel6P(ShotOutcomes6P[Index]), Charge);
+    }
+    return Report;
+}
+
+void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(ETrainingShotOutcome6P Outcome)
 {
     if (!bShotReleased6M || bBetweenShotAttempts6N || bComplete6B) return;
+    const bool bGoal = Outcome == ETrainingShotOutcome6P::Goal;
     bGoalScored6M = bGoal;
+    ShotOutcomes6P.Add(Outcome);
+    ShotCharges6P.Add(ShotCharge6M);
+    ShotBarrierContacts6P.Add(bBarrierContactThisShot6P);
     ++ShotsCompleted6N;
     if (bGoal) ++GoalsScored6N;
-    UE_LOG(LogTemp, Display, TEXT("[Training6N] Attempt %d/10: %s, charge %.0f%%"),
-        ShotsCompleted6N, bGoal ? TEXT("GOAL") : TEXT("MISS"), ShotCharge6M * 100.f);
+    UE_LOG(LogTemp, Display, TEXT("[Training6P] Attempt %d/10: %s, charge %.0f%%, barrier contact %s"),
+        ShotsCompleted6N, *ShotOutcomeLabel6P(Outcome), ShotCharge6M * 100.f,
+        bBarrierContactThisShot6P ? TEXT("YES") : TEXT("NO"));
     if (ShotsCompleted6N >= 10)
     {
         ClearPracticeBarriers6O();
@@ -339,6 +429,10 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     ShotAttemptIndex6N = 0;
     ShotsCompleted6N = 0;
     GoalsScored6N = 0;
+    ShotOutcomes6P.Empty();
+    ShotCharges6P.Empty();
+    ShotBarrierContacts6P.Empty();
+    bBarrierContactThisShot6P = false;
     bBetweenShotAttempts6N = false;
     bComplete6B = false;
     ElapsedTime6B = 0.f;
@@ -471,8 +565,8 @@ FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
     {
         if (bComplete6B) return TEXT("Diez remates completados. Consulta el resultado.");
         if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
-        if (bBetweenShotAttempts6N) return bGoalScored6M ? TEXT("Gol. Preparando el siguiente intento...")
-            : TEXT("Sin gol. Preparando el siguiente intento...");
+        if (bBetweenShotAttempts6N)
+            return GetLastShotFeedback6P() + TEXT(". Preparando el siguiente intento...");
         if (bShotReleased6M) return TEXT("El jugador va hacia la pelota y remata. Espera el resultado...");
         if (ShotAttemptIndex6N >= 4)
             return TEXT("Supera la barrera: apunta con la cruz verde y ajusta la carga para elevar la pelota.");
