@@ -58,7 +58,7 @@ namespace
 
 AThirdPersonCppCharacter::AThirdPersonCppCharacter()
 {
-	SelectedMovementSpeed = JogSpeed;
+	SelectedMovementSpeed = FastRunSpeed;
 	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
 
 	PrimaryActorTick.bCanEverTick = true;
@@ -1457,7 +1457,7 @@ void AThirdPersonCppCharacter::ApplyPlayerProfilePhysicalTuning()
 	FastRunMinimumSpeed =
 		PlayerProfileBaselineFastRunMinimumSpeed * PaceMultiplier;
 
-	SelectedMovementSpeed = JogSpeed;
+	SelectedMovementSpeed = FastRunSpeed;
 
 	if (UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement())
 	{
@@ -6810,6 +6810,8 @@ bool AThirdPersonCppCharacter::GetMouseFieldLocation(FVector& OutLocation) const
 	float ScreenX = 0.0f;
 	float ScreenY = 0.0f;
 
+	// Match and autopass training both target the virtual green aiming reticle.
+	// Its X stays centered while vertical mouse input adjusts its Y.
 	if (!GetAimCursorScreenPosition(ScreenX, ScreenY))
 	{
 		return false;

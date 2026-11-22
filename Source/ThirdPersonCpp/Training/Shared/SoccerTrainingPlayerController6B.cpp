@@ -10,6 +10,7 @@
 #include "Engine/World.h"
 #include "UObject/Package.h"
 #include "Kismet/GameplayStatics.h"
+#include "ThirdPersonCppCharacter.h"
 
 void ASoccerTrainingPlayerController6B::BeginPlay()
 {
@@ -52,17 +53,33 @@ void ASoccerTrainingPlayerController6B::ApplyExerciseUIMode6H()
         bShowMouseCursor ? 1 : 0);
 }
 
+void ASoccerTrainingPlayerController6B::ApplyExerciseGameInput6J()
+{
+    // In gameplay, use the same captured mouse input as the match.
+    // The green reticle is drawn by the training HUD; never display the OS pointer.
+    bShowMouseCursor = false;
+    bEnableClickEvents = true;
+    bEnableMouseOverEvents = false;
+    FInputModeGameOnly InputMode;
+    SetInputMode(InputMode);
+}
+
+bool ASoccerTrainingPlayerController6B::IsAutoPassAimEnabled6J() const
+{
+    const ASoccerTrainingMovementGameMode6B* Mode = GetWorld()
+        ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
+    return Mode && Mode->IsAutoPassLesson6J() && Mode->IsExerciseRunning6H()
+        && !bTrainingPaused6B;
+}
+
 void ASoccerTrainingPlayerController6B::StartExercise6H()
 {
     ASoccerTrainingMovementGameMode6B* Mode = GetWorld()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     if (!Mode) return;
-    bInitialBallCollectionClickUsed6I = false;
     Mode->BeginExercise6H();
     if (IsValid(ExerciseWidget6H)) ExerciseWidget6H->SetVisibility(ESlateVisibility::Collapsed);
-    bShowMouseCursor = false;
-    FInputModeGameOnly InputMode;
-    SetInputMode(InputMode);
+    ApplyExerciseGameInput6J();
 }
 
 void ASoccerTrainingPlayerController6B::ShowExerciseResults6H()
@@ -77,25 +94,44 @@ bool ASoccerTrainingPlayerController6B::InputKey(
 {
     if (IsValid(ExerciseWidget6H) && ExerciseWidget6H->GetVisibility() == ESlateVisibility::Visible)
         return true;
-    // Training 6I: this lesson teaches only ball possession and I/J/K/L dribbling.
-    // Intercept mouse actions BEFORE pawn input bindings; avoid changing match code.
-    // UI clicks continue to work because the instruction/result screens use UIOnly.
-    const ASoccerTrainingMovementGameMode6B* TrainingMode = GetWorld()
+    // Training 6I remains possession + keys only. Training 6J reuses the
+    // actual character autopass binding and the match-style virtual aim reticle.
+    ASoccerTrainingMovementGameMode6B* TrainingMode = GetWorld()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     if (TrainingMode && TrainingMode->IsExerciseRunning6H() && !bTrainingPaused6B)
     {
-        // No charge, shot or release from the right button in this lesson.
         if (Key == EKeys::RightMouseButton)
-            return true;
+            return true; // Shooting is reserved for later lessons.
 
         if (Key == EKeys::LeftMouseButton)
         {
-            if (bInitialBallCollectionClickUsed6I)
-                return true; // blocks autopass on subsequent presses and releases
-
-            if (EventType == IE_Pressed)
-                bInitialBallCollectionClickUsed6I = true;
-            // Pass the first press through to HandleLeftClickTarget() for collection.
+            if (!TrainingMode->IsAutoPassLesson6J())
+            {
+                // This lesson allows repeated attempts to collect the ball.
+                // Ignore clicks during possession (no autopass) and while the
+                // initial chase is still active (no queued KickAndFollow).
+                // If movement keys cancel the chase, the pawn returns to
+                // Manual and the next left click can initiate a new chase.
+                const AThirdPersonCppCharacter* Trainee =
+                    Cast<AThirdPersonCppCharacter>(GetPawn());
+                if (!Trainee || Trainee->IsPossessingBall() ||
+                    Trainee->HasHumanLogicalBallControl() ||
+                    Trainee->IsChasingBall() || Trainee->IsKicking())
+                {
+                    return true;
+                }
+            }
+            else if (EventType == IE_Pressed)
+            {
+                // The first click collects; subsequent clicks with possession
+                // are ordinary autopasses, handled by ThirdPersonCppCharacter.
+                if (AThirdPersonCppCharacter* Trainee =
+                    Cast<AThirdPersonCppCharacter>(GetPawn()))
+                {
+                    if (Trainee->IsPossessingBall())
+                        TrainingMode->RegisterAutoPassClick6J();
+                }
+            }
         }
     }
 
@@ -137,9 +173,12 @@ void ASoccerTrainingPlayerController6B::ResumeTraining6B()
     bTrainingPaused6B = false;
     UGameplayStatics::SetGamePaused(this, false);
     if (IsValid(PauseWidget6B)) PauseWidget6B->ShowPause6B(false);
-    bShowMouseCursor = false;
-    FInputModeGameOnly Mode;
-    SetInputMode(Mode);
+    ASoccerTrainingMovementGameMode6B* TrainingMode = GetWorld()
+        ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
+    if (TrainingMode && TrainingMode->IsExerciseRunning6H())
+        ApplyExerciseGameInput6J();
+    else
+        ApplyExerciseUIMode6H();
 }
 
 void ASoccerTrainingPlayerController6B::RestartTraining6B()
@@ -155,8 +194,12 @@ void ASoccerTrainingPlayerController6B::RestartTraining6B()
             TrainingWorld6B->GetOutermost()->GetName());
         if (!ShortName.IsEmpty() && !Folder.IsEmpty())
         {
+            const ASoccerTrainingMovementGameMode6B* TrainingMode =
+                Cast<ASoccerTrainingMovementGameMode6B>(TrainingWorld6B->GetAuthGameMode());
+            const bool bAutoPass = TrainingMode && TrainingMode->IsAutoPassLesson6J();
             UGameplayStatics::OpenLevel(this,
-                FName(*(Folder + TEXT("/") + ShortName)), true);
+                FName(*(Folder + TEXT("/") + ShortName)), true,
+                bAutoPass ? TEXT("TrainingLesson=AutoPass") : TEXT(""));
         }
     }
 }

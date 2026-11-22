@@ -87,7 +87,7 @@ void USoccerTrainingSelectorWidget6B::BuildSelector6B()
 
     USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>();
     Size->SetWidthOverride(740.f);
-    Size->SetHeightOverride(690.f);
+    Size->SetHeightOverride(765.f);
     Scale->AddChild(Size);
     if (UScaleBoxSlot* ScaleSlot = Cast<UScaleBoxSlot>(Size->Slot))
     {
@@ -102,23 +102,27 @@ void USoccerTrainingSelectorWidget6B::BuildSelector6B()
     UVerticalBox* List = WidgetTree->ConstructWidget<UVerticalBox>();
     Card->SetContent(List);
     AddRow(List, MakeLabel(WidgetTree, TEXT("ENTRENAMIENTO"), 40, White), 5.f);
-    AddRow(List, MakeLabel(WidgetTree, TEXT("Elegí el ejercicio que querés practicar"),
+    AddRow(List, MakeLabel(WidgetTree, TEXT("Eleg\u00ed el ejercicio que quer\u00e9s practicar"),
         17, Muted), 25.f);
 
     MovementButton6B = MakeButton(WidgetTree, TEXT("MOVIMIENTO Y CONTROL DE PELOTA"), true);
     MovementButton6B->OnClicked.AddDynamic(this,
         &USoccerTrainingSelectorWidget6B::OpenMovementControl6B);
     AddRow(List, MovementButton6B, 12.f);
-    AddRow(List, MakeButton(WidgetTree, TEXT("PASES  ·  PRÓXIMAMENTE"), false, false), 10.f);
-    AddRow(List, MakeButton(WidgetTree, TEXT("REMATES  ·  PRÓXIMAMENTE"), false, false), 10.f);
-    AddRow(List, MakeButton(WidgetTree, TEXT("ARQUEROS  ·  PRÓXIMAMENTE"), false, false), 18.f);
+    AutoPassButton6J = MakeButton(WidgetTree, TEXT("AUTOPASE: APUNTAR Y RECOGER"), true);
+    AutoPassButton6J->OnClicked.AddDynamic(this,
+        &USoccerTrainingSelectorWidget6B::OpenAutoPass6J);
+    AddRow(List, AutoPassButton6J, 12.f);
+    AddRow(List, MakeButton(WidgetTree, TEXT("PASES  \u00b7  PR\u00d3XIMAMENTE"), false, false), 10.f);
+    AddRow(List, MakeButton(WidgetTree, TEXT("REMATES  \u00b7  PR\u00d3XIMAMENTE"), false, false), 10.f);
+    AddRow(List, MakeButton(WidgetTree, TEXT("ARQUEROS  \u00b7  PR\u00d3XIMAMENTE"), false, false), 18.f);
 
-    BackButton6B = MakeButton(WidgetTree, TEXT("VOLVER AL MENÚ PRINCIPAL"), false);
+    BackButton6B = MakeButton(WidgetTree, TEXT("VOLVER AL MEN\u00da PRINCIPAL"), false);
     BackButton6B->OnClicked.AddDynamic(this,
         &USoccerTrainingSelectorWidget6B::Back6B);
     AddRow(List, BackButton6B, 18.f);
     AddRow(List, MakeLabel(WidgetTree,
-        TEXT("Flechas / cruceta: navegar   ·   Enter / A: elegir   ·   Esc / B: volver"),
+        TEXT("Flechas / cruceta: navegar   \u00b7   Enter / A: elegir   \u00b7   Esc / B: volver"),
         13, Muted), 0.f);
 }
 
@@ -129,10 +133,10 @@ void USoccerTrainingSelectorWidget6B::FocusFirstExercise6B()
 
 void USoccerTrainingSelectorWidget6B::Navigate6B(int32 Offset)
 {
-    UButton* Items[2] = { MovementButton6B, BackButton6B };
-    const int32 Current = IsValid(BackButton6B) &&
-        BackButton6B->HasKeyboardFocus() ? 1 : 0;
-    const int32 Next = (Current + Offset + 2) % 2;
+    UButton* Items[3] = { MovementButton6B, AutoPassButton6J, BackButton6B };
+    const int32 Current = IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus() ? 2
+        : (IsValid(AutoPassButton6J) && AutoPassButton6J->HasKeyboardFocus() ? 1 : 0);
+    const int32 Next = (Current + Offset + 3) % 3;
     if (IsValid(Items[Next])) Items[Next]->SetKeyboardFocus();
 }
 
@@ -143,6 +147,11 @@ void USoccerTrainingSelectorWidget6B::NativeTick(const FGeometry& Geometry, floa
     if (IsValid(MovementButton6B))
     {
         MovementButton6B->SetBackgroundColor(MovementButton6B->HasKeyboardFocus()
+            ? FLinearColor(0.48f, 0.99f, 0.66f, 1.f) : Green);
+    }
+    if (IsValid(AutoPassButton6J))
+    {
+        AutoPassButton6J->SetBackgroundColor(AutoPassButton6J->HasKeyboardFocus()
             ? FLinearColor(0.48f, 0.99f, 0.66f, 1.f) : Green);
     }
     if (IsValid(BackButton6B))
@@ -158,6 +167,15 @@ void USoccerTrainingSelectorWidget6B::OpenMovementControl6B()
     UGameplayStatics::OpenLevel(this,
         FName(TEXT("/Game/ThirdPersonCPP/Maps/Training/MovementControl/SoccerTrainingMovementMap")),
         true);
+}
+
+void USoccerTrainingSelectorWidget6B::OpenAutoPass6J()
+{
+    UE_LOG(LogTemp, Display, TEXT("[Training6J] Loading AutoPass lesson"));
+    // Reuses the existing training map, lighting and physical parity.
+    UGameplayStatics::OpenLevel(this,
+        FName(TEXT("/Game/ThirdPersonCPP/Maps/Training/MovementControl/SoccerTrainingMovementMap")),
+        true, TEXT("TrainingLesson=AutoPass"));
 }
 
 void USoccerTrainingSelectorWidget6B::Back6B()
@@ -195,6 +213,7 @@ FReply USoccerTrainingSelectorWidget6B::NativeOnPreviewKeyDown(
         Key == EKeys::Gamepad_FaceButton_Bottom)
     {
         if (IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus()) Back6B();
+        else if (IsValid(AutoPassButton6J) && AutoPassButton6J->HasKeyboardFocus()) OpenAutoPass6J();
         else OpenMovementControl6B();
         return FReply::Handled();
     }

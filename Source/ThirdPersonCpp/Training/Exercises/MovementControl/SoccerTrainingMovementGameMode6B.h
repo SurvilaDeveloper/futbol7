@@ -21,6 +21,9 @@ public:
     // 6H: pre-start instructions, active time trial and finish summary.
     UFUNCTION(BlueprintCallable, Category="Training|Exercise")
     void BeginExercise6H();
+    bool IsAutoPassLesson6J() const { return bAutoPassLesson6J; }
+    // Called only after an autopass click while the player possesses the ball.
+    void RegisterAutoPassClick6J();
     bool IsExerciseRunning6H() const { return bExerciseStarted6H && !bComplete6B; }
     bool HasExerciseStarted6H() const { return bExerciseStarted6H; }
     bool IsTimeEvaluationEnabled6H() const { return bEnableTimeEvaluation6H; }
@@ -70,6 +73,9 @@ private:
     UPROPERTY(EditAnywhere, Category="Training|Movement Control|Evaluation", meta=(ClampMin="1.0", EditCondition="bEnableTimeEvaluation6H"))
     float ApprovalTimeSeconds6H = 60.f;
 
+    bool bAutoPassLesson6J = false;
+    bool bAutoPassArmed6J = false;
+    int32 AutoPassCount6J = 0;
     bool bExerciseStarted6H = false;
     UPROPERTY(Transient) ASoccerBall* PracticeBall6B = nullptr;
     UPROPERTY(Transient) AThirdPersonCppCharacter* Trainee6B = nullptr;

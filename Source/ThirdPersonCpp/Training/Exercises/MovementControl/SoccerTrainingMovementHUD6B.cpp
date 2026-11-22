@@ -3,6 +3,8 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "ThirdPersonCppCharacter.h"
 
 void ASoccerTrainingMovementHUD6B::DrawHUD()
 {
@@ -17,7 +19,8 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
     const float X = 32.f;
     const float Y = 40.f;
     DrawRect(FLinearColor(0.015f, 0.025f, 0.035f, 0.78f), X - 12.f, Y - 12.f, 1040.f, 230.f);
-    DrawText(TEXT("ENTRENAMIENTO | MOVIMIENTO Y CONTROL"), FLinearColor::White, X, Y, Font, 1.25f, false);
+    DrawText(Mode->IsAutoPassLesson6J() ? TEXT("ENTRENAMIENTO | AUTOPASE")
+        : TEXT("ENTRENAMIENTO | MOVIMIENTO Y CONTROL"), FLinearColor::White, X, Y, Font, 1.25f, false);
     const FString Progress = Mode->IsExerciseComplete6B()
         ? TEXT("Recorrido terminado: 4/4")
         : FString::Printf(TEXT("Punto de control: %d / %d"),
@@ -34,4 +37,27 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
         X, Y + 148.f, Font, 0.95f, false);
     DrawText(Mode->GetBallDiagnostics6E(), FLinearColor(0.85f, 0.95f, 1.f),
         X, Y + 177.f, Font, 0.95f, false);
+
+    // Same green crosshair as GameHUD during a match. This is a virtual
+    // reticle, not the operating system mouse cursor; X is always centered.
+    if (Mode->IsAutoPassLesson6J() && Mode->IsExerciseRunning6H())
+    {
+        const AThirdPersonCppCharacter* Trainee = Cast<AThirdPersonCppCharacter>(
+            UGameplayStatics::GetPlayerCharacter(GetWorld(), 0));
+        if (IsValid(Trainee))
+        {
+            float AimScreenX = 0.0f;
+            float AimScreenY = 0.0f;
+            if (Trainee->GetAimCursorScreenPosition(AimScreenX, AimScreenY))
+            {
+                const float CursorSize = 10.0f;
+                DrawLine(AimScreenX - CursorSize * 6.0f, AimScreenY,
+                    AimScreenX + CursorSize * 6.0f, AimScreenY,
+                    FLinearColor::Green, 2.0f);
+                DrawLine(AimScreenX, AimScreenY - CursorSize,
+                    AimScreenX, AimScreenY + CursorSize,
+                    FLinearColor::Green, 2.0f);
+            }
+        }
+    }
 }

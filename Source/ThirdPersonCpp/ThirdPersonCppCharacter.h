@@ -858,7 +858,7 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "0.0", ClampMax = "30.0"))
 	float ChargedKickPredictionSafetyMargin = 6.0f;
 
-	float SelectedMovementSpeed = 350.0f;
+	float SelectedMovementSpeed = 600.0f;
 	
 	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling")
 		float DribbleMinSpeed = 30.0f;

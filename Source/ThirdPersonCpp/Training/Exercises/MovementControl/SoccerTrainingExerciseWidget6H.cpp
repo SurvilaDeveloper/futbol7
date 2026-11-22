@@ -13,6 +13,7 @@
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "HAL/PlatformTime.h"
 #include "InputCoreTypes.h"
 #include "GameFramework/PlayerController.h"
@@ -105,14 +106,26 @@ void USoccerTrainingExerciseWidget6H::NativeOnInitialized()
 void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
 {
     bResults6H = false;
-    if (Header6H) Header6H->SetText(FText::FromString(TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
-    if (Body6H) Body6H->SetText(FText::FromString(
-        TEXT("Haz clic izquierdo una vez para que el jugador vaya a buscar la pelota. "
-             "Cuando aparezca el cono verde sobre su cabeza, significa que tiene la posesi\u00f3n.\n\n"
-             "Luego, usa I, J, K y L para moverlo y conducir la pelota. "
-             "Conservar\u00e1s la posesi\u00f3n mientras la pelota permanezca dentro de la distancia m\u00e1xima permitida.\n\n"
-             "Haz pasar la pelota por las cuatro marcas amarillas, en orden, "
-             "en el menor tiempo posible.")));
+    const ASoccerTrainingMovementGameMode6B* Mode = GetWorld()
+        ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
+    const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
+    if (Header6H) Header6H->SetText(FText::FromString(bAutoPass
+        ? TEXT("ENTRENAMIENTO | AUTOPASE")
+        : TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
+    if (Body6H) Body6H->SetText(FText::FromString(bAutoPass
+        ? TEXT("Haz clic izquierdo una vez para que el jugador se acerque y tome posesi\u00f3n de la pelota. "
+               "El cono verde indica que la est\u00e1 controlando.\n\n"
+               "El cursor permanecer\u00e1 visible. Apunta con el mouse a la primera marca amarilla "
+               "y haz clic izquierdo otra vez: el jugador enviar\u00e1 la pelota hacia el lugar elegido "
+               "y correr\u00e1 tras ella para recuperarla.\n\n"
+               "Repite el autopase hacia cada marca, en orden, en el menor tiempo posible. "
+               "El bot\u00f3n derecho est\u00e1 deshabilitado en este ejercicio.")
+        : TEXT("Haz clic izquierdo una vez para que el jugador vaya a buscar la pelota. "
+               "Cuando aparezca el cono verde sobre su cabeza, significa que tiene la posesi\u00f3n.\n\n"
+               "Luego, usa I, J, K y L para moverlo y conducir la pelota. "
+               "Conservar\u00e1s la posesi\u00f3n mientras la pelota permanezca dentro de la distancia m\u00e1xima permitida.\n\n"
+               "Haz pasar la pelota por las cuatro marcas amarillas, en orden, "
+               "en el menor tiempo posible.")));
     if (Feedback6H) Feedback6H->SetText(FText::FromString(
         TEXT("El cron\u00f3metro comienza al pulsar Empezar ejercicio.")));
     if (PrimaryLabel6H) PrimaryLabel6H->SetText(FText::FromString(TEXT("EMPEZAR EJERCICIO")));
@@ -125,12 +138,20 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
     bResults6H = true;
     const ASoccerTrainingMovementGameMode6B* Mode = GetWorld()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
-    if (Header6H) Header6H->SetText(FText::FromString(TEXT("RECORRIDO COMPLETADO")));
+    const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
+    if (Header6H) Header6H->SetText(FText::FromString(bAutoPass
+        ? TEXT("AUTOPASES COMPLETADOS") : TEXT("RECORRIDO COMPLETADO")));
     if (Mode)
     {
-        if (Body6H) Body6H->SetText(FText::FromString(FString::Printf(
-            TEXT("Completaste las cuatro marcas.\n\nTiempo empleado: %.1f segundos\nP\u00e9rdidas de control: %d"),
-            Mode->GetElapsedTime6B(), Mode->GetLostControlCount6B())));
+        if (Body6H)
+        {
+            const FString Summary6H = bAutoPass
+                ? FString::Printf(TEXT("Completaste las cuatro marcas con autopases.\n\nTiempo empleado: %.1f segundos\nP\u00e9rdidas de control: %d"),
+                    Mode->GetElapsedTime6B(), Mode->GetLostControlCount6B())
+                : FString::Printf(TEXT("Completaste las cuatro marcas.\n\nTiempo empleado: %.1f segundos\nP\u00e9rdidas de control: %d"),
+                    Mode->GetElapsedTime6B(), Mode->GetLostControlCount6B());
+            Body6H->SetText(FText::FromString(Summary6H));
+        }
         if (Feedback6H)
         {
             const FString Result = !Mode->IsTimeEvaluationEnabled6H()

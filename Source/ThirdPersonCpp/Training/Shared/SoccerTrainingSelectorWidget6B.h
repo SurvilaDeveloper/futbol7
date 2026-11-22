@@ -33,9 +33,11 @@ private:
     void Navigate6B(int32 Offset);
 
     UFUNCTION() void OpenMovementControl6B();
+    UFUNCTION() void OpenAutoPass6J();
     UFUNCTION() void Back6B();
 
     UPROPERTY(Transient) UButton* MovementButton6B = nullptr;
+    UPROPERTY(Transient) UButton* AutoPassButton6J = nullptr;
     UPROPERTY(Transient) UButton* BackButton6B = nullptr;
     double LastAnalogTime6B = -1.0;
 };

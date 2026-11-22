@@ -18,6 +18,7 @@ public:
     virtual bool InputKey(FKey Key, EInputEvent EventType,
         float AmountDepressed = 1.0f, bool bGamepad = false) override;
 
+    bool IsAutoPassAimEnabled6J() const;
     void StartExercise6H();
     void ShowExerciseResults6H();
     void ResumeTraining6B();
@@ -27,11 +28,10 @@ public:
 
 private:
     void ApplyExerciseUIMode6H();
+    void ApplyExerciseGameInput6J();
     void ToggleTrainingPause6B();
 
     UPROPERTY(Transient) USoccerTrainingExerciseWidget6H* ExerciseWidget6H = nullptr;
     UPROPERTY(Transient) USoccerTrainingPauseWidget6B* PauseWidget6B = nullptr;
     bool bTrainingPaused6B = false;
-    // Training 6I: only the first left mouse press may start ball collection.
-    bool bInitialBallCollectionClickUsed6I = false;
 };

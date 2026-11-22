@@ -12,6 +12,7 @@
 #include "GameFramework/PlayerStart.h"
 #include "DrawDebugHelpers.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Kismet/GameplayStatics.h"
 
 ASoccerTrainingMovementGameMode6B::ASoccerTrainingMovementGameMode6B()
 {
@@ -26,6 +27,10 @@ ASoccerTrainingMovementGameMode6B::ASoccerTrainingMovementGameMode6B()
 
 void ASoccerTrainingMovementGameMode6B::StartPlay()
 {
+    bAutoPassLesson6J = UGameplayStatics::ParseOption(OptionsString, TEXT("TrainingLesson"))
+        .Equals(TEXT("AutoPass"), ESearchCase::IgnoreCase);
+    UE_LOG(LogTemp, Display, TEXT("[Training6J] Lesson: %s"),
+        bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
     if (bGenerateTestGround6B) EnsureGround6B();
     EnsurePlayerStart6B();
     if (bSpawnPracticeBall6B) EnsureBall6B();
@@ -78,10 +83,14 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
 
     DrawCheckpoint6B();
     const FVector Checkpoint = GetCurrentCheckpoint6B();
-    if (bClose && FVector::Dist2D(BallPos, Checkpoint) <= CheckpointRadius6B &&
+    // Autopass: the ball must reach the target AFTER a real autopass click.
+    // The player may still be following the ball, so do not require bClose.
+    const bool bMayAdvance = bAutoPassLesson6J ? bAutoPassArmed6J : bClose;
+    if (bMayAdvance && FVector::Dist2D(BallPos, Checkpoint) <= CheckpointRadius6B &&
         FMath::Abs(BallPos.Z - Checkpoint.Z) <= 180.f)
     {
         ++CheckpointIndex6B;
+        bAutoPassArmed6J = false;
         if (CheckpointIndex6B >= GetCheckpointCount6B())
         {
             bComplete6B = true;
@@ -93,10 +102,21 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     }
 }
 
+void ASoccerTrainingMovementGameMode6B::RegisterAutoPassClick6J()
+{
+    if (!bAutoPassLesson6J || !IsExerciseRunning6H()) return;
+    bAutoPassArmed6J = true;
+    ++AutoPassCount6J;
+    UE_LOG(LogTemp, Display, TEXT("[Training6J] Autopass click #%d, target %d/4"),
+        AutoPassCount6J, CheckpointIndex6B + 1);
+}
+
 void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
 {
     if (bExerciseStarted6H) return;
     bExerciseStarted6H = true;
+    bAutoPassArmed6J = false;
+    AutoPassCount6J = 0;
     bComplete6B = false;
     ElapsedTime6B = 0.f;
     CheckpointIndex6B = 0;
@@ -192,12 +212,20 @@ FVector ASoccerTrainingMovementGameMode6B::GetCurrentCheckpoint6B() const
 FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
 {
     if (bComplete6B) return TEXT("RECORRIDO TERMINADO");
-    if (!bExerciseStarted6H) return TEXT("Leé las instrucciones y presioná Empezar ejercicio");
+    if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y pulsa Empezar ejercicio");
     if (!IsValid(PracticeBall6B) || !IsValid(Trainee6B))
         return TEXT("Esperando personaje y pelota...");
+    if (bAutoPassLesson6J)
+    {
+        if (!Trainee6B->IsPossessingBall())
+            return TEXT("Haz clic izquierdo para buscar y poseer la pelota");
+        return bAutoPassArmed6J
+            ? TEXT("Autopase enviado: observa si la pelota alcanza la marca")
+            : TEXT("Apunta a la marca con el cursor y haz clic izquierdo");
+    }
     if (FVector::Dist2D(PracticeBall6B->GetActorLocation(), Trainee6B->GetActorLocation()) > MaximumControlDistance6B)
         return TEXT("Acercate a la pelota y conducila hasta el aro amarillo");
-    return TEXT("Conduci la pelota al aro amarillo sin alejarte de ella");
+    return TEXT("Conduce la pelota al aro amarillo sin alejarte de ella");
 }
 
 void ASoccerTrainingMovementGameMode6B::FindExerciseActors6B()
