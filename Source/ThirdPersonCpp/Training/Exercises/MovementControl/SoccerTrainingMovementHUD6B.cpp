@@ -19,9 +19,11 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
     const float X = 32.f;
     const float Y = 40.f;
     DrawRect(FLinearColor(0.015f, 0.025f, 0.035f, 0.78f), X - 12.f, Y - 12.f, 1040.f, 230.f);
-    DrawText(Mode->IsAutoPassLesson6J() ? TEXT("ENTRENAMIENTO | AUTOPASE")
+    DrawText(Mode->IsChargedShotLesson6M() ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : Mode->IsAutoPassLesson6J() ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | MOVIMIENTO Y CONTROL"), FLinearColor::White, X, Y, Font, 1.25f, false);
-    const FString Progress = Mode->IsExerciseComplete6B()
+    const FString Progress = Mode->IsChargedShotLesson6M()
+        ? FString::Printf(TEXT("Remate unico | Carga registrada: %.0f%%"), Mode->GetShotCharge6M() * 100.f)
+        : Mode->IsExerciseComplete6B()
         ? TEXT("Recorrido terminado: 4/4")
         : FString::Printf(TEXT("Punto de control: %d / %d"),
             Mode->GetCheckpointIndex6B() + 1, Mode->GetCheckpointCount6B());
@@ -37,10 +39,21 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
         X, Y + 148.f, Font, 0.95f, false);
     DrawText(Mode->GetBallDiagnostics6E(), FLinearColor(0.85f, 0.95f, 1.f),
         X, Y + 177.f, Font, 0.95f, false);
+    if (Mode->IsChargedShotLesson6M())
+    {
+        if (const AThirdPersonCppCharacter* Shooter = Cast<AThirdPersonCppCharacter>(
+            UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)))
+        {
+            float Charge = 0.f;
+            if (Shooter->GetKickChargePercent(Charge))
+                DrawText(FString::Printf(TEXT("FUERZA: %.0f%%"), Charge * 100.f),
+                    FLinearColor::Yellow, X, Y + 206.f, Font, 1.2f, false);
+        }
+    }
 
     // Same green crosshair as GameHUD during a match. This is a virtual
     // reticle, not the operating system mouse cursor; X is always centered.
-    if (Mode->IsAutoPassLesson6J() && Mode->IsExerciseRunning6H())
+    if ((Mode->IsAutoPassLesson6J() || Mode->IsChargedShotLesson6M()) && Mode->IsExerciseRunning6H())
     {
         const AThirdPersonCppCharacter* Trainee = Cast<AThirdPersonCppCharacter>(
             UGameplayStatics::GetPlayerCharacter(GetWorld(), 0));

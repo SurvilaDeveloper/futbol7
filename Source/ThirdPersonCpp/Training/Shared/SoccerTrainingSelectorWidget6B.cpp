@@ -114,7 +114,9 @@ void USoccerTrainingSelectorWidget6B::BuildSelector6B()
         &USoccerTrainingSelectorWidget6B::OpenAutoPass6J);
     AddRow(List, AutoPassButton6J, 12.f);
     AddRow(List, MakeButton(WidgetTree, TEXT("PASES  \u00b7  PR\u00d3XIMAMENTE"), false, false), 10.f);
-    AddRow(List, MakeButton(WidgetTree, TEXT("REMATES  \u00b7  PR\u00d3XIMAMENTE"), false, false), 10.f);
+    ChargedShotButton6M = MakeButton(WidgetTree, TEXT("REMATE CON CARGA DE FUERZA"), true);
+    ChargedShotButton6M->OnClicked.AddDynamic(this, &USoccerTrainingSelectorWidget6B::OpenChargedShot6M);
+    AddRow(List, ChargedShotButton6M, 10.f);
     AddRow(List, MakeButton(WidgetTree, TEXT("ARQUEROS  \u00b7  PR\u00d3XIMAMENTE"), false, false), 18.f);
 
     BackButton6B = MakeButton(WidgetTree, TEXT("VOLVER AL MEN\u00da PRINCIPAL"), false);
@@ -133,10 +135,11 @@ void USoccerTrainingSelectorWidget6B::FocusFirstExercise6B()
 
 void USoccerTrainingSelectorWidget6B::Navigate6B(int32 Offset)
 {
-    UButton* Items[3] = { MovementButton6B, AutoPassButton6J, BackButton6B };
-    const int32 Current = IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus() ? 2
-        : (IsValid(AutoPassButton6J) && AutoPassButton6J->HasKeyboardFocus() ? 1 : 0);
-    const int32 Next = (Current + Offset + 3) % 3;
+    UButton* Items[4] = { MovementButton6B, AutoPassButton6J, ChargedShotButton6M, BackButton6B };
+    const int32 Current = IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus() ? 3
+        : IsValid(ChargedShotButton6M) && ChargedShotButton6M->HasKeyboardFocus() ? 2
+        : IsValid(AutoPassButton6J) && AutoPassButton6J->HasKeyboardFocus() ? 1 : 0;
+    const int32 Next = (Current + Offset + 4) % 4;
     if (IsValid(Items[Next])) Items[Next]->SetKeyboardFocus();
 }
 
@@ -152,6 +155,11 @@ void USoccerTrainingSelectorWidget6B::NativeTick(const FGeometry& Geometry, floa
     if (IsValid(AutoPassButton6J))
     {
         AutoPassButton6J->SetBackgroundColor(AutoPassButton6J->HasKeyboardFocus()
+            ? FLinearColor(0.48f, 0.99f, 0.66f, 1.f) : Green);
+    }
+    if (IsValid(ChargedShotButton6M))
+    {
+        ChargedShotButton6M->SetBackgroundColor(ChargedShotButton6M->HasKeyboardFocus()
             ? FLinearColor(0.48f, 0.99f, 0.66f, 1.f) : Green);
     }
     if (IsValid(BackButton6B))
@@ -176,6 +184,13 @@ void USoccerTrainingSelectorWidget6B::OpenAutoPass6J()
     UGameplayStatics::OpenLevel(this,
         FName(TEXT("/Game/ThirdPersonCPP/Maps/Training/MovementControl/SoccerTrainingMovementMap")),
         true, TEXT("TrainingLesson=AutoPass"));
+}
+
+void USoccerTrainingSelectorWidget6B::OpenChargedShot6M()
+{
+    UGameplayStatics::OpenLevel(this,
+        FName(TEXT("/Game/ThirdPersonCPP/Maps/Training/MovementControl/SoccerTrainingMovementMap")),
+        true, TEXT("TrainingLesson=ChargedShot"));
 }
 
 void USoccerTrainingSelectorWidget6B::Back6B()
@@ -213,6 +228,7 @@ FReply USoccerTrainingSelectorWidget6B::NativeOnPreviewKeyDown(
         Key == EKeys::Gamepad_FaceButton_Bottom)
     {
         if (IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus()) Back6B();
+        else if (IsValid(ChargedShotButton6M) && ChargedShotButton6M->HasKeyboardFocus()) OpenChargedShot6M();
         else if (IsValid(AutoPassButton6J) && AutoPassButton6J->HasKeyboardFocus()) OpenAutoPass6J();
         else OpenMovementControl6B();
         return FReply::Handled();

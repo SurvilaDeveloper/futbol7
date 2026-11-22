@@ -101,11 +101,23 @@ bool ASoccerTrainingPlayerController6B::InputKey(
     if (TrainingMode && TrainingMode->IsExerciseRunning6H() && !bTrainingPaused6B)
     {
         if (Key == EKeys::RightMouseButton)
-            return true; // Shooting is reserved for later lessons.
+        {
+            if (!TrainingMode->IsChargedShotLesson6M() || TrainingMode->HasShotBeenReleased6M())
+                return true;
+            AThirdPersonCppCharacter* Shooter = Cast<AThirdPersonCppCharacter>(GetPawn());
+            if (!Shooter || (EventType == IE_Pressed && !Shooter->IsPossessingBall())) return true;
+            if (EventType == IE_Released)
+            {
+                float Charge = 0.f;
+                if (Shooter->GetKickChargePercent(Charge))
+                    TrainingMode->RegisterChargedShotRelease6M(Charge);
+            }
+            return Super::InputKey(Key, EventType, AmountDepressed, bGamepad);
+        }
 
         if (Key == EKeys::LeftMouseButton)
         {
-            if (!TrainingMode->IsAutoPassLesson6J())
+            if (!TrainingMode->IsAutoPassLesson6J() && !TrainingMode->IsChargedShotLesson6M())
             {
                 // This lesson allows repeated attempts to collect the ball.
                 // Ignore clicks during possession (no autopass) and while the
@@ -120,6 +132,14 @@ bool ASoccerTrainingPlayerController6B::InputKey(
                 {
                     return true;
                 }
+            }
+            else if (TrainingMode->IsChargedShotLesson6M())
+            {
+                // The left button can retrieve the ball, but never trigger an autopass.
+                const AThirdPersonCppCharacter* Trainee = Cast<AThirdPersonCppCharacter>(GetPawn());
+                if (TrainingMode->HasShotBeenReleased6M() || (Trainee &&
+                    (Trainee->IsPossessingBall() || Trainee->HasHumanLogicalBallControl() ||
+                     Trainee->IsChasingBall() || Trainee->IsKicking()))) return true;
             }
             else if (EventType == IE_Pressed)
             {
@@ -197,9 +217,10 @@ void ASoccerTrainingPlayerController6B::RestartTraining6B()
             const ASoccerTrainingMovementGameMode6B* TrainingMode =
                 Cast<ASoccerTrainingMovementGameMode6B>(TrainingWorld6B->GetAuthGameMode());
             const bool bAutoPass = TrainingMode && TrainingMode->IsAutoPassLesson6J();
+            const bool bShot = TrainingMode && TrainingMode->IsChargedShotLesson6M();
             UGameplayStatics::OpenLevel(this,
                 FName(*(Folder + TEXT("/") + ShortName)), true,
-                bAutoPass ? TEXT("TrainingLesson=AutoPass") : TEXT(""));
+                bShot ? TEXT("TrainingLesson=ChargedShot") : bAutoPass ? TEXT("TrainingLesson=AutoPass") : TEXT(""));
         }
     }
 }

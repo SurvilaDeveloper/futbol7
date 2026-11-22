@@ -23,6 +23,11 @@ public:
     UFUNCTION(BlueprintCallable, Category="Training|Exercise")
     void BeginExercise6H();
     bool IsAutoPassLesson6J() const { return bAutoPassLesson6J; }
+    bool IsChargedShotLesson6M() const { return bChargedShotLesson6M; }
+    bool HasShotBeenReleased6M() const { return bShotReleased6M; }
+    bool WasGoalScored6M() const { return bGoalScored6M; }
+    float GetShotCharge6M() const { return ShotCharge6M; }
+    void RegisterChargedShotRelease6M(float ChargeFraction);
     // Called only after an autopass click while the player possesses the ball.
     void RegisterAutoPassClick6J();
     bool IsExerciseRunning6H() const { return bExerciseStarted6H && !bComplete6B; }
@@ -75,6 +80,14 @@ private:
     float ApprovalTimeSeconds6H = 60.f;
 
     bool bAutoPassLesson6J = false;
+    bool bChargedShotLesson6M = false;
+    bool bShotReleased6M = false;
+    bool bGoalScored6M = false;
+    bool bShotInFlight6M = false;
+    float ShotCharge6M = 0.f;
+    float ShotReleaseTime6M = 0.f;
+    FVector PreviousBallLocal6M = FVector::ZeroVector;
+    bool bHavePreviousBall6M = false;
     bool bAutoPassArmed6J = false;
     int32 AutoPassCount6J = 0;
     bool bExerciseStarted6H = false;
@@ -98,4 +111,5 @@ private:
     void EnsureTrainingProfile6D();
     void EnsureTrainingBallParity6G();
     void DrawCheckpoint6B() const;
+    void TickChargedShot6M(float DeltaSeconds);
 };

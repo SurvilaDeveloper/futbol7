@@ -109,13 +109,21 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
     const ASoccerTrainingMovementGameMode6B* Mode = GetWorld()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
-    if (Header6H) Header6H->SetText(FText::FromString(bAutoPass
+    const bool bShot = Mode && Mode->IsChargedShotLesson6M();
+    if (Header6H) Header6H->SetText(FText::FromString(bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
         ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
-    if (Body6H) Body6H->SetText(FText::FromString(bAutoPass
+    if (Body6H) Body6H->SetText(FText::FromString(bShot
+        ? TEXT("Vas a realizar un remate al arco sin arquero.\n\n"
+               "Haz clic izquierdo para buscar la pelota. El cono verde confirma la posesion.\n\n"
+               "Con el mouse, apunta al arco usando la cruz verde (sin cursor de Windows). "
+               "Mant\u00e9n presionado el boton derecho para cargar la fuerza y sueltalo para patear.\n\n"
+               "Se registrara si fue gol, la fuerza de carga y el tiempo. "
+               "Puedes repetir el ejercicio desde el resultado.")
+        : bAutoPass
         ? TEXT("Haz clic izquierdo una vez para que el jugador se acerque y tome posesi\u00f3n de la pelota. "
                "El cono verde indica que la est\u00e1 controlando.\n\n"
-               "El cursor permanecer\u00e1 visible. Apunta con el mouse a la primera marca amarilla "
+               "Usa la cruz verde de punteria para apuntar a la primera marca amarilla "
                "y haz clic izquierdo otra vez: el jugador enviar\u00e1 la pelota hacia el lugar elegido "
                "y correr\u00e1 tras ella para recuperarla.\n\n"
                "Repite el autopase hacia cada marca, en orden, en el menor tiempo posible. "
@@ -139,13 +147,18 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
     const ASoccerTrainingMovementGameMode6B* Mode = GetWorld()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
-    if (Header6H) Header6H->SetText(FText::FromString(bAutoPass
+    const bool bShot = Mode && Mode->IsChargedShotLesson6M();
+    if (Header6H) Header6H->SetText(FText::FromString(bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
         ? TEXT("AUTOPASES COMPLETADOS") : TEXT("RECORRIDO COMPLETADO")));
     if (Mode)
     {
         if (Body6H)
         {
-            const FString Summary6H = bAutoPass
+            const FString Summary6H = bShot
+                ? FString::Printf(TEXT("%s\n\nTiempo: %.1f segundos\nCarga de fuerza: %.0f%%"),
+                    Mode->WasGoalScored6M() ? TEXT("GOL") : TEXT("NO FUE GOL"),
+                    Mode->GetElapsedTime6B(), Mode->GetShotCharge6M() * 100.f)
+                : bAutoPass
                 ? FString::Printf(TEXT("Completaste las cuatro marcas con autopases.\n\nTiempo empleado: %.1f segundos\nP\u00e9rdidas de control: %d"),
                     Mode->GetElapsedTime6B(), Mode->GetLostControlCount6B())
                 : FString::Printf(TEXT("Completaste las cuatro marcas.\n\nTiempo empleado: %.1f segundos\nP\u00e9rdidas de control: %d"),
@@ -154,7 +167,8 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         }
         if (Feedback6H)
         {
-            const FString Result = !Mode->IsTimeEvaluationEnabled6H()
+            const FString Result = bShot ? TEXT("Prueba terminada. Repite para realizar un nuevo remate.")
+                : !Mode->IsTimeEvaluationEnabled6H()
                 ? TEXT("Evaluaci\u00f3n pendiente: todav\u00eda no definimos el tiempo de aprobaci\u00f3n.")
                 : Mode->GetElapsedTime6B() <= Mode->GetApprovalTime6H()
                     ? TEXT("\u00a1Muy bien! Completaste el recorrido dentro del tiempo previsto.")
