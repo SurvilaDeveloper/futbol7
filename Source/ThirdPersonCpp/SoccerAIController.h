@@ -210,6 +210,15 @@ public:
 		ASoccerAICharacter* SoccerCharacter
 	);
 
+    // Training 6X: expose the same hand-track/montage selector used in matches.
+    // This does not start a montage or change the normal AI tick.
+    bool SelectTrainingGoalkeeperSave6X(
+        const ASoccerAICharacter* Goalkeeper,
+        const ASoccerBall* Ball,
+        ESoccerGoalkeeperAction& OutAction,
+        float& OutStartDelay,
+        bool& bOutEmergency) const;
+
 	bool IsGoalkeeperActivelyClaimingBall() const;
 
 	/* Isolates one AI for the controlled aerial debug tester. */

@@ -150,6 +150,9 @@ private:
     float KeeperCentralSaveDistance6W = 40.f;
     UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves", meta=(ClampMin="1.5"))
     float KeeperSaveRecoverySeconds6W = 2.25f;
+    // 6X: real match montage selector, independent of the training collision approximation.
+    bool bKeeperMontageStarted6X = false;
+    bool bKeeperSelectorLogged6X = false;
     bool bGoalkeeperPrepared6T = false;
     bool bKeeperSaveTriggered6T = false;
     // 6N: ten controlled shot attempts using the existing match kick mechanic.

@@ -4,6 +4,7 @@
 
 #include "SoccerBall.h"
 #include "SoccerAICharacter.h"
+#include "SoccerAIController.h"
 #include "SoccerTeamTypes.h"
 #include "SoccerField.h"
 #include "SoccerFieldDimensions.h"
@@ -164,10 +165,35 @@ void ASoccerTrainingMovementGameMode6B::FindTrainingGoalkeeper6T()
         if (IsValid(Candidate) && Candidate->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
         {
             TrainingGoalkeeper6T = Candidate;
+            // 6X.1: Diagnose the ACTUAL possessing controller, not merely the
+            // AIControllerClass configured on the goalkeeper Blueprint.
+            AController* Controller = Candidate->GetController();
+            const ASoccerAIController* SoccerController = Cast<ASoccerAIController>(Controller);
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Training6X1] Keeper=%s | Controller=%s | Class=%s | IsSoccerAIController=%s | ControllerTickBefore=%s | KeeperTick=%s"),
+                *GetNameSafe(Candidate),
+                *GetNameSafe(Controller),
+                Controller ? *Controller->GetClass()->GetPathName() : TEXT("None"),
+                SoccerController ? TEXT("YES") : TEXT("NO"),
+                Controller && Controller->IsActorTickEnabled() ? TEXT("ON") : TEXT("OFF"),
+                Candidate->IsActorTickEnabled() ? TEXT("ON") : TEXT("OFF"));
+
             // Without SoccerMatchManager the normal AI controller would return
             // to its match home. The exercise owns only this keeper's positioning.
-            if (AController* Controller = Candidate->GetController())
+            if (Controller)
+            {
                 Controller->SetActorTickEnabled(false);
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[Training6X1] ControllerTickAfter=%s | RegularAI=%s | MatchSaveSelector=%s"),
+                    Controller->IsActorTickEnabled() ? TEXT("ON") : TEXT("OFF"),
+                    Controller->IsActorTickEnabled() ? TEXT("MAY RUN") : TEXT("DISABLED BY TRAINING"),
+                    SoccerController ? TEXT("AVAILABLE FOR EXPLICIT CALL") : TEXT("UNAVAILABLE"));
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[Training6X1] No controller possesses the goalkeeper."));
+            }
             UE_LOG(LogTemp, Display, TEXT("[Training6T] Goalkeeper found: %s"), *Candidate->GetName());
             return;
         }
@@ -196,6 +222,16 @@ void ASoccerTrainingMovementGameMode6B::UpdateTrainingGoalkeeper6T(float DeltaSe
     {
         TrainingGoalkeeper6T->SetScriptedLocomotionVelocity(
             FVector::ZeroVector, ESoccerAIMovementMode::Run, ESoccerAIMovementReason::NormalPlay);
+        return;
+    }
+
+    // 6X: do not teleport/reorient the goalkeeper while a selected montage
+    // is playing; the montage owns the pose during that interval.
+    if (bShotInFlight6M && TrainingGoalkeeper6T->IsGoalkeeperActionActive())
+    {
+        TrainingGoalkeeper6T->SetScriptedLocomotionVelocity(
+            FVector::ZeroVector, ESoccerAIMovementMode::Run,
+            ESoccerAIMovementReason::NormalPlay);
         return;
     }
 
@@ -297,6 +333,38 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
     const FVector Current = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
     const FVector BallVelocity = PracticeBall6B->GetBallPhysicsVelocity();
     if (BallVelocity.Size() > 140.f) bShotInFlight6M = true;
+    // 6X: consult the EXACT goalkeeper montage selector used by matches.
+    // The normal controller tick remains disabled so that match-only navigation,
+    // possession and rule systems are not invoked by this training exercise.
+    if (bGoalkeeperShotLesson6T && bShotInFlight6M && !bKeeperMontageStarted6X &&
+        !bKeeperSaveTriggered6T && IsValid(TrainingGoalkeeper6T))
+    {
+        ASoccerAIController* KeeperController =
+            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController());
+        if (IsValid(KeeperController))
+        {
+            ESoccerGoalkeeperAction Action = ESoccerGoalkeeperAction::None;
+            float StartDelay = 0.f;
+            bool bEmergency = false;
+            if (KeeperController->SelectTrainingGoalkeeperSave6X(
+                    TrainingGoalkeeper6T, PracticeBall6B, Action, StartDelay, bEmergency) &&
+                StartDelay <= 0.f)
+            {
+                bKeeperMontageStarted6X = TrainingGoalkeeper6T->StartGoalkeeperAction(Action);
+                UE_LOG(LogTemp, Display,
+                    TEXT("[Training6X] Match selector action=%d, delay=%.3f, emergency=%s, started=%s"),
+                    static_cast<int32>(Action), StartDelay,
+                    bEmergency ? TEXT("yes") : TEXT("no"),
+                    bKeeperMontageStarted6X ? TEXT("yes") : TEXT("no"));
+            }
+        }
+        else if (!bKeeperSelectorLogged6X)
+        {
+            bKeeperSelectorLogged6X = true;
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Training6X] Keeper has no SoccerAIController: using 6W fallback."));
+        }
+    }
     // 6W: swept proximity check prevents a fast shot from passing entirely
     // through the goalkeeper's contact zone between two game ticks. This is a
     // training-only approximation, not the match AI's animation contact solver.
@@ -336,7 +404,9 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
                 SaveAction = bBallLeft ? ESoccerGoalkeeperAction::DivingSaveOneMeterToLeft
                                        : ESoccerGoalkeeperAction::DivingSaveOneMeterToRight;
 
-            const bool bActionStarted = TrainingGoalkeeper6T->StartGoalkeeperAction(SaveAction);
+            const bool bActionStarted = bKeeperMontageStarted6X ||
+                TrainingGoalkeeper6T->IsGoalkeeperActionActive() ||
+                TrainingGoalkeeper6T->StartGoalkeeperAction(SaveAction);
             // Retain the 6T deflection as an explicit approximation until the
             // full match contact solver can operate without SoccerMatchManager.
             const FVector LocalBallVelocity = Field->GetActorRotation().UnrotateVector(BallVelocity);
@@ -434,6 +504,8 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     ShotCharge6M = 0.f;
     bBarrierContactThisShot6P = false;
     bKeeperSaveTriggered6T = false;
+    bKeeperMontageStarted6X = false;
+    bKeeperSelectorLogged6X = false;
     if (bGoalkeeperShotLesson6T && IsValid(TrainingGoalkeeper6T))
     {
         TrainingGoalkeeper6T->ClearGoalkeeperAction();

@@ -2233,6 +2233,35 @@ void ASoccerAIController::FacePawnTowardLocation(
 
 //arquero
 
+// Training 6X: the normal goalkeeper selection algorithm remains the single
+// source of truth for montage choice and time-to-contact estimation.
+bool ASoccerAIController::SelectTrainingGoalkeeperSave6X(
+    const ASoccerAICharacter* Goalkeeper,
+    const ASoccerBall* Ball,
+    ESoccerGoalkeeperAction& OutAction,
+    float& OutStartDelay,
+    bool& bOutEmergency) const
+{
+    OutAction = ESoccerGoalkeeperAction::None;
+    OutStartDelay = 0.f;
+    bOutEmergency = false;
+    if (!IsValid(Goalkeeper) || !IsValid(Ball)) return false;
+
+    // Training goalkeeper is defending its own goal area and can use hands.
+    // Only montage selection is shared at this stage, not the physical solver.
+    const FGoalkeeperSaveSelectionResult Selection =
+        SelectGoalkeeperActionForIncomingBall(Goalkeeper, Ball, true);
+    if (!Selection.IsValid() ||
+        !FMath::IsFinite(Selection.RequiredMontageStartDelay) ||
+        Selection.RequiredMontageStartDelay == BIG_NUMBER)
+        return false;
+
+    OutAction = Selection.Action;
+    OutStartDelay = Selection.RequiredMontageStartDelay;
+    bOutEmergency = Selection.bEmergencySelection;
+    return true;
+}
+
 bool ASoccerAIController::UpdateGoalkeeperBehavior(
 	ASoccerAICharacter* SoccerCharacter,
 	float DeltaTime
