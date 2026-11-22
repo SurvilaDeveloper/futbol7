@@ -570,7 +570,7 @@ FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
         if (bShotReleased6M) return TEXT("El jugador va hacia la pelota y remata. Espera el resultado...");
         if (ShotAttemptIndex6N >= 4)
             return TEXT("Supera la barrera: apunta con la cruz verde y ajusta la carga para elevar la pelota.");
-        return TEXT("Apunta con la cruz verde, mant\u00e9n clic derecho para cargar y suelta. No necesitas posesi\u00f3n.");
+        return TEXT("Apunta con la cruz verde, mantén clic derecho para cargar y suelta. No necesitas posesión.");
     }
     if (bComplete6B) return TEXT("RECORRIDO TERMINADO");
     if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y pulsa Empezar ejercicio");

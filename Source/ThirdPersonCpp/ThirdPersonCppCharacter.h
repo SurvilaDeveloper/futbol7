@@ -202,7 +202,7 @@ protected:
 	/** Handler for when a touch input stops. */
 	void TouchStopped(ETouchIndex::Type FingerIndex, FVector Location);
 
-	// SelecciÃ³n de velocidad con teclas 1, 2, 3, 4.
+	// Selección de velocidad con teclas 1, 2, 3, 4.
 	void SelectWalkSpeed();
 	void SelectJogSpeed();
 	void SelectRunSpeed();
@@ -858,7 +858,7 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Physical Contact", meta = (ClampMin = "0.0", ClampMax = "30.0"))
 	float ChargedKickPredictionSafetyMargin = 6.0f;
 
-	float SelectedMovementSpeed = 600.0f;
+	float SelectedMovementSpeed = 350.0f;
 	
 	UPROPERTY(EditAnywhere, Category = "Soccer|Dribbling")
 		float DribbleMinSpeed = 30.0f;

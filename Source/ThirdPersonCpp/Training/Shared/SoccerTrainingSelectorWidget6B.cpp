@@ -102,7 +102,7 @@ void USoccerTrainingSelectorWidget6B::BuildSelector6B()
     UVerticalBox* List = WidgetTree->ConstructWidget<UVerticalBox>();
     Card->SetContent(List);
     AddRow(List, MakeLabel(WidgetTree, TEXT("ENTRENAMIENTO"), 40, White), 5.f);
-    AddRow(List, MakeLabel(WidgetTree, TEXT("Eleg\u00ed el ejercicio que quer\u00e9s practicar"),
+    AddRow(List, MakeLabel(WidgetTree, TEXT("Elegí el ejercicio que querés practicar"),
         17, Muted), 25.f);
 
     MovementButton6B = MakeButton(WidgetTree, TEXT("MOVIMIENTO Y CONTROL DE PELOTA"), true);
@@ -113,18 +113,18 @@ void USoccerTrainingSelectorWidget6B::BuildSelector6B()
     AutoPassButton6J->OnClicked.AddDynamic(this,
         &USoccerTrainingSelectorWidget6B::OpenAutoPass6J);
     AddRow(List, AutoPassButton6J, 12.f);
-    AddRow(List, MakeButton(WidgetTree, TEXT("PASES  \u00b7  PR\u00d3XIMAMENTE"), false, false), 10.f);
+    AddRow(List, MakeButton(WidgetTree, TEXT("PASES  ·  PRÓXIMAMENTE"), false, false), 10.f);
     ChargedShotButton6M = MakeButton(WidgetTree, TEXT("REMATE CON CARGA DE FUERZA"), true);
     ChargedShotButton6M->OnClicked.AddDynamic(this, &USoccerTrainingSelectorWidget6B::OpenChargedShot6M);
     AddRow(List, ChargedShotButton6M, 10.f);
-    AddRow(List, MakeButton(WidgetTree, TEXT("ARQUEROS  \u00b7  PR\u00d3XIMAMENTE"), false, false), 18.f);
+    AddRow(List, MakeButton(WidgetTree, TEXT("ARQUEROS  ·  PRÓXIMAMENTE"), false, false), 18.f);
 
-    BackButton6B = MakeButton(WidgetTree, TEXT("VOLVER AL MEN\u00da PRINCIPAL"), false);
+    BackButton6B = MakeButton(WidgetTree, TEXT("VOLVER AL MENÚ PRINCIPAL"), false);
     BackButton6B->OnClicked.AddDynamic(this,
         &USoccerTrainingSelectorWidget6B::Back6B);
     AddRow(List, BackButton6B, 18.f);
     AddRow(List, MakeLabel(WidgetTree,
-        TEXT("Flechas / cruceta: navegar   \u00b7   Enter / A: elegir   \u00b7   Esc / B: volver"),
+        TEXT("Flechas / cruceta: navegar   ·   Enter / A: elegir   ·   Esc / B: volver"),
         13, Muted), 0.f);
 }
 

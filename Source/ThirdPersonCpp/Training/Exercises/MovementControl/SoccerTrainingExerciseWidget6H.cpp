@@ -135,28 +135,28 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
     }
     if (Body6H) Body6H->SetText(FText::FromString(bShot
         ? TEXT("Vas a realizar diez remates al arco desde distintas posiciones. Los primeros cuatro son libres; los seis siguientes incluyen barreras.\n\n"
-               "No necesitas tomar posesi\u00f3n. Con el mouse, apunta al arco usando la cruz verde "
-               "(sin cursor de Windows). Mant\u00e9n presionado el bot\u00f3n derecho para cargar "
-               "la fuerza y su\u00e9ltalo: el jugador correr\u00e1 hacia la pelota y rematar\u00e1.\n\n"
-               "Despu\u00e9s de cada intento, la pelota aparecer\u00e1 en otra posici\u00f3n. "
-               "Apunta al punto de ca\u00edda y observa la barra de fuerza mientras cargas: una carga menor puede producir una trayectoria m\u00e1s alta. "
-               "Intenta superar las barreras sin pasar por encima del arco. Al final ver\u00e1s el total de aciertos.")
+               "No necesitas tomar posesión. Con el mouse, apunta al arco usando la cruz verde "
+               "(sin cursor de Windows). Mantén presionado el botón derecho para cargar "
+               "la fuerza y suéltalo: el jugador correrá hacia la pelota y rematará.\n\n"
+               "Después de cada intento, la pelota aparecerá en otra posición. "
+               "Apunta al punto de caída y observa la barra de fuerza mientras cargas: una carga menor puede producir una trayectoria más alta. "
+               "Intenta superar las barreras sin pasar por encima del arco. Al final verás el total de aciertos.")
         : bAutoPass
-        ? TEXT("Haz clic izquierdo una vez para que el jugador se acerque y tome posesi\u00f3n de la pelota. "
-               "El cono verde indica que la est\u00e1 controlando.\n\n"
+        ? TEXT("Haz clic izquierdo una vez para que el jugador se acerque y tome posesión de la pelota. "
+               "El cono verde indica que la está controlando.\n\n"
                "Usa la cruz verde de punteria para apuntar a la primera marca amarilla "
-               "y haz clic izquierdo otra vez: el jugador enviar\u00e1 la pelota hacia el lugar elegido "
-               "y correr\u00e1 tras ella para recuperarla.\n\n"
+               "y haz clic izquierdo otra vez: el jugador enviará la pelota hacia el lugar elegido "
+               "y correrá tras ella para recuperarla.\n\n"
                "Repite el autopase hacia cada marca, en orden, en el menor tiempo posible. "
-               "El bot\u00f3n derecho est\u00e1 deshabilitado en este ejercicio.")
+               "El botón derecho está deshabilitado en este ejercicio.")
         : TEXT("Haz clic izquierdo una vez para que el jugador vaya a buscar la pelota. "
-               "Cuando aparezca el cono verde sobre su cabeza, significa que tiene la posesi\u00f3n.\n\n"
+               "Cuando aparezca el cono verde sobre su cabeza, significa que tiene la posesión.\n\n"
                "Luego, usa I, J, K y L para moverlo y conducir la pelota. "
-               "Conservar\u00e1s la posesi\u00f3n mientras la pelota permanezca dentro de la distancia m\u00e1xima permitida.\n\n"
+               "Conservarás la posesión mientras la pelota permanezca dentro de la distancia máxima permitida.\n\n"
                "Haz pasar la pelota por las cuatro marcas amarillas, en orden, "
                "en el menor tiempo posible.")));
     if (Feedback6H) Feedback6H->SetText(FText::FromString(
-        TEXT("El cron\u00f3metro comienza al pulsar Empezar ejercicio.")));
+        TEXT("El cronómetro comienza al pulsar Empezar ejercicio.")));
     if (PrimaryLabel6H) PrimaryLabel6H->SetText(FText::FromString(TEXT("EMPEZAR EJERCICIO")));
     SetVisibility(ESlateVisibility::Visible);
     // Scroll from the beginning when showing a new screen.
@@ -192,9 +192,9 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
                     100.f * Mode->GetGoalsScored6N() / FMath::Max(1, Mode->GetShotsCompleted6N()),
                     Mode->GetElapsedTime6B()) + TEXT("\n\n") + Mode->GetShotResultsReport6P()
                 : bAutoPass
-                ? FString::Printf(TEXT("Completaste las cuatro marcas con autopases.\n\nTiempo empleado: %.1f segundos\nP\u00e9rdidas de control: %d"),
+                ? FString::Printf(TEXT("Completaste las cuatro marcas con autopases.\n\nTiempo empleado: %.1f segundos\nPérdidas de control: %d"),
                     Mode->GetElapsedTime6B(), Mode->GetLostControlCount6B())
-                : FString::Printf(TEXT("Completaste las cuatro marcas.\n\nTiempo empleado: %.1f segundos\nP\u00e9rdidas de control: %d"),
+                : FString::Printf(TEXT("Completaste las cuatro marcas.\n\nTiempo empleado: %.1f segundos\nPérdidas de control: %d"),
                     Mode->GetElapsedTime6B(), Mode->GetLostControlCount6B());
             Body6H->SetText(FText::FromString(Summary6H));
         }
@@ -202,10 +202,10 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         {
             const FString Result = bShot ? TEXT("Revisa la causa de cada resultado. Sin resolucion significa que no se observo el cruce ni un contacto con barrera.")
                 : !Mode->IsTimeEvaluationEnabled6H()
-                ? TEXT("Evaluaci\u00f3n pendiente: todav\u00eda no definimos el tiempo de aprobaci\u00f3n.")
+                ? TEXT("Evaluación pendiente: todavía no definimos el tiempo de aprobación.")
                 : Mode->GetElapsedTime6B() <= Mode->GetApprovalTime6H()
-                    ? TEXT("\u00a1Muy bien! Completaste el recorrido dentro del tiempo previsto.")
-                    : TEXT("Tardaste m\u00e1s de lo previsto. \u00a1Int\u00e9ntalo nuevamente!");
+                    ? TEXT("¡Muy bien! Completaste el recorrido dentro del tiempo previsto.")
+                    : TEXT("Tardaste más de lo previsto. ¡Inténtalo nuevamente!");
             Feedback6H->SetText(FText::FromString(Result));
         }
     }
