@@ -114,12 +114,12 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
     if (Body6H) Body6H->SetText(FText::FromString(bShot
-        ? TEXT("Vas a realizar un remate al arco sin arquero.\n\n"
-               "Haz clic izquierdo para buscar la pelota. El cono verde confirma la posesion.\n\n"
-               "Con el mouse, apunta al arco usando la cruz verde (sin cursor de Windows). "
-               "Mant\u00e9n presionado el boton derecho para cargar la fuerza y sueltalo para patear.\n\n"
-               "Se registrara si fue gol, la fuerza de carga y el tiempo. "
-               "Puedes repetir el ejercicio desde el resultado.")
+        ? TEXT("Vas a realizar diez remates al arco sin arquero desde distintas posiciones.\n\n"
+               "No necesitas tomar posesi\u00f3n. Con el mouse, apunta al arco usando la cruz verde "
+               "(sin cursor de Windows). Mant\u00e9n presionado el bot\u00f3n derecho para cargar "
+               "la fuerza y su\u00e9ltalo: el jugador correr\u00e1 hacia la pelota y rematar\u00e1.\n\n"
+               "Despu\u00e9s de cada intento, la pelota aparecer\u00e1 en otra posici\u00f3n. "
+               "Intenta marcar tantos goles como puedas. Al final ver\u00e1s el total de aciertos.")
         : bAutoPass
         ? TEXT("Haz clic izquierdo una vez para que el jugador se acerque y tome posesi\u00f3n de la pelota. "
                "El cono verde indica que la est\u00e1 controlando.\n\n"
@@ -155,9 +155,11 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         if (Body6H)
         {
             const FString Summary6H = bShot
-                ? FString::Printf(TEXT("%s\n\nTiempo: %.1f segundos\nCarga de fuerza: %.0f%%"),
-                    Mode->WasGoalScored6M() ? TEXT("GOL") : TEXT("NO FUE GOL"),
-                    Mode->GetElapsedTime6B(), Mode->GetShotCharge6M() * 100.f)
+                ? FString::Printf(TEXT("Remates realizados: %d / %d\nGoles: %d\nFallos: %d\nEfectividad: %.0f%%\n\nTiempo total: %.1f segundos"),
+                    Mode->GetShotsCompleted6N(), Mode->GetShotAttemptsTotal6N(),
+                    Mode->GetGoalsScored6N(), Mode->GetShotsCompleted6N() - Mode->GetGoalsScored6N(),
+                    100.f * Mode->GetGoalsScored6N() / FMath::Max(1, Mode->GetShotsCompleted6N()),
+                    Mode->GetElapsedTime6B())
                 : bAutoPass
                 ? FString::Printf(TEXT("Completaste las cuatro marcas con autopases.\n\nTiempo empleado: %.1f segundos\nP\u00e9rdidas de control: %d"),
                     Mode->GetElapsedTime6B(), Mode->GetLostControlCount6B())
@@ -167,7 +169,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         }
         if (Feedback6H)
         {
-            const FString Result = bShot ? TEXT("Prueba terminada. Repite para realizar un nuevo remate.")
+            const FString Result = bShot ? TEXT("Serie de diez remates terminada. Puedes repetirla para mejorar tus resultados.")
                 : !Mode->IsTimeEvaluationEnabled6H()
                 ? TEXT("Evaluaci\u00f3n pendiente: todav\u00eda no definimos el tiempo de aprobaci\u00f3n.")
                 : Mode->GetElapsedTime6B() <= Mode->GetApprovalTime6H()

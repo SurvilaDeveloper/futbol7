@@ -27,6 +27,11 @@ public:
     bool HasShotBeenReleased6M() const { return bShotReleased6M; }
     bool WasGoalScored6M() const { return bGoalScored6M; }
     float GetShotCharge6M() const { return ShotCharge6M; }
+    int32 GetShotAttempt6N() const { return FMath::Clamp(ShotAttemptIndex6N + 1, 1, 10); }
+    int32 GetShotsCompleted6N() const { return ShotsCompleted6N; }
+    int32 GetGoalsScored6N() const { return GoalsScored6N; }
+    int32 GetShotAttemptsTotal6N() const { return 10; }
+    bool IsBetweenShotAttempts6N() const { return bBetweenShotAttempts6N; }
     void RegisterChargedShotRelease6M(float ChargeFraction);
     // Called only after an autopass click while the player possesses the ball.
     void RegisterAutoPassClick6J();
@@ -81,6 +86,12 @@ private:
 
     bool bAutoPassLesson6J = false;
     bool bChargedShotLesson6M = false;
+    // 6N: ten controlled shot attempts using the existing match kick mechanic.
+    int32 ShotAttemptIndex6N = 0;  // zero-based current attempt
+    int32 ShotsCompleted6N = 0;
+    int32 GoalsScored6N = 0;
+    bool bBetweenShotAttempts6N = false;
+    float NextAttemptAt6N = 0.f;
     bool bShotReleased6M = false;
     bool bGoalScored6M = false;
     bool bShotInFlight6M = false;
@@ -112,4 +123,7 @@ private:
     void EnsureTrainingBallParity6G();
     void DrawCheckpoint6B() const;
     void TickChargedShot6M(float DeltaSeconds);
+    void ResolveShotAttempt6N(bool bGoal);
+    void PrepareShotAttempt6N();
+    FVector GetShotBallLocal6N(int32 AttemptIndex) const;
 };

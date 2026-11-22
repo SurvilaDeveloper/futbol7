@@ -102,10 +102,10 @@ bool ASoccerTrainingPlayerController6B::InputKey(
     {
         if (Key == EKeys::RightMouseButton)
         {
-            if (!TrainingMode->IsChargedShotLesson6M() || TrainingMode->HasShotBeenReleased6M())
+            if (!TrainingMode->IsChargedShotLesson6M() || TrainingMode->HasShotBeenReleased6M() || TrainingMode->IsBetweenShotAttempts6N())
                 return true;
             AThirdPersonCppCharacter* Shooter = Cast<AThirdPersonCppCharacter>(GetPawn());
-            if (!Shooter || (EventType == IE_Pressed && !Shooter->IsPossessingBall())) return true;
+            if (!Shooter) return true; // Existing match kick chases the ball on release.
             if (EventType == IE_Released)
             {
                 float Charge = 0.f;
@@ -135,11 +135,8 @@ bool ASoccerTrainingPlayerController6B::InputKey(
             }
             else if (TrainingMode->IsChargedShotLesson6M())
             {
-                // The left button can retrieve the ball, but never trigger an autopass.
-                const AThirdPersonCppCharacter* Trainee = Cast<AThirdPersonCppCharacter>(GetPawn());
-                if (TrainingMode->HasShotBeenReleased6M() || (Trainee &&
-                    (Trainee->IsPossessingBall() || Trainee->HasHumanLogicalBallControl() ||
-                     Trainee->IsChasingBall() || Trainee->IsKicking()))) return true;
+                // Shooting lesson uses right click only. No collection or autopass.
+                return true;
             }
             else if (EventType == IE_Pressed)
             {

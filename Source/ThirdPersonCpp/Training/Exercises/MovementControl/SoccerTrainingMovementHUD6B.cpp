@@ -22,7 +22,8 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
     DrawText(Mode->IsChargedShotLesson6M() ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : Mode->IsAutoPassLesson6J() ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | MOVIMIENTO Y CONTROL"), FLinearColor::White, X, Y, Font, 1.25f, false);
     const FString Progress = Mode->IsChargedShotLesson6M()
-        ? FString::Printf(TEXT("Remate unico | Carga registrada: %.0f%%"), Mode->GetShotCharge6M() * 100.f)
+        ? FString::Printf(TEXT("Intento %d / %d  |  Goles %d  |  Carga %.0f%%"),
+            Mode->GetShotAttempt6N(), Mode->GetShotAttemptsTotal6N(), Mode->GetGoalsScored6N(), Mode->GetShotCharge6M() * 100.f)
         : Mode->IsExerciseComplete6B()
         ? TEXT("Recorrido terminado: 4/4")
         : FString::Printf(TEXT("Punto de control: %d / %d"),

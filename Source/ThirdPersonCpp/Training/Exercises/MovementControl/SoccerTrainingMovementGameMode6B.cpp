@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/PlayerStart.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "DrawDebugHelpers.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
@@ -122,7 +123,7 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
 
 void ASoccerTrainingMovementGameMode6B::RegisterChargedShotRelease6M(float ChargeFraction)
 {
-    if (!bChargedShotLesson6M || !IsExerciseRunning6H() || bShotReleased6M || !IsValid(PracticeBall6B)) return;
+    if (!bChargedShotLesson6M || !IsExerciseRunning6H() || bShotReleased6M || bBetweenShotAttempts6N || !IsValid(PracticeBall6B)) return;
     bShotReleased6M = true;
     bGoalScored6M = false;
     bShotInFlight6M = false;
@@ -140,6 +141,16 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
 {
     (void)DeltaSeconds;
     // The shot is delivered by the existing character code, possibly after a montage.
+    // Allow the player to see the result briefly, then reset ball and trainee.
+    if (bBetweenShotAttempts6N)
+    {
+        if (GetWorld()->GetTimeSeconds() >= NextAttemptAt6N)
+        {
+            bBetweenShotAttempts6N = false;
+            PrepareShotAttempt6N();
+        }
+        return;
+    }
     if (!bShotReleased6M || !IsValid(PracticeBall6B)) return;
     ASoccerField* Field = FindSharedField6L();
     if (!Field) return;
@@ -158,19 +169,87 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
             const float Radius = PracticeBall6B->GetBallRadiusCm();
             bGoalScored6M = FMath::Abs(Crossing.Y) + Radius < SoccerFieldDimensions::GoalHalfWidthCm &&
                 Crossing.Z + Radius < SoccerFieldDimensions::GoalHeightCm && Crossing.Z >= 0.f;
-            bComplete6B = true;
+            ResolveShotAttempt6N(bGoalScored6M);
+            return;
         }
     }
     PreviousBallLocal6M = Current;
     bHavePreviousBall6M = true;
-    // A miss behind the goal, a stopped ball or a never executed attempt ends the trial.
-    if (!bComplete6B && SinceRelease > 9.f) bComplete6B = true;
-    if (bComplete6B)
+    // Allow time for the character to run up to the ball and play the kick.
+    // After ball movement, a settled ball can terminate a missed attempt early.
+    if (SinceRelease > 15.f ||
+        (bShotInFlight6M && SinceRelease > 3.f && BallVelocity.Size() < 35.f))
     {
-        UE_LOG(LogTemp, Display, TEXT("[Training6M] Shot result: %s, charge=%.0f%%, time=%.1fs"),
-            bGoalScored6M ? TEXT("GOAL") : TEXT("NO GOAL"), ShotCharge6M * 100.f, ElapsedTime6B);
+        ResolveShotAttempt6N(false);
+    }
+}
+
+FVector ASoccerTrainingMovementGameMode6B::GetShotBallLocal6N(int32 AttemptIndex) const
+{
+    // Repeatable positions, inside the playable pitch, scaled to field dimensions.
+    const float Distances[10] = {0.30f, 0.36f, 0.31f, 0.37f, 0.26f,
+                                 0.40f, 0.33f, 0.38f, 0.28f, 0.42f};
+    const float Laterals[10]  = {0.00f, -0.22f, 0.25f, -0.40f, 0.38f,
+                                -0.10f, 0.15f, -0.32f, 0.30f, 0.00f};
+    const int32 Index = FMath::Clamp(AttemptIndex, 0, 9);
+    const float Distance = FMath::Min(2400.f, SoccerFieldDimensions::PitchLengthCm * Distances[Index]);
+    return FVector(SoccerFieldDimensions::RightGoalLineX - Distance,
+        SoccerFieldDimensions::HalfPitchWidthCm * Laterals[Index], 70.f);
+}
+
+void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
+{
+    if (!IsValid(PracticeBall6B) || !IsValid(Trainee6B)) return;
+    ASoccerField* Field = FindSharedField6L();
+    if (!Field)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Training6N] Shared field is required for shooting exercises."));
+        return;
+    }
+
+    // Cancel delayed kick/approach actions before repositioning, to avoid a
+    // previous attempt striking a freshly reset ball.
+    Trainee6B->ReleaseBallForMatchRestart(false);
+    if (UCharacterMovementComponent* Movement = Trainee6B->GetCharacterMovement())
+        Movement->StopMovementImmediately();
+    PracticeBall6B->SetPossessed(false);
+    PracticeBall6B->StopBallKeepingPhysics();
+
+    const FVector BallLocal = GetShotBallLocal6N(ShotAttemptIndex6N);
+    const FVector PlayerLocal(BallLocal.X - 300.f, BallLocal.Y, 130.f);
+    Trainee6B->SetActorLocationAndRotation(Field->PitchLocalToWorld(PlayerLocal),
+        Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+    PracticeBall6B->SetActorLocationAndRotation(Field->PitchLocalToWorld(BallLocal),
+        Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+    PracticeBall6B->StopBallKeepingPhysics();
+    bShotReleased6M = false;
+    bShotInFlight6M = false;
+    bHavePreviousBall6M = false;
+    bGoalScored6M = false;
+    ShotCharge6M = 0.f;
+    UE_LOG(LogTemp, Display, TEXT("[Training6N] Ready: attempt %d/10"), ShotAttemptIndex6N + 1);
+}
+
+void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(bool bGoal)
+{
+    if (!bShotReleased6M || bBetweenShotAttempts6N || bComplete6B) return;
+    bGoalScored6M = bGoal;
+    ++ShotsCompleted6N;
+    if (bGoal) ++GoalsScored6N;
+    UE_LOG(LogTemp, Display, TEXT("[Training6N] Attempt %d/10: %s, charge %.0f%%"),
+        ShotsCompleted6N, bGoal ? TEXT("GOAL") : TEXT("MISS"), ShotCharge6M * 100.f);
+    if (ShotsCompleted6N >= 10)
+    {
+        bComplete6B = true;
+        if (IsValid(Trainee6B)) Trainee6B->ReleaseBallForMatchRestart(false);
         if (ASoccerTrainingPlayerController6B* PC = Cast<ASoccerTrainingPlayerController6B>(GetWorld()->GetFirstPlayerController()))
             PC->ShowExerciseResults6H();
+    }
+    else
+    {
+        ShotAttemptIndex6N = ShotsCompleted6N;
+        bBetweenShotAttempts6N = true;
+        NextAttemptAt6N = GetWorld()->GetTimeSeconds() + 1.5f;
     }
 }
 
@@ -194,12 +273,17 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     bShotInFlight6M = false;
     bHavePreviousBall6M = false;
     ShotCharge6M = 0.f;
+    ShotAttemptIndex6N = 0;
+    ShotsCompleted6N = 0;
+    GoalsScored6N = 0;
+    bBetweenShotAttempts6N = false;
     bComplete6B = false;
     ElapsedTime6B = 0.f;
     CheckpointIndex6B = 0;
     LostControlCount6B = 0;
     OutOfControlSeconds6B = 0.f;
     bHadControl6B = false;
+    if (bChargedShotLesson6M) PrepareShotAttempt6N();
     UE_LOG(LogTemp, Display, TEXT("[Training6H] Exercise started, timer reset."));
 }
 
@@ -321,12 +405,12 @@ FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
 {
     if (bChargedShotLesson6M)
     {
-        if (bComplete6B) return bGoalScored6M ? TEXT("GOL") : TEXT("REMATE FUERA DEL ARCO");
+        if (bComplete6B) return TEXT("Diez remates completados. Consulta el resultado.");
         if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
-        if (bShotReleased6M) return TEXT("Remate lanzado. Espera el resultado...");
-        if (!IsValid(Trainee6B) || !Trainee6B->IsPossessingBall())
-            return TEXT("Clic izquierdo: busca la pelota y toma posesion");
-        return TEXT("Apunta con la cruz verde. Manten clic derecho para cargar y suelta para patear");
+        if (bBetweenShotAttempts6N) return bGoalScored6M ? TEXT("Gol. Preparando el siguiente intento...")
+            : TEXT("Sin gol. Preparando el siguiente intento...");
+        if (bShotReleased6M) return TEXT("El jugador va hacia la pelota y remata. Espera el resultado...");
+        return TEXT("Apunta con la cruz verde, mant\u00e9n clic derecho para cargar y suelta. No necesitas posesi\u00f3n.");
     }
     if (bComplete6B) return TEXT("RECORRIDO TERMINADO");
     if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y pulsa Empezar ejercicio");
@@ -397,10 +481,9 @@ void ASoccerTrainingMovementGameMode6B::EnsurePlayerStart6B()
     {
         if (bChargedShotLesson6M)
         {
-            const float X = SoccerFieldDimensions::RightGoalLineX -
-                FMath::Min(2300.f, SoccerFieldDimensions::PitchLengthCm * 0.36f);
-            World->SpawnActor<APlayerStart>(Field->PitchLocalToWorld(FVector(X, 0.f, 130.f)),
-                Field->GetActorRotation());
+            const FVector BallLocal = GetShotBallLocal6N(0);
+            World->SpawnActor<APlayerStart>(Field->PitchLocalToWorld(
+                FVector(BallLocal.X - 300.f, BallLocal.Y, 130.f)), Field->GetActorRotation());
             return;
         }
         const FVector LocalStart(-0.78f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f);
@@ -431,10 +514,9 @@ void ASoccerTrainingMovementGameMode6B::EnsureBall6B()
     FRotator BallRotation = FRotator::ZeroRotator;
     if (ASoccerField* Field = FindSharedField6L())
     {
-        const float LocalBallX = bChargedShotLesson6M
-            ? SoccerFieldDimensions::RightGoalLineX - FMath::Min(1950.f, SoccerFieldDimensions::PitchLengthCm * 0.31f)
-            : -0.63f * SoccerFieldDimensions::HalfPitchLengthCm;
-        BallPosition = Field->PitchLocalToWorld(FVector(LocalBallX, 0.f, 70.f));
+        const FVector LocalBall = bChargedShotLesson6M ? GetShotBallLocal6N(0)
+            : FVector(-0.63f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 70.f);
+        BallPosition = Field->PitchLocalToWorld(LocalBall);
         BallRotation = Field->GetActorRotation();
     }
     PracticeBall6B = World->SpawnActor<ASoccerBall>(BallClass,
