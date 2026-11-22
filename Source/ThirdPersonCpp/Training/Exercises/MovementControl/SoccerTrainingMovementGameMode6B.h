@@ -132,6 +132,24 @@ private:
     float KeeperPredictionHorizon6V = 1.2f;
     UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Prediction", meta=(ClampMin="0.0", ClampMax="1.0"))
     float KeeperTrajectoryFollowAlpha6V = 0.85f;
+    // 6W: training-only contact and recovery tuning. Default reach is modest;
+    // it does not modify the goalkeeper used in regular matches.
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves", meta=(ClampMin="0.0"))
+    float KeeperContactReach6W = 85.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves", meta=(ClampMin="50.0"))
+    float KeeperContactMaxHeight6W = 190.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves", meta=(ClampMin="0.0"))
+    float KeeperMinimumShotSpeed6W = 250.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves", meta=(ClampMin="0.0"))
+    float KeeperMinimumForwardSpeed6W = 180.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves")
+    float KeeperLowShotHeight6W = 65.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves")
+    float KeeperHighShotHeight6W = 155.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves", meta=(ClampMin="0.0"))
+    float KeeperCentralSaveDistance6W = 40.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves", meta=(ClampMin="1.5"))
+    float KeeperSaveRecoverySeconds6W = 2.25f;
     bool bGoalkeeperPrepared6T = false;
     bool bKeeperSaveTriggered6T = false;
     // 6N: ten controlled shot attempts using the existing match kick mechanic.
