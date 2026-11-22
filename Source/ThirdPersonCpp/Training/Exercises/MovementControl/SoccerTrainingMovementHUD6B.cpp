@@ -19,7 +19,7 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
     const float X = 32.f;
     const float Y = 40.f;
     DrawRect(FLinearColor(0.015f, 0.025f, 0.035f, 0.78f), X - 12.f, Y - 12.f, 1040.f, 260.f);
-    DrawText(Mode->IsChargedShotLesson6M() ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : Mode->IsAutoPassLesson6J() ? TEXT("ENTRENAMIENTO | AUTOPASE")
+    DrawText(Mode->IsGoalkeeperShotLesson6T() ? TEXT("ENTRENAMIENTO | REMATES CONTRA ARQUERO") : Mode->IsChargedShotLesson6M() ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : Mode->IsAutoPassLesson6J() ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | MOVIMIENTO Y CONTROL"), FLinearColor::White, X, Y, Font, 1.25f, false);
     const FString Progress = Mode->IsChargedShotLesson6M()
         ? FString::Printf(TEXT("Intento %d / %d  |  Goles %d  |  Carga %.0f%%"),

@@ -124,7 +124,7 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
     const bool bShot = Mode && Mode->IsChargedShotLesson6M();
-    if (Header6H) Header6H->SetText(FText::FromString(bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
+    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("ENTRENAMIENTO | REMATES CONTRA ARQUERO") : bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
         ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
     if (Body6H)
@@ -133,7 +133,17 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         BodyFont6P.Size = 19;
         Body6H->SetFont(BodyFont6P);
     }
-    if (Body6H) Body6H->SetText(FText::FromString(bShot
+    if (Body6H) Body6H->SetText(FText::FromString((Mode && Mode->IsGoalkeeperShotLesson6T())
+        ? TEXT("Practicarás diez remates contra un arquero, desde diferentes posiciones.\n\n"
+               "No hace falta tomar posesión: apunta con la cruz verde, mantén presionado el botón derecho "
+               "para cargar la fuerza y suéltalo. El jugador irá hacia la pelota para rematar.\n\n"
+               "El arquero intentará cubrir el arco. Observa sus desplazamientos, varía la puntería "
+               "y aprovecha la barra de fuerza. Después de cada intento, el jugador y la pelota "
+               "cambiarán de posición. Al terminar verás goles, atajadas y disparos fallidos.\n\n"
+               "Este primer entrenamiento utiliza un arquero autónomo simplificado: "
+               "sus animaciones y su aspecto provienen del arquero del partido, pero "
+               "sus decisiones todavía no son las mismas que las del SoccerMatchManager.")
+        : bShot
         ? TEXT("Vas a realizar diez remates al arco desde distintas posiciones. Los primeros cuatro son libres; los seis siguientes incluyen barreras.\n\n"
                "No necesitas tomar posesión. Con el mouse, apunta al arco usando la cruz verde "
                "(sin cursor de Windows). Mantén presionado el botón derecho para cargar "
@@ -174,7 +184,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
     const bool bShot = Mode && Mode->IsChargedShotLesson6M();
-    if (Header6H) Header6H->SetText(FText::FromString(bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
+    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("RESULTADOS CONTRA ARQUERO") : bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
         ? TEXT("AUTOPASES COMPLETADOS") : TEXT("RECORRIDO COMPLETADO")));
     if (Mode)
     {

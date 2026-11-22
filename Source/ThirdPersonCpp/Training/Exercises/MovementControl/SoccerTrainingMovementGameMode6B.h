@@ -9,11 +9,12 @@ class ASoccerField;
 class AThirdPersonCppCharacter;
 class USoccerPlayerProfile;
 class AStaticMeshActor;
+class ASoccerAICharacter;
 
 // 6P: keep the cause of each shot result separate from the goal counter.
 enum class ETrainingShotOutcome6P : uint8
 {
-    Goal, Wide, OverBar, Barrier, Unresolved
+    Goal, Wide, OverBar, Barrier, Unresolved, Saved
 };
 
 /** Standalone first dribbling lesson: guide the ball through four checkpoints. */
@@ -31,6 +32,7 @@ public:
     void BeginExercise6H();
     bool IsAutoPassLesson6J() const { return bAutoPassLesson6J; }
     bool IsChargedShotLesson6M() const { return bChargedShotLesson6M; }
+    bool IsGoalkeeperShotLesson6T() const { return bGoalkeeperShotLesson6T; }
     bool HasShotBeenReleased6M() const { return bShotReleased6M; }
     bool WasGoalScored6M() const { return bGoalScored6M; }
     float GetShotCharge6M() const { return ShotCharge6M; }
@@ -95,6 +97,43 @@ private:
 
     bool bAutoPassLesson6J = false;
     bool bChargedShotLesson6M = false;
+    bool bGoalkeeperShotLesson6T = false;
+    UPROPERTY(Transient) ASoccerAICharacter* TrainingGoalkeeper6T = nullptr;
+    // 6V: training-only goalkeeper positioning. These mirror the geometric
+    // principles of SoccerMatchManager, not its runtime Blueprint overrides.
+    // Tune them here if the match uses different effective values.
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperHomeDepth6V = 150.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperMaxDepth6V = 820.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperFullDepthDistance6V = 3000.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperLateralRange6V = 230.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperPostMargin6V = 70.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperFullCoverageAngle6V = 55.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperAngleResponseExponent6V = 0.85f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperNearFollowDepth6V = 700.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperFarFollowDepth6V = 2200.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning", meta=(ClampMin="0.0", ClampMax="1.0"))
+    float KeeperFarFollowAlpha6V = 0.8f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperForwardSpeed6V = 320.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Positioning")
+    float KeeperLateralSpeed6V = 540.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Prediction")
+    float KeeperPredictionMinForwardSpeed6V = 180.f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Prediction")
+    float KeeperPredictionHorizon6V = 1.2f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Prediction", meta=(ClampMin="0.0", ClampMax="1.0"))
+    float KeeperTrajectoryFollowAlpha6V = 0.85f;
+    bool bGoalkeeperPrepared6T = false;
+    bool bKeeperSaveTriggered6T = false;
     // 6N: ten controlled shot attempts using the existing match kick mechanic.
     int32 ShotAttemptIndex6N = 0;  // zero-based current attempt
     int32 ShotsCompleted6N = 0;
@@ -144,6 +183,8 @@ private:
     void EnsureTrainingBallParity6G();
     void DrawCheckpoint6B() const;
     void TickChargedShot6M(float DeltaSeconds);
+    void FindTrainingGoalkeeper6T();
+    void UpdateTrainingGoalkeeper6T(float DeltaSeconds);
     void ResolveShotAttempt6N(ETrainingShotOutcome6P Outcome);
     UFUNCTION()
     void OnPracticeBarrierHit6P(AActor* SelfActor, AActor* OtherActor,

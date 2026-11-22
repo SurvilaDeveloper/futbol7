@@ -3,6 +3,8 @@
 #include "Training/Shared/SoccerTrainingPlayerController6B.h"
 
 #include "SoccerBall.h"
+#include "SoccerAICharacter.h"
+#include "SoccerTeamTypes.h"
 #include "SoccerField.h"
 #include "SoccerFieldDimensions.h"
 #include "ThirdPersonCppCharacter.h"
@@ -12,6 +14,7 @@
 #include "Engine/World.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/PlayerStart.h"
+#include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "DrawDebugHelpers.h"
 #include "UObject/ConstructorHelpers.h"
@@ -32,9 +35,10 @@ void ASoccerTrainingMovementGameMode6B::StartPlay()
 {
     const FString Lesson = UGameplayStatics::ParseOption(OptionsString, TEXT("TrainingLesson"));
     bAutoPassLesson6J = Lesson.Equals(TEXT("AutoPass"), ESearchCase::IgnoreCase);
-    bChargedShotLesson6M = Lesson.Equals(TEXT("ChargedShot"), ESearchCase::IgnoreCase);
+    bGoalkeeperShotLesson6T = Lesson.Equals(TEXT("GoalkeeperShot"), ESearchCase::IgnoreCase);
+    bChargedShotLesson6M = bGoalkeeperShotLesson6T || Lesson.Equals(TEXT("ChargedShot"), ESearchCase::IgnoreCase);
     UE_LOG(LogTemp, Display, TEXT("[Training6J] Lesson: %s"),
-        bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
+        bGoalkeeperShotLesson6T ? TEXT("GoalkeeperShot") : bChargedShotLesson6M ? TEXT("ChargedShot") : bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
     // 6L: ASoccerField can live in a shared, Always Loaded streaming level.
     // Never create the temporary cube when the real field is present.
     if (FindSharedField6L())
@@ -52,6 +56,35 @@ void ASoccerTrainingMovementGameMode6B::StartPlay()
     FindExerciseActors6B();
     EnsureTrainingProfile6D();
     EnsureTrainingBallParity6G();
+
+    // 6U: the goalkeeper is placed in the persistent training level, shared by
+    // all lessons. Keep it entirely inactive outside the goalkeeper lesson.
+    // This affects only the training world; it does not change the Blueprint
+    // or the goalkeeper used in regular matches.
+    for (TActorIterator<ASoccerAICharacter> It(GetWorld()); It; ++It)
+    {
+        ASoccerAICharacter* Candidate = *It;
+        if (!IsValid(Candidate) || Candidate->GetPlayerRole() != ESoccerPlayerRole::Goalkeeper)
+            continue;
+
+        if (!bGoalkeeperShotLesson6T)
+        {
+            Candidate->SetActorHiddenInGame(true);
+            Candidate->SetActorEnableCollision(false);
+            Candidate->SetActorTickEnabled(false);
+            if (AController* Controller = Candidate->GetController())
+                Controller->SetActorTickEnabled(false);
+            UE_LOG(LogTemp, Display, TEXT("[Training6U] Goalkeeper inactive for this lesson: %s"),
+                *Candidate->GetName());
+        }
+        else
+        {
+            Candidate->SetActorHiddenInGame(false);
+            UE_LOG(LogTemp, Display, TEXT("[Training6U] Goalkeeper available for shot lesson: %s"),
+                *Candidate->GetName());
+        }
+    }
+    if (bGoalkeeperShotLesson6T) FindTrainingGoalkeeper6T();
     UE_LOG(LogTemp, Display, TEXT("[Training6B] Movement lesson started; map owns lighting."));
 }
 
@@ -74,6 +107,7 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     }
     if (!IsExerciseRunning6H() || !IsValid(PracticeBall6B) || !IsValid(Trainee6B)) return;
     ElapsedTime6B += DeltaSeconds;
+    if (bGoalkeeperShotLesson6T) UpdateTrainingGoalkeeper6T(DeltaSeconds);
     if (bChargedShotLesson6M)
     {
         TickChargedShot6M(DeltaSeconds);
@@ -121,6 +155,102 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     }
 }
 
+void ASoccerTrainingMovementGameMode6B::FindTrainingGoalkeeper6T()
+{
+    if (IsValid(TrainingGoalkeeper6T)) return;
+    for (TActorIterator<ASoccerAICharacter> It(GetWorld()); It; ++It)
+    {
+        ASoccerAICharacter* Candidate = *It;
+        if (IsValid(Candidate) && Candidate->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
+        {
+            TrainingGoalkeeper6T = Candidate;
+            // Without SoccerMatchManager the normal AI controller would return
+            // to its match home. The exercise owns only this keeper's positioning.
+            if (AController* Controller = Candidate->GetController())
+                Controller->SetActorTickEnabled(false);
+            UE_LOG(LogTemp, Display, TEXT("[Training6T] Goalkeeper found: %s"), *Candidate->GetName());
+            return;
+        }
+    }
+    UE_LOG(LogTemp, Warning, TEXT("[Training6T] No goalkeeper in training map. Copy a goalkeeper actor from the match to the TRAINING persistent level."));
+}
+
+void ASoccerTrainingMovementGameMode6B::UpdateTrainingGoalkeeper6T(float DeltaSeconds)
+{
+    if (!IsValid(TrainingGoalkeeper6T))
+    {
+        if (!bGoalkeeperPrepared6T)
+        {
+            bGoalkeeperPrepared6T = true;
+            FindTrainingGoalkeeper6T();
+        }
+        return;
+    }
+
+    ASoccerField* Field = FindSharedField6L();
+    if (!Field || !IsValid(PracticeBall6B) || DeltaSeconds <= 0.f) return;
+
+    // Training-only positioning using the same angle/depth concepts found in
+    // ASoccerMatchManager::GetGoalkeeperMoveLocation(). This does NOT invoke
+    // the match controller's full save planner.
+    const FVector Current = Field->WorldToPitchLocal(TrainingGoalkeeper6T->GetActorLocation());
+    const FVector Ball = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
+    const FVector Velocity = Field->GetActorRotation().UnrotateVector(PracticeBall6B->GetBallPhysicsVelocity());
+    const float GoalX = SoccerFieldDimensions::RightGoalLineX;
+    const float BallDepth = GoalX - Ball.X;
+
+    // Moving into the field means decreasing X for the right-hand goalkeeper.
+    const float HomeDepth = FMath::Max(0.f, KeeperHomeDepth6V);
+    const float MaxDepth = FMath::Max(HomeDepth, KeeperMaxDepth6V);
+    float Depth = HomeDepth;
+    if (BallDepth > 1.f)
+    {
+        const float DistanceFactor = FMath::Clamp(BallDepth / FMath::Max(1.f, KeeperFullDepthDistance6V), 0.f, 1.f);
+        const float AngleFactor = FMath::Clamp(BallDepth / FMath::Max(1.f, FVector2D(BallDepth, Ball.Y).Size()), 0.f, 1.f);
+        Depth = FMath::Lerp(HomeDepth, MaxDepth, DistanceFactor * AngleFactor);
+    }
+
+    const float PostMargin = FMath::Clamp(KeeperPostMargin6V, 0.f, SoccerFieldDimensions::GoalHalfWidthCm - 5.f);
+    const float LateralRange = FMath::Min(FMath::Max(0.f, KeeperLateralRange6V),
+        SoccerFieldDimensions::GoalHalfWidthCm - PostMargin);
+    const float AngleDegrees = FMath::RadiansToDegrees(FMath::Atan2(FMath::Abs(Ball.Y), FMath::Max(1.f, BallDepth)));
+    const float AngleResponse = FMath::Pow(
+        FMath::Clamp(AngleDegrees / FMath::Max(1.f, KeeperFullCoverageAngle6V), 0.f, 1.f),
+        FMath::Max(0.05f, KeeperAngleResponseExponent6V));
+    const float DistanceBlend = FMath::Clamp(
+        (BallDepth - KeeperNearFollowDepth6V) /
+        FMath::Max(1.f, KeeperFarFollowDepth6V - KeeperNearFollowDepth6V), 0.f, 1.f);
+    const float FollowAlpha = FMath::Lerp(1.f, FMath::Clamp(KeeperFarFollowAlpha6V, 0.f, 1.f), DistanceBlend);
+    float TargetY = FMath::Sign(Ball.Y) * LateralRange * AngleResponse * FollowAlpha;
+
+    // Once the shot is moving toward the goal, follow its predicted crossing
+    // at the goalkeeper's depth, without changing the ball trajectory.
+    if (bShotInFlight6M && Velocity.X > KeeperPredictionMinForwardSpeed6V)
+    {
+        const float KeeperPlaneX = GoalX - Depth;
+        const float TimeToPlane = (KeeperPlaneX - Ball.X) / Velocity.X;
+        if (TimeToPlane >= 0.f && TimeToPlane <= KeeperPredictionHorizon6V)
+        {
+            const float PredictedY = Ball.Y + Velocity.Y * TimeToPlane;
+            TargetY = FMath::Lerp(TargetY, PredictedY, KeeperTrajectoryFollowAlpha6V);
+        }
+    }
+    TargetY = FMath::Clamp(TargetY, -LateralRange, LateralRange);
+
+    const FVector Desired(GoalX - Depth, TargetY, Current.Z);
+    const FVector NewLocal(
+        FMath::FInterpConstantTo(Current.X, Desired.X, DeltaSeconds, KeeperForwardSpeed6V),
+        FMath::FInterpConstantTo(Current.Y, Desired.Y, DeltaSeconds, KeeperLateralSpeed6V),
+        Current.Z);
+    const FVector WorldDelta = Field->GetActorRotation().RotateVector(NewLocal - Current);
+    // Face the incoming shot while maintaining the same field-relative axes.
+    const FVector FaceDirection = Field->GetActorRotation().RotateVector(FVector(-1.f, 0.f, 0.f));
+    TrainingGoalkeeper6T->SetActorRotation(FaceDirection.Rotation());
+    TrainingGoalkeeper6T->SetActorLocation(Field->PitchLocalToWorld(NewLocal), true);
+    TrainingGoalkeeper6T->SetScriptedLocomotionVelocity(
+        WorldDelta / DeltaSeconds, ESoccerAIMovementMode::Run, ESoccerAIMovementReason::NormalPlay);
+}
+
 void ASoccerTrainingMovementGameMode6B::RegisterChargedShotRelease6M(float ChargeFraction)
 {
     if (!bChargedShotLesson6M || !IsExerciseRunning6H() || bShotReleased6M || bBetweenShotAttempts6N || !IsValid(PracticeBall6B)) return;
@@ -158,6 +288,29 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
     const FVector Current = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
     const FVector BallVelocity = PracticeBall6B->GetBallPhysicsVelocity();
     if (BallVelocity.Size() > 140.f) bShotInFlight6M = true;
+    // 6T: check a real goalkeeper contact before resolving the goal line.
+    if (bGoalkeeperShotLesson6T && bShotInFlight6M && !bKeeperSaveTriggered6T &&
+        IsValid(TrainingGoalkeeper6T) && BallVelocity.Size2D() > 250.f)
+    {
+        const FVector KeeperLocal = Field->WorldToPitchLocal(TrainingGoalkeeper6T->GetActorLocation());
+        const float Reach2D = FVector::Dist2D(Current, KeeperLocal);
+        const float HeightAboveKeeper = Current.Z - KeeperLocal.Z;
+        // A training-only, deterministic contact: retains the existing kick physics
+        // and uses the goalkeeper character's configured animation where possible.
+        if (BallVelocity.X > 0.f && Reach2D < 105.f && HeightAboveKeeper > -35.f && HeightAboveKeeper < 190.f)
+        {
+            bKeeperSaveTriggered6T = true;
+            const ESoccerGoalkeeperAction SaveAction = Current.Y < KeeperLocal.Y
+                ? ESoccerGoalkeeperAction::BodyBlockDeflectToLeft
+                : ESoccerGoalkeeperAction::BodyBlockDeflectToRight;
+            TrainingGoalkeeper6T->StartGoalkeeperAction(SaveAction);
+            const FVector DeflectedVelocity = FVector(-FMath::Max(320.f, BallVelocity.Size2D() * .42f),
+                Current.Y <= KeeperLocal.Y ? -240.f : 240.f, FMath::Max(75.f, BallVelocity.Z * .3f));
+            PracticeBall6B->ApplyAerialContactVelocity(Field->GetActorRotation().RotateVector(DeflectedVelocity));
+            ResolveShotAttempt6N(ETrainingShotOutcome6P::Saved);
+            return;
+        }
+    }
     if (bShotInFlight6M && bHavePreviousBall6M)
     {
         const float GoalX = SoccerFieldDimensions::RightGoalLineX;
@@ -223,7 +376,8 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
 
     const FVector BallLocal = GetShotBallLocal6N(ShotAttemptIndex6N);
     // 6O: update the obstacle layout before the player takes the next kick.
-    SetupPracticeBarriers6O(BallLocal);
+    if (bGoalkeeperShotLesson6T) ClearPracticeBarriers6O();
+    else SetupPracticeBarriers6O(BallLocal);
     const FVector PlayerLocal(BallLocal.X - 300.f, BallLocal.Y, 130.f);
     Trainee6B->SetActorLocationAndRotation(Field->PitchLocalToWorld(PlayerLocal),
         Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
@@ -236,6 +390,12 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     bGoalScored6M = false;
     ShotCharge6M = 0.f;
     bBarrierContactThisShot6P = false;
+    bKeeperSaveTriggered6T = false;
+    if (bGoalkeeperShotLesson6T && IsValid(TrainingGoalkeeper6T))
+    {
+        TrainingGoalkeeper6T->ClearGoalkeeperAction();
+        TrainingGoalkeeper6T->StopGoalkeeperActionMontage(0.05f);
+    }
     UE_LOG(LogTemp, Display, TEXT("[Training6N] Ready: attempt %d/10"), ShotAttemptIndex6N + 1);
 }
 
@@ -326,6 +486,7 @@ FString ASoccerTrainingMovementGameMode6B::ShotOutcomeLabel6P(ETrainingShotOutco
     switch (Outcome)
     {
     case ETrainingShotOutcome6P::Goal: return TEXT("GOL");
+    case ETrainingShotOutcome6P::Saved: return TEXT("ATAJADA");
     case ETrainingShotOutcome6P::Wide: return TEXT("DESVIADO");
     case ETrainingShotOutcome6P::OverBar: return TEXT("SOBRE EL TRAVESANO");
     case ETrainingShotOutcome6P::Barrier: return TEXT("BARRERA");
@@ -349,11 +510,12 @@ FString ASoccerTrainingMovementGameMode6B::GetLastShotFeedback6P() const
 
 FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
 {
-    int32 Wide = 0, Over = 0, Blocked = 0, Unresolved = 0, BarrierTouches = 0;
+    int32 Wide = 0, Over = 0, Blocked = 0, Saved = 0, Unresolved = 0, BarrierTouches = 0;
     for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
     {
         switch (ShotOutcomes6P[Index])
         {
+        case ETrainingShotOutcome6P::Saved: ++Saved; break;
         case ETrainingShotOutcome6P::Wide: ++Wide; break;
         case ETrainingShotOutcome6P::OverBar: ++Over; break;
         case ETrainingShotOutcome6P::Barrier: ++Blocked; break;
@@ -364,8 +526,8 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
             ++BarrierTouches;
     }
     FString Report = FString::Printf(
-        TEXT("Desviados: %d  |  Sobre travesano: %d\nBarrera: %d  |  Sin resolucion: %d  |  Contactos barrera: %d\n"),
-        Wide, Over, Blocked, Unresolved, BarrierTouches);
+        TEXT("Desviados: %d  |  Sobre travesaño: %d\nAtajadas: %d  |  Barrera: %d  |  Sin resolución: %d  |  Contactos barrera: %d\n"),
+        Wide, Over, Saved, Blocked, Unresolved, BarrierTouches);
     for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
     {
         if (Index % 2 == 0 && Index > 0) Report += TEXT("\n");
