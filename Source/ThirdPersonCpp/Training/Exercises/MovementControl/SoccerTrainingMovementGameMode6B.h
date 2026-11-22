@@ -5,6 +5,7 @@
 #include "SoccerTrainingMovementGameMode6B.generated.h"
 
 class ASoccerBall;
+class ASoccerField;
 class AThirdPersonCppCharacter;
 class USoccerPlayerProfile;
 
@@ -89,6 +90,7 @@ private:
     bool bTrainingProfileApplied6D = false;
     int32 LastPossessionState6D = -1;
 
+    ASoccerField* FindSharedField6L() const;
     void EnsureGround6B();
     void EnsurePlayerStart6B();
     void EnsureBall6B();

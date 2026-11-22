@@ -3,6 +3,8 @@
 #include "Training/Shared/SoccerTrainingPlayerController6B.h"
 
 #include "SoccerBall.h"
+#include "SoccerField.h"
+#include "SoccerFieldDimensions.h"
 #include "ThirdPersonCppCharacter.h"
 #include "SoccerPlayerProfile.h"
 #include "EngineUtils.h"
@@ -31,7 +33,17 @@ void ASoccerTrainingMovementGameMode6B::StartPlay()
         .Equals(TEXT("AutoPass"), ESearchCase::IgnoreCase);
     UE_LOG(LogTemp, Display, TEXT("[Training6J] Lesson: %s"),
         bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
-    if (bGenerateTestGround6B) EnsureGround6B();
+    // 6L: ASoccerField can live in a shared, Always Loaded streaming level.
+    // Never create the temporary cube when the real field is present.
+    if (FindSharedField6L())
+    {
+        UE_LOG(LogTemp, Display, TEXT("[Training6L] Shared ASoccerField detected; using real pitch geometry."));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Training6L] No ASoccerField found. Add the shared field sublevel to this training map."));
+    }
+    if (bGenerateTestGround6B && !FindSharedField6L()) EnsureGround6B();
     EnsurePlayerStart6B();
     if (bSpawnPracticeBall6B) EnsureBall6B();
     Super::StartPlay();
@@ -197,16 +209,42 @@ FString ASoccerTrainingMovementGameMode6B::GetBallDiagnostics6E() const
         BallVelocity.Size2D(), ForwardDistance, *ControlValue);
 }
 
+ASoccerField* ASoccerTrainingMovementGameMode6B::FindSharedField6L() const
+{
+    UWorld* World = GetWorld();
+    if (!World) return nullptr;
+    for (TActorIterator<ASoccerField> It(World); It; ++It)
+    {
+        if (IsValid(*It)) return *It;
+    }
+    return nullptr;
+}
+
 FVector ASoccerTrainingMovementGameMode6B::GetCurrentCheckpoint6B() const
 {
-    // Ordered slalom; the ground is 4000 x 2600 cm, all points fit inside.
-    static const FVector Checkpoints[] = {
+    // 6L: place checkpoints in field-local space, so translated/rotated fields
+    // and future dimension changes do not require changing the exercise.
+    if (ASoccerField* Field = FindSharedField6L())
+    {
+        const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
+        const float HalfWidth = SoccerFieldDimensions::HalfPitchWidthCm;
+        const FVector LocalCheckpoints[] = {
+            FVector(-0.35f * HalfLength, -0.24f * HalfWidth, 25.f),
+            FVector(-0.10f * HalfLength,  0.24f * HalfWidth, 25.f),
+            FVector( 0.17f * HalfLength, -0.24f * HalfWidth, 25.f),
+            FVector( 0.43f * HalfLength,  0.00f * HalfWidth, 25.f)
+        };
+        return Field->PitchLocalToWorld(LocalCheckpoints[FMath::Clamp(CheckpointIndex6B, 0, 3)]);
+    }
+
+    // Keep the old exercise functional while the streaming level is set up.
+    static const FVector LegacyCheckpoints[] = {
         FVector(0.f, -400.f, 25.f),
         FVector(500.f, 400.f, 25.f),
         FVector(1050.f, -400.f, 25.f),
         FVector(1500.f, 0.f, 25.f)
     };
-    return Checkpoints[FMath::Clamp(CheckpointIndex6B, 0, 3)];
+    return LegacyCheckpoints[FMath::Clamp(CheckpointIndex6B, 0, 3)];
 }
 
 FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
@@ -275,6 +313,12 @@ void ASoccerTrainingMovementGameMode6B::EnsurePlayerStart6B()
     UWorld* World = GetWorld();
     if (!World) return;
     for (TActorIterator<APlayerStart> It(World); It; ++It) return;
+    if (ASoccerField* Field = FindSharedField6L())
+    {
+        const FVector LocalStart(-0.78f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f);
+        World->SpawnActor<APlayerStart>(Field->PitchLocalToWorld(LocalStart), Field->GetActorRotation());
+        return;
+    }
     World->SpawnActor<APlayerStart>(FVector(-850.f,0.f,130.f), FRotator::ZeroRotator);
 }
 
@@ -295,6 +339,13 @@ void ASoccerTrainingMovementGameMode6B::EnsureBall6B()
     }
     FActorSpawnParameters Spawn;
     Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+    FVector BallPosition(-350.f, 0.f, 70.f);
+    FRotator BallRotation = FRotator::ZeroRotator;
+    if (ASoccerField* Field = FindSharedField6L())
+    {
+        BallPosition = Field->PitchLocalToWorld(FVector(-0.63f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 70.f));
+        BallRotation = Field->GetActorRotation();
+    }
     PracticeBall6B = World->SpawnActor<ASoccerBall>(BallClass,
-        FVector(-350.f,0.f,70.f), FRotator::ZeroRotator, Spawn);
+        BallPosition, BallRotation, Spawn);
 }
