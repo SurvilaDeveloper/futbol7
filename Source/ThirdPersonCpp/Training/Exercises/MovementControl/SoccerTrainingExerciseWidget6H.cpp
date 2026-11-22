@@ -8,6 +8,7 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/ScaleBox.h"
 #include "Components/ScaleBoxSlot.h"
+#include "Components/ScrollBox.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
@@ -59,7 +60,7 @@ void USoccerTrainingExerciseWidget6H::NativeOnInitialized()
     Scale->SetStretchDirection(EStretchDirection::DownOnly);
     Backdrop->SetContent(Scale);
     USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>();
-    Size->SetWidthOverride(780.f);
+    Size->SetWidthOverride(900.f);
     Size->SetHeightOverride(580.f);
     Scale->AddChild(Size);
     if (UScaleBoxSlot* ScaleSlot = Cast<UScaleBoxSlot>(Size->Slot))
@@ -68,17 +69,30 @@ void USoccerTrainingExerciseWidget6H::NativeOnInitialized()
         ScaleSlot->SetVerticalAlignment(VAlign_Center);
     }
     UBorder* Panel = WidgetTree->ConstructWidget<UBorder>();
-    Panel->SetPadding(FMargin(42.f, 34.f));
+    Panel->SetPadding(FMargin(30.f, 22.f));
     Panel->SetBrushColor(FLinearColor(0.035f, 0.09f, 0.105f, 1.f));
     Size->SetContent(Panel);
     UVerticalBox* Content = WidgetTree->ConstructWidget<UVerticalBox>();
     Panel->SetContent(Content);
-    Header6H = MakeText(WidgetTree, TEXT("CONTROL DE PELOTA"), 31, FLinearColor::White);
-    Add(Content, Header6H, 22.f);
-    Body6H = MakeText(WidgetTree, TEXT(""), 20, FLinearColor(0.86f, 0.94f, 0.96f));
-    Add(Content, Body6H, 24.f);
-    Feedback6H = MakeText(WidgetTree, TEXT(""), 20, FLinearColor(0.97f, 0.82f, 0.38f));
-    Add(Content, Feedback6H, 24.f);
+    // 6Q: The title and controls stay visible. Only the instructions/results scroll.
+    Header6H = MakeText(WidgetTree, TEXT("CONTROL DE PELOTA"), 28, FLinearColor::White);
+    Add(Content, Header6H, 12.f);
+
+    UScrollBox* TextScroll6Q = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass(), TEXT("InstructionsScroll6Q"));
+    TextScroll6Q->SetOrientation(EOrientation::Orient_Vertical);
+    TextScroll6Q->SetScrollBarVisibility(ESlateVisibility::Visible);
+    TextScroll6Q->SetConsumeMouseWheel(EConsumeMouseWheel::WhenScrollingPossible);
+    UVerticalBoxSlot* ScrollSlot6Q = Content->AddChildToVerticalBox(TextScroll6Q);
+    ScrollSlot6Q->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+    ScrollSlot6Q->SetHorizontalAlignment(HAlign_Fill);
+    ScrollSlot6Q->SetPadding(FMargin(0.f, 0.f, 0.f, 12.f));
+
+    UVerticalBox* ScrollContent6Q = WidgetTree->ConstructWidget<UVerticalBox>();
+    TextScroll6Q->AddChild(ScrollContent6Q);
+    Body6H = MakeText(WidgetTree, TEXT(""), 19, FLinearColor(0.86f, 0.94f, 0.96f));
+    Add(ScrollContent6Q, Body6H, 18.f);
+    Feedback6H = MakeText(WidgetTree, TEXT(""), 18, FLinearColor(0.97f, 0.82f, 0.38f));
+    Add(ScrollContent6Q, Feedback6H, 8.f);
     PrimaryButton6H = WidgetTree->ConstructWidget<UButton>();
     PrimaryButton6H->SetBackgroundColor(FLinearColor(0.3f, 0.78f, 0.5f));
     USizeBox* ButtonSize = WidgetTree->ConstructWidget<USizeBox>();
@@ -116,7 +130,7 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
     if (Body6H)
     {
         FSlateFontInfo BodyFont6P = Body6H->Font;
-        BodyFont6P.Size = 20;
+        BodyFont6P.Size = 19;
         Body6H->SetFont(BodyFont6P);
     }
     if (Body6H) Body6H->SetText(FText::FromString(bShot
@@ -145,6 +159,11 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         TEXT("El cron\u00f3metro comienza al pulsar Empezar ejercicio.")));
     if (PrimaryLabel6H) PrimaryLabel6H->SetText(FText::FromString(TEXT("EMPEZAR EJERCICIO")));
     SetVisibility(ESlateVisibility::Visible);
+    // Scroll from the beginning when showing a new screen.
+    if (UScrollBox* Scroll = Cast<UScrollBox>(WidgetTree->FindWidget(TEXT("InstructionsScroll6Q"))))
+    {
+        Scroll->ScrollToStart();
+    }
     FocusPrimary6H();
 }
 
@@ -164,7 +183,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
             // The ten-shot report needs a smaller font to remain visible
             // inside the existing 6H results panel.
             FSlateFontInfo BodyFont6P = Body6H->Font;
-            BodyFont6P.Size = bShot ? 15 : 20;
+            BodyFont6P.Size = bShot ? 17 : 19;
             Body6H->SetFont(BodyFont6P);
             const FString Summary6H = bShot
                 ? FString::Printf(TEXT("Remates realizados: %d / %d\nGoles: %d\nFallos: %d\nEfectividad: %.0f%%\n\nTiempo total: %.1f segundos"),
@@ -192,6 +211,11 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
     }
     if (PrimaryLabel6H) PrimaryLabel6H->SetText(FText::FromString(TEXT("REPETIR EJERCICIO")));
     SetVisibility(ESlateVisibility::Visible);
+    // Scroll from the beginning when showing a new screen.
+    if (UScrollBox* Scroll = Cast<UScrollBox>(WidgetTree->FindWidget(TEXT("InstructionsScroll6Q"))))
+    {
+        Scroll->ScrollToStart();
+    }
     FocusPrimary6H();
 }
 
@@ -241,6 +265,16 @@ FReply USoccerTrainingExerciseWidget6H::NativeOnPreviewKeyDown(
     const FGeometry& Geometry, const FKeyEvent& KeyEvent)
 {
     const FKey Key = KeyEvent.GetKey();
+    // PageUp / PageDown also work while a button holds keyboard focus.
+    if (Key == EKeys::PageDown || Key == EKeys::PageUp)
+    {
+        if (UScrollBox* Scroll = Cast<UScrollBox>(WidgetTree->FindWidget(TEXT("InstructionsScroll6Q"))))
+        {
+            const float Step = Key == EKeys::PageDown ? 220.f : -220.f;
+            Scroll->SetScrollOffset(FMath::Max(0.f, Scroll->GetScrollOffset() + Step));
+        }
+        return FReply::Handled();
+    }
     if (Key == EKeys::Up || Key == EKeys::Gamepad_DPad_Up || Key == EKeys::W)
     {
         Navigate6H(-1);
