@@ -114,12 +114,13 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
     if (Body6H) Body6H->SetText(FText::FromString(bShot
-        ? TEXT("Vas a realizar diez remates al arco sin arquero desde distintas posiciones.\n\n"
+        ? TEXT("Vas a realizar diez remates al arco desde distintas posiciones. Los primeros cuatro son libres; los seis siguientes incluyen barreras.\n\n"
                "No necesitas tomar posesi\u00f3n. Con el mouse, apunta al arco usando la cruz verde "
                "(sin cursor de Windows). Mant\u00e9n presionado el bot\u00f3n derecho para cargar "
                "la fuerza y su\u00e9ltalo: el jugador correr\u00e1 hacia la pelota y rematar\u00e1.\n\n"
                "Despu\u00e9s de cada intento, la pelota aparecer\u00e1 en otra posici\u00f3n. "
-               "Intenta marcar tantos goles como puedas. Al final ver\u00e1s el total de aciertos.")
+               "Apunta al punto de ca\u00edda y observa la barra de fuerza mientras cargas: una carga menor puede producir una trayectoria m\u00e1s alta. "
+               "Intenta superar las barreras sin pasar por encima del arco. Al final ver\u00e1s el total de aciertos.")
         : bAutoPass
         ? TEXT("Haz clic izquierdo una vez para que el jugador se acerque y tome posesi\u00f3n de la pelota. "
                "El cono verde indica que la est\u00e1 controlando.\n\n"

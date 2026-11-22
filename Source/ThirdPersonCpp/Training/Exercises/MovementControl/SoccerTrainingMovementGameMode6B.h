@@ -8,6 +8,7 @@ class ASoccerBall;
 class ASoccerField;
 class AThirdPersonCppCharacter;
 class USoccerPlayerProfile;
+class AStaticMeshActor;
 
 /** Standalone first dribbling lesson: guide the ball through four checkpoints. */
 UCLASS()
@@ -90,6 +91,12 @@ private:
     int32 ShotAttemptIndex6N = 0;  // zero-based current attempt
     int32 ShotsCompleted6N = 0;
     int32 GoalsScored6N = 0;
+    // 6O: practice barriers are temporary actors owned by the shooting exercise.
+    UPROPERTY(Transient) TArray<AStaticMeshActor*> PracticeBarriers6O;
+    UPROPERTY(EditAnywhere, Category="Training|Charged Shot|Barriers", meta=(ClampMin="80.0", ClampMax="300.0"))
+    float BarrierHeightCm6O = 175.f;
+    UPROPERTY(EditAnywhere, Category="Training|Charged Shot|Barriers", meta=(ClampMin="120.0", ClampMax="600.0"))
+    float BarrierWidthCm6O = 300.f;
     bool bBetweenShotAttempts6N = false;
     float NextAttemptAt6N = 0.f;
     bool bShotReleased6M = false;
@@ -125,5 +132,7 @@ private:
     void TickChargedShot6M(float DeltaSeconds);
     void ResolveShotAttempt6N(bool bGoal);
     void PrepareShotAttempt6N();
+    void ClearPracticeBarriers6O();
+    void SetupPracticeBarriers6O(const FVector& BallLocal);
     FVector GetShotBallLocal6N(int32 AttemptIndex) const;
 };

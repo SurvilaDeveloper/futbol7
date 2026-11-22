@@ -216,6 +216,8 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     PracticeBall6B->StopBallKeepingPhysics();
 
     const FVector BallLocal = GetShotBallLocal6N(ShotAttemptIndex6N);
+    // 6O: update the obstacle layout before the player takes the next kick.
+    SetupPracticeBarriers6O(BallLocal);
     const FVector PlayerLocal(BallLocal.X - 300.f, BallLocal.Y, 130.f);
     Trainee6B->SetActorLocationAndRotation(Field->PitchLocalToWorld(PlayerLocal),
         Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
@@ -230,6 +232,66 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     UE_LOG(LogTemp, Display, TEXT("[Training6N] Ready: attempt %d/10"), ShotAttemptIndex6N + 1);
 }
 
+void ASoccerTrainingMovementGameMode6B::ClearPracticeBarriers6O()
+{
+    for (AStaticMeshActor* Barrier : PracticeBarriers6O)
+    {
+        if (IsValid(Barrier)) Barrier->Destroy();
+    }
+    PracticeBarriers6O.Empty();
+}
+
+void ASoccerTrainingMovementGameMode6B::SetupPracticeBarriers6O(const FVector& BallLocal)
+{
+    ClearPracticeBarriers6O();
+    // The first four shots teach basic accuracy. The final six introduce
+    // gradually wider walls, requiring players to select a lofted trajectory.
+    if (ShotAttemptIndex6N < 4 || !GetWorld()) return;
+    ASoccerField* Field = FindSharedField6L();
+    if (!Field) return;
+
+    UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+    if (!CubeMesh)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Training6O] Cannot load the obstacle mesh."));
+        return;
+    }
+
+    // Position the barrier on the straight line from the ball to the goal.
+    // Coordinates follow the field, not absolute world X/Y axes.
+    const float TravelX = SoccerFieldDimensions::RightGoalLineX - BallLocal.X;
+    const float ForwardOffset = FMath::Min(650.f, TravelX * 0.40f);
+    const float FractionToGoal = ForwardOffset / FMath::Max(1.f, TravelX);
+    const float CenterY = FMath::Lerp(BallLocal.Y, 0.f, FractionToGoal);
+    const float WallWidth = BarrierWidthCm6O * (ShotAttemptIndex6N >= 7 ? 1.25f : 1.f);
+    const float WallHeight = BarrierHeightCm6O * (ShotAttemptIndex6N >= 8 ? 1.12f : 1.f);
+    const float WallThickness = 45.f;
+    const int32 ObstacleCount = ShotAttemptIndex6N >= 8 ? 3 : 2;
+    const float ObstacleWidth = WallWidth / ObstacleCount;
+
+    for (int32 Index = 0; Index < ObstacleCount; ++Index)
+    {
+        const float OffsetY = (Index - 0.5f * (ObstacleCount - 1)) * ObstacleWidth;
+        const FVector LocalPosition(BallLocal.X + ForwardOffset,
+            CenterY + OffsetY, 0.5f * WallHeight);
+        AStaticMeshActor* Barrier = GetWorld()->SpawnActor<AStaticMeshActor>(
+            Field->PitchLocalToWorld(LocalPosition), Field->GetActorRotation());
+        if (!IsValid(Barrier)) continue;
+        UStaticMeshComponent* Mesh = Barrier->GetStaticMeshComponent();
+        if (!Mesh) { Barrier->Destroy(); continue; }
+        Mesh->SetMobility(EComponentMobility::Movable);
+        Mesh->SetStaticMesh(CubeMesh);
+        Mesh->SetSimulatePhysics(false);
+        Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        Mesh->SetCollisionProfileName(TEXT("BlockAll"));
+        Mesh->SetWorldScale3D(FVector(WallThickness / 100.f,
+            ObstacleWidth / 100.f, WallHeight / 100.f));
+        PracticeBarriers6O.Add(Barrier);
+    }
+    UE_LOG(LogTemp, Display, TEXT("[Training6O] Shot %d: %d obstacles, width %.0f cm, height %.0f cm"),
+        ShotAttemptIndex6N + 1, PracticeBarriers6O.Num(), WallWidth, WallHeight);
+}
+
 void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(bool bGoal)
 {
     if (!bShotReleased6M || bBetweenShotAttempts6N || bComplete6B) return;
@@ -240,6 +302,7 @@ void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(bool bGoal)
         ShotsCompleted6N, bGoal ? TEXT("GOAL") : TEXT("MISS"), ShotCharge6M * 100.f);
     if (ShotsCompleted6N >= 10)
     {
+        ClearPracticeBarriers6O();
         bComplete6B = true;
         if (IsValid(Trainee6B)) Trainee6B->ReleaseBallForMatchRestart(false);
         if (ASoccerTrainingPlayerController6B* PC = Cast<ASoccerTrainingPlayerController6B>(GetWorld()->GetFirstPlayerController()))
@@ -283,6 +346,7 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     LostControlCount6B = 0;
     OutOfControlSeconds6B = 0.f;
     bHadControl6B = false;
+    ClearPracticeBarriers6O();
     if (bChargedShotLesson6M) PrepareShotAttempt6N();
     UE_LOG(LogTemp, Display, TEXT("[Training6H] Exercise started, timer reset."));
 }
@@ -410,6 +474,8 @@ FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
         if (bBetweenShotAttempts6N) return bGoalScored6M ? TEXT("Gol. Preparando el siguiente intento...")
             : TEXT("Sin gol. Preparando el siguiente intento...");
         if (bShotReleased6M) return TEXT("El jugador va hacia la pelota y remata. Espera el resultado...");
+        if (ShotAttemptIndex6N >= 4)
+            return TEXT("Supera la barrera: apunta con la cruz verde y ajusta la carga para elevar la pelota.");
         return TEXT("Apunta con la cruz verde, mant\u00e9n clic derecho para cargar y suelta. No necesitas posesi\u00f3n.");
     }
     if (bComplete6B) return TEXT("RECORRIDO TERMINADO");

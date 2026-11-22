@@ -18,7 +18,7 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
 
     const float X = 32.f;
     const float Y = 40.f;
-    DrawRect(FLinearColor(0.015f, 0.025f, 0.035f, 0.78f), X - 12.f, Y - 12.f, 1040.f, 230.f);
+    DrawRect(FLinearColor(0.015f, 0.025f, 0.035f, 0.78f), X - 12.f, Y - 12.f, 1040.f, 260.f);
     DrawText(Mode->IsChargedShotLesson6M() ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : Mode->IsAutoPassLesson6J() ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | MOVIMIENTO Y CONTROL"), FLinearColor::White, X, Y, Font, 1.25f, false);
     const FString Progress = Mode->IsChargedShotLesson6M()
@@ -47,8 +47,20 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
         {
             float Charge = 0.f;
             if (Shooter->GetKickChargePercent(Charge))
-                DrawText(FString::Printf(TEXT("FUERZA: %.0f%%"), Charge * 100.f),
-                    FLinearColor::Yellow, X, Y + 206.f, Font, 1.2f, false);
+            {
+                // Same amber progress bar and charge source as GameHUD in matches.
+                const float ClampedCharge = FMath::Clamp(Charge, 0.f, 1.f);
+                DrawText(FString::Printf(TEXT("FUERZA: %.0f%%"), ClampedCharge * 100.f),
+                    FLinearColor::Yellow, X, Y + 205.f, Font, 1.2f, false);
+                const float BarX = X + 180.f;
+                const float BarY = Y + 213.f;
+                const float BarWidth = 260.f;
+                const float BarHeight = 12.f;
+                DrawRect(FLinearColor(0.08f, 0.13f, 0.16f, 1.f),
+                    BarX, BarY, BarWidth, BarHeight);
+                DrawRect(FLinearColor(1.f, 0.69f, 0.19f, 1.f),
+                    BarX, BarY, BarWidth * ClampedCharge, BarHeight);
+            }
         }
     }
 
