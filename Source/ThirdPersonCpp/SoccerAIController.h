@@ -230,6 +230,14 @@ public:
         float& OutStartDelay,
         bool& bOutEmergency) const;
 
+    // 6AB: match pending-save lifecycle without the tactical match Tick.
+    // Goal references come from the shared pitch; never use this mode in a match.
+    void BeginTrainingGoalkeeperPlanner6AB(ASoccerAICharacter* Goalkeeper,
+        const FVector& GoalCenter, const FVector& OutfieldDirection);
+    void TickTrainingGoalkeeperPlanner6AB(ASoccerAICharacter* Goalkeeper,
+        ASoccerBall* Ball, float DeltaSeconds);
+    void EndTrainingGoalkeeperPlanner6AB(ASoccerAICharacter* Goalkeeper);
+
     // 6AA: match movement command exposed for a training goalkeeper only.
     void MoveTrainingGoalkeeperTo6AA(const FVector& WorldTarget);
 
@@ -2441,6 +2449,12 @@ private:
 		ASoccerAICharacter* SoccerCharacter
 	);
 
+    bool bTrainingGoalkeeperPlanner6AB = false;
+    FVector TrainingGoalCenter6AB = FVector::ZeroVector;
+    FVector TrainingOutfield6AB = FVector::ZeroVector;
+    ASoccerAICharacter* TrainingGoalkeeper6AB = nullptr;
+    bool bTrainingPlannerLogged6AB = false;
+    
     bool bTrainingGoalkeeperSaveActive6Z = false;
     bool bTrainingGoalkeeperContactDetected6Z = false;
 

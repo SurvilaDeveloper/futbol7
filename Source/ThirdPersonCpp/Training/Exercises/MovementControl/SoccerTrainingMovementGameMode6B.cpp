@@ -15,6 +15,8 @@
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/PrimitiveComponent.h"
+#include "Engine/EngineTypes.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -22,6 +24,33 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
 #include "NavigationSystem.h"
+
+// 6AB.3: the goalkeeper exercise must keep the practice ball collidable while
+// waiting for the next kick. Other ball/character restart paths may toggle
+// collision after the teleport, so apply this AFTER their reset functions.
+static bool RestorePracticeBallGroundCollision6AB3(ASoccerBall* Ball)
+{
+    if (!IsValid(Ball)) return false;
+    UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(Ball->GetRootComponent());
+    if (!Body) return false;
+    bool bChanged = false;
+    if (!Ball->GetActorEnableCollision())
+    {
+        Ball->SetActorEnableCollision(true);
+        bChanged = true;
+    }
+    if (Body->GetCollisionEnabled() != ECollisionEnabled::QueryAndPhysics)
+    {
+        Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        bChanged = true;
+    }
+    if (Body->GetCollisionResponseToChannel(ECC_WorldStatic) != ECR_Block)
+    {
+        Body->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+        bChanged = true;
+    }
+    return bChanged;
+}
 
 ASoccerTrainingMovementGameMode6B::ASoccerTrainingMovementGameMode6B()
 {
@@ -113,6 +142,7 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     if (bGoalkeeperShotLesson6T) UpdateTrainingGoalkeeper6T(DeltaSeconds);
     if (bChargedShotLesson6M)
     {
+        VerifyShotBallReset6AB2();
         TickChargedShot6M(DeltaSeconds);
         return;
     }
@@ -278,7 +308,7 @@ void ASoccerTrainingMovementGameMode6B::UpdateTrainingGoalkeeper6T(float DeltaSe
 
     // 6Y: stabilize the goalkeeper's pose immediately before the selected
     // animation. Earlier in the shot we continue using the 6V positioning.
-    if (bShotInFlight6M && bKeeperHasPendingPlan6Y &&
+    if (!bGoalkeeperShotLesson6T && bShotInFlight6M && bKeeperHasPendingPlan6Y &&
         KeeperPlannedDelay6Y <= KeeperPreMontageFreezeSeconds6Y)
     {
         TrainingGoalkeeper6T->SetScriptedLocomotionVelocity(
@@ -428,60 +458,16 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
         }
     }
 
-    // 6Y: while the shot is approaching, refresh the match animation selector
-    // each frame rather than latching the first action. Its start delay is
-    // computed from the predicted hand-contact time, not a fixed timer.
-    // We never enable the normal controller Tick: it needs SoccerMatchManager.
-    if (bGoalkeeperShotLesson6T && bShotInFlight6M && !bKeeperMontageStarted6X &&
+    // 6AB: The SAME ShotPending -> UpdatePending -> montage commit cycle
+    // used by the match. The regular tactical AI Tick remains disabled.
+    if (bGoalkeeperShotLesson6T && bShotInFlight6M &&
         !bKeeperSaveTriggered6T && IsValid(TrainingGoalkeeper6T))
     {
-        ASoccerAIController* KeeperController =
-            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController());
-        if (IsValid(KeeperController))
+        if (ASoccerAIController* KeeperController =
+            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController()))
         {
-            ESoccerGoalkeeperAction Action = ESoccerGoalkeeperAction::None;
-            float StartDelay = 0.f;
-            bool bEmergency = false;
-            const bool bSelected = KeeperController->SelectTrainingGoalkeeperSave6X(
-                TrainingGoalkeeper6T, PracticeBall6B, Action, StartDelay, bEmergency);
-            if (bSelected)
-            {
-                const bool bActionChanged = !bKeeperHasPendingPlan6Y || Action != KeeperPlannedAction6Y;
-                bKeeperHasPendingPlan6Y = true;
-                KeeperPlannedAction6Y = Action;
-                KeeperPlannedDelay6Y = StartDelay;
-                const float Now = GetWorld()->GetTimeSeconds();
-                if (bActionChanged || Now >= KeeperNextPlanLogAt6Y)
-                {
-                    UE_LOG(LogTemp, Display,
-                        TEXT("[Training6Y] Plan action=%d delay=%.3f emergency=%s keeper=%s ballSpeed=%.1f"),
-                        static_cast<int32>(Action), StartDelay,
-                        bEmergency ? TEXT("yes") : TEXT("no"),
-                        *GetNameSafe(TrainingGoalkeeper6T), BallVelocity.Size());
-                    KeeperNextPlanLogAt6Y = Now + FMath::Max(0.05f, KeeperPlanLogInterval6Y);
-                }
-                if (StartDelay <= KeeperStartTolerance6Y)
-                {
-                    bKeeperMontageStarted6X = KeeperController->StartTrainingGoalkeeperSave6Z(
-                        TrainingGoalkeeper6T, PracticeBall6B, Action);
-                    UE_LOG(LogTemp, Display,
-                        TEXT("[Training6Y] Start action=%d delay=%.3f emergency=%s started=%s"),
-                        static_cast<int32>(Action), StartDelay,
-                        bEmergency ? TEXT("yes") : TEXT("no"),
-                        bKeeperMontageStarted6X ? TEXT("yes") : TEXT("no"));
-                    if (bKeeperMontageStarted6X) bKeeperHasPendingPlan6Y = false;
-                }
-            }
-            else
-            {
-                bKeeperHasPendingPlan6Y = false;
-            }
-        }
-        else if (!bKeeperSelectorLogged6X)
-        {
-            bKeeperSelectorLogged6X = true;
-            UE_LOG(LogTemp, Warning,
-                TEXT("[Training6Z] Keeper has no SoccerAIController; animated save unavailable."));
+            KeeperController->TickTrainingGoalkeeperPlanner6AB(
+                TrainingGoalkeeper6T, PracticeBall6B, DeltaSeconds);
         }
     }
     // 6Z: removed the old 6W radius-based automatic deflection.
@@ -547,6 +533,7 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     Trainee6B->ReleaseBallForMatchRestart(false);
     if (UCharacterMovementComponent* Movement = Trainee6B->GetCharacterMovement())
         Movement->StopMovementImmediately();
+    // 6AB.2: restore a fresh training ball physics state before teleporting.
     // 6Z.2: freeze the root physics body BEFORE teleporting. Moving a
     // simulating rigid body and then resetting velocity can leave its physics
     // pose out of sync with the actor transform on the next physics step.
@@ -559,20 +546,40 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     const FVector PlayerLocal(BallLocal.X - 300.f, BallLocal.Y, 130.f);
     Trainee6B->SetActorLocationAndRotation(Field->PitchLocalToWorld(PlayerLocal),
         Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
-    const FVector BallWorld = Field->PitchLocalToWorld(BallLocal);
+    const FVector BallWorld = FindSafeShotBallSpawn6AB2(Field->PitchLocalToWorld(BallLocal));
+    UPrimitiveComponent* BallBody = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent());
+    if (BallBody)
+    {
+        BallBody->SetSimulatePhysics(false);
+        BallBody->SetPhysicsLinearVelocity(FVector::ZeroVector);
+        BallBody->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+        BallBody->SetEnableGravity(true);
+        BallBody->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        BallBody->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+    }
     const bool bBallTeleported = PracticeBall6B->SetActorLocationAndRotation(
         BallWorld, Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
-    // Restore the same physics/collision state used by the normal practice ball.
-    // StopBallKeepingPhysics also clears residual forces, linear and angular
-    // velocity, and resets the tracking used by the ball's prediction code.
+    // Resume only after both the actor and its root rigid body have been moved.
     PracticeBall6B->SetPossessed(false);
     PracticeBall6B->StopBallKeepingPhysics();
+    const bool bCollisionRestored6AB3 = RestorePracticeBallGroundCollision6AB3(PracticeBall6B);
+    if (bCollisionRestored6AB3)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Training6AB3] Collision restored after ball reset attempt=%d"),
+            ShotAttemptIndex6N + 1);
+    }
+    ShotBallResetWorld6AB2 = BallWorld;
+    ShotBallResetUntil6AB2 = GetWorld()->GetTimeSeconds() + 1.25f;
+    ShotBallNextCheck6AB2 = GetWorld()->GetTimeSeconds() + 0.10f;
+    ShotBallResetCorrections6AB2 = 0;
     UE_LOG(LogTemp, Display,
-        TEXT("[Training6Z2] Ball reset attempt=%d teleported=%s target=%s actual=%s radius=%.1f"),
+        TEXT("[Training6AB2] Ball reset attempt=%d teleported=%s target=%s actual=%s radius=%.1f sim=%s collision=%d"),
         ShotAttemptIndex6N + 1,
         bBallTeleported ? TEXT("yes") : TEXT("no"),
         *BallWorld.ToString(), *PracticeBall6B->GetActorLocation().ToString(),
-        PracticeBall6B->GetBallRadiusCm());
+        PracticeBall6B->GetBallRadiusCm(),
+        BallBody && BallBody->IsSimulatingPhysics() ? TEXT("YES") : TEXT("NO"),
+        BallBody ? static_cast<int32>(BallBody->GetCollisionEnabled()) : -1);
     bShotReleased6M = false;
     bShotInFlight6M = false;
     bHavePreviousBall6M = false;
@@ -590,7 +597,15 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
         if (ASoccerAIController* KeeperController =
             Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController()))
         {
+            KeeperController->EndTrainingGoalkeeperPlanner6AB(TrainingGoalkeeper6T);
             KeeperController->ResetTrainingGoalkeeperSave6Z(TrainingGoalkeeper6T);
+            if (ASoccerField* TrainingField = FindSharedField6L())
+            {
+                const FVector GoalCenter = TrainingField->GetGoalCenterWorldLocation(+1.f);
+                const FVector Outfield = TrainingField->GetPitchLengthWorldDirection() * -1.f;
+                KeeperController->BeginTrainingGoalkeeperPlanner6AB(
+                    TrainingGoalkeeper6T, GoalCenter, Outfield);
+            }
         }
         TrainingGoalkeeper6T->ClearGoalkeeperAction();
         TrainingGoalkeeper6T->StopGoalkeeperActionMontage(0.05f);
@@ -604,6 +619,102 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
         LastKeeperMoveRequestAt6AA2 = -100.f;
     }
     UE_LOG(LogTemp, Display, TEXT("[Training6N] Ready: attempt %d/10"), ShotAttemptIndex6N + 1);
+}
+
+// Training-only: find the field's actual collision surface rather than
+// assuming that local Z=0 is the physical ground in every shared level.
+FVector ASoccerTrainingMovementGameMode6B::FindSafeShotBallSpawn6AB2(const FVector& Requested) const
+{
+    FVector Result = Requested;
+    if (!GetWorld() || !IsValid(PracticeBall6B)) return Result;
+    const float Radius = FMath::Max(1.f, PracticeBall6B->GetBallRadiusCm());
+    FHitResult GroundHit;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(TrainingBallGround6AB2), false);
+    Params.AddIgnoredActor(PracticeBall6B);
+    if (IsValid(Trainee6B)) Params.AddIgnoredActor(Trainee6B);
+    if (IsValid(TrainingGoalkeeper6T)) Params.AddIgnoredActor(TrainingGoalkeeper6T);
+    const bool bGround = GetWorld()->LineTraceSingleByChannel(
+        GroundHit, Requested + FVector(0.f, 0.f, 350.f),
+        Requested - FVector(0.f, 0.f, 800.f), ECC_WorldStatic, Params);
+    if (bGround && GroundHit.ImpactNormal.Z >= 0.65f)
+    {
+        // Place the bottom of the ball just above the collision surface.
+        Result.Z = GroundHit.ImpactPoint.Z + Radius + 5.f;
+    }
+    UE_LOG(LogTemp, Display,
+        TEXT("[Training6AB2] Ground trace hit=%s groundZ=%.1f normalZ=%.2f requestedZ=%.1f spawnZ=%.1f"),
+        bGround ? TEXT("YES") : TEXT("NO"),
+        bGround ? GroundHit.ImpactPoint.Z : 0.f,
+        bGround ? GroundHit.ImpactNormal.Z : 0.f, Requested.Z, Result.Z);
+    return Result;
+}
+
+// The first moments after a reset are the only time when we correct a
+// missed floor collision. Never touch the ball after a kick/release.
+void ASoccerTrainingMovementGameMode6B::VerifyShotBallReset6AB2()
+{
+    if (!bGoalkeeperShotLesson6T || bShotReleased6M || bBetweenShotAttempts6N ||
+        !IsValid(PracticeBall6B) || !GetWorld()) return;
+    const float Now = GetWorld()->GetTimeSeconds();
+    // Maintain collision throughout the waiting period, not only for the first
+    // 1.25 seconds. Never interfere once the player has launched the shot.
+    UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent());
+    const bool bCollisionMissing6AB3 = Body &&
+        (!PracticeBall6B->GetActorEnableCollision() ||
+         Body->GetCollisionEnabled() != ECollisionEnabled::QueryAndPhysics ||
+         Body->GetCollisionResponseToChannel(ECC_WorldStatic) != ECR_Block);
+    if (bCollisionMissing6AB3)
+    {
+        const int32 OldCollision = Body ? static_cast<int32>(Body->GetCollisionEnabled()) : -1;
+        const bool bActorCollision = PracticeBall6B->GetActorEnableCollision();
+        RestorePracticeBallGroundCollision6AB3(PracticeBall6B);
+        UE_LOG(LogTemp, Warning,
+            TEXT("[Training6AB3] Ground collision was disabled while waiting: attempt=%d bodyBefore=%d actorBefore=%s bodyAfter=%d actorAfter=%s"),
+            ShotAttemptIndex6N + 1, OldCollision, bActorCollision ? TEXT("YES") : TEXT("NO"),
+            Body ? static_cast<int32>(Body->GetCollisionEnabled()) : -1,
+            PracticeBall6B->GetActorEnableCollision() ? TEXT("YES") : TEXT("NO"));
+    }
+    if (Now < ShotBallNextCheck6AB2) return;
+    if (Now > ShotBallResetUntil6AB2 && !bCollisionMissing6AB3) return;
+    ShotBallNextCheck6AB2 = Now + 0.20f;
+    const FVector Current = PracticeBall6B->GetActorLocation();
+    const FVector Velocity = PracticeBall6B->GetBallPhysicsVelocity();
+    const float Radius = FMath::Max(1.f, PracticeBall6B->GetBallRadiusCm());
+    const float FloorZ = ShotBallResetWorld6AB2.Z - Radius - 5.f;
+    // The mesh's visual bounds radius is not necessarily its physics contact
+    // radius. A resting center at Z=11 on a floor at Z=0 is valid: only regard
+    // the center crossing BELOW the ground as genuine penetration.
+    const bool bBelowSurface = Current.Z < FloorZ - 5.f;
+    UE_LOG(LogTemp, Display,
+        TEXT("[Training6AB2] Settle attempt=%d z=%.1f floorZ=%.1f vz=%.1f sim=%s collision=%d below=%s"),
+        ShotAttemptIndex6N + 1, Current.Z, FloorZ, Velocity.Z,
+        Body && Body->IsSimulatingPhysics() ? TEXT("YES") : TEXT("NO"),
+        Body ? static_cast<int32>(Body->GetCollisionEnabled()) : -1,
+        bBelowSurface ? TEXT("YES") : TEXT("NO"));
+    if (!bBelowSurface) return;
+    if (ShotBallResetCorrections6AB2 >= 4)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("[Training6AB3] Repeated ground penetration despite collision restoration; attempt=%d z=%.1f floorZ=%.1f"),
+            ShotAttemptIndex6N + 1, Current.Z, FloorZ);
+        return;
+    }
+    ++ShotBallResetCorrections6AB2;
+    PracticeBall6B->SetPossessed(true);
+    if (Body)
+    {
+        Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        Body->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+        Body->SetEnableGravity(true);
+    }
+    const FVector SafeWorld = ShotBallResetWorld6AB2;
+    PracticeBall6B->SetActorLocation(SafeWorld, false, nullptr, ETeleportType::TeleportPhysics);
+    PracticeBall6B->SetPossessed(false);
+    PracticeBall6B->StopBallKeepingPhysics();
+    RestorePracticeBallGroundCollision6AB3(PracticeBall6B);
+    UE_LOG(LogTemp, Warning,
+        TEXT("[Training6AB2] Corrected sinking practice ball, attempt=%d correction=%d"),
+        ShotAttemptIndex6N + 1, ShotBallResetCorrections6AB2);
 }
 
 void ASoccerTrainingMovementGameMode6B::ClearPracticeBarriers6O()

@@ -237,6 +237,12 @@ private:
     void OnPracticeBarrierHit6P(AActor* SelfActor, AActor* OtherActor,
         FVector NormalImpulse, const FHitResult& Hit);
     static FString ShotOutcomeLabel6P(ETrainingShotOutcome6P Outcome);
+    FVector FindSafeShotBallSpawn6AB2(const FVector& Requested) const;
+    void VerifyShotBallReset6AB2();
+    FVector ShotBallResetWorld6AB2 = FVector::ZeroVector;
+    float ShotBallResetUntil6AB2 = -1.f;
+    float ShotBallNextCheck6AB2 = 0.f;
+    int32 ShotBallResetCorrections6AB2 = 0;
     void PrepareShotAttempt6N();
     void ClearPracticeBarriers6O();
     void SetupPracticeBarriers6O(const FVector& BallLocal);
