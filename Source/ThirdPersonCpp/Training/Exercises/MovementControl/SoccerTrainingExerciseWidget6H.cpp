@@ -137,9 +137,10 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         ? TEXT("Diez jugadas de conducción y definición. Empezás en el centro de la cancha, con la pelota unos metros adelante.\n\n"
                "Con clic izquierdo podés buscar la pelota y hacer autopases. También podés conducirla con I, J, K y L. "
                "Llevá la pelota hasta el círculo amarillo de cada intento: cuando quede COMPLETAMENTE dentro se pondrá verde.\n\n"
-               "Solo entonces podés usar el botón derecho para cargar y ejecutar un remate al arco. "
-               "El remate debe SALIR desde la zona; fuera de ella se bloquea y no se consume el intento.\n\n"
-               "El arquero usa por ahora sus atajadas normales. En la siguiente etapa incorporaremos sus salidas a interceptar. "
+               "Podés apuntar y mantener el botón derecho para cargar fuerza desde cualquier lugar, incluso mientras la pelota se mueve. "
+               "Al golpear, la pelota debe SALIR desde dentro del círculo: un remate desde fuera no vale, aunque entre al arco. "
+               "Si pateás desde fuera, repetís el mismo intento.\n\n"
+               "El arquero puede salir a interceptar la pelota si queda suelta cerca del arco. "
                "Las diez zonas cambian de lugar y al terminar verás las estadísticas.")
         : (Mode && Mode->IsGoalkeeperShotLesson6T())
         ? TEXT("Practicarás diez remates contra un arquero, desde diferentes posiciones.\n\n"

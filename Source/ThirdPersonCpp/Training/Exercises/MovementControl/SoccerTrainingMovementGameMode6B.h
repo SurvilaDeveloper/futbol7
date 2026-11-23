@@ -17,7 +17,7 @@ enum class ESoccerGoalkeeperAction : uint8;
 // 6P: keep the cause of each shot result separate from the goal counter.
 enum class ETrainingShotOutcome6P : uint8
 {
-    Goal, Wide, OverBar, Barrier, Unresolved, Saved, Post, Crossbar
+    Goal, Wide, OverBar, Barrier, Unresolved, Saved, Post, Crossbar, Intercepted, InvalidZone
 };
 
 /** Standalone first dribbling lesson: guide the ball through four checkpoints. */
@@ -108,6 +108,9 @@ private:
     bool bChargedShotLesson6M = false;
     bool bGoalkeeperShotLesson6T = false;
     bool bZoneFinishLesson6AH = false;
+    // 6AI only: a goalkeeper can rush out BEFORE a zone shot is released.
+    // Do not enable in the legacy 6AG goalkeeper-shot exercise.
+    bool bKeeperInterceptionThisAttempt6AI = false;
     UPROPERTY(EditAnywhere, Category="Training|Zone Finish|Target", meta=(ClampMin="100.0", ClampMax="800.0"))
     float ZoneRadius6AH = 260.f;
     float LastZoneWarningAt6AH = -100.f;
@@ -208,6 +211,10 @@ private:
     // Results are reset when the exercise starts. A barrier contact is
     // registered independently, even when the shot later reaches the goal.
     TArray<ETrainingShotOutcome6P> ShotOutcomes6P;
+    // 6AI.4: preserve the on-field result of a shot from outside the circle.
+    TArray<ETrainingShotOutcome6P> ShotPhysicalOutcomes6AI4;
+    bool bZoneShotOriginChecked6AI4 = false;
+    bool bZoneShotOriginValid6AI4 = false;
     TArray<float> ShotCharges6P;
     TArray<bool> ShotBarrierContacts6P;
     // 6AE: explanatory evidence alongside each outcome (training only).

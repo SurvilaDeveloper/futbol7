@@ -106,15 +106,9 @@ bool ASoccerTrainingPlayerController6B::InputKey(
                 return true;
             AThirdPersonCppCharacter* Shooter = Cast<AThirdPersonCppCharacter>(GetPawn());
             if (!Shooter) return true; // Existing match kick chases the ball on release.
-            if (TrainingMode->IsZoneFinishLesson6AH() &&
-                (EventType == IE_Pressed || EventType == IE_Released) &&
-                !TrainingMode->IsBallInsideShotZone6AH())
-            {
-                if (EventType == IE_Released)
-                    Shooter->ReleaseBallForMatchRestart(false); // cancel pending kick charge
-                TrainingMode->ReportInvalidZoneShot6AH();
-                return true;
-            }
+            // 6AI.3: never block aiming or the right-button charge because
+            // the moving ball is outside the zone. Validate the actual shot
+            // at launch in the training GameMode instead.
             if (EventType == IE_Released)
             {
                 float Charge = 0.f;

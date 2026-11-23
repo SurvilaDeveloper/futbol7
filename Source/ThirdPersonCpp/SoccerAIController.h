@@ -13,6 +13,7 @@ class ASoccerAICharacter;
 class ASoccerBall;
 class ASoccerMatchManager;
 class ASoccerCharacterBase;
+class AThirdPersonCppCharacter;
 class AActor;
 enum class ESoccerAttackPassType : uint8;
 
@@ -237,6 +238,12 @@ public:
     void TickTrainingGoalkeeperPlanner6AB(ASoccerAICharacter* Goalkeeper,
         ASoccerBall* Ball, float DeltaSeconds);
     void EndTrainingGoalkeeperPlanner6AB(ASoccerAICharacter* Goalkeeper);
+
+    // 6AI: training-only sweeper. Returns 0=position normally, 1=chasing,
+    // 2=ball intercepted. Reuses match sweeper distances, NavMesh movement and
+    // loose-ball handling, without enabling the match tactical Tick.
+    int32 TickTrainingGoalkeeperSweeper6AI(ASoccerAICharacter* Goalkeeper,
+        ASoccerBall* Ball, AThirdPersonCppCharacter* Trainee);
 
     // 6AA: match movement command exposed for a training goalkeeper only.
     void MoveTrainingGoalkeeperTo6AA(const FVector& WorldTarget);
@@ -2449,6 +2456,8 @@ private:
 		ASoccerAICharacter* SoccerCharacter
 	);
 
+    bool bTrainingGoalkeeperSweeperCommitted6AI = false;
+    float TrainingGoalkeeperSweeperLastRequest6AI = -100.f;
     bool bTrainingGoalkeeperPlanner6AB = false;
     FVector TrainingGoalCenter6AB = FVector::ZeroVector;
     FVector TrainingOutfield6AB = FVector::ZeroVector;

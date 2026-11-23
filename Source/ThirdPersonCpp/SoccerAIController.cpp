@@ -1727,6 +1727,133 @@ void ASoccerAIController::UpdateAIMovementForMove(
 	);
 }
 
+// 6AI: the normal match sweeper is gated by SoccerMatchManager and cannot
+// run in the training level. Share its tuned distances, movement order and
+// loose-ball hands collector; only the threat/race gate is training-specific.
+// This entrypoint is NEVER called by match AI code.
+int32 ASoccerAIController::TickTrainingGoalkeeperSweeper6AI(
+    ASoccerAICharacter* Goalkeeper, ASoccerBall* Ball,
+    AThirdPersonCppCharacter* Trainee)
+{
+    if (!bTrainingGoalkeeperPlanner6AB || IsValid(MatchManager) ||
+        !IsValid(Goalkeeper) || !IsValid(Ball) || !IsValid(Trainee) ||
+        GetPawn() != Goalkeeper || TrainingGoalkeeper6AB != Goalkeeper ||
+        Goalkeeper->IsGoalkeeperActionActive() ||
+        HasPendingGoalkeeperSaveActionFor(Goalkeeper) ||
+        Goalkeeper->IsAIPossessingBall())
+        return 0;
+
+    const FVector Outfield = TrainingOutfield6AB.GetSafeNormal2D();
+    const FVector Home = TrainingGoalCenter6AB;
+    if (Outfield.IsNearlyZero() || Home.ContainsNaN()) return 0;
+
+    const FVector BallPos = Ball->GetActorLocation();
+    const FVector KeeperPos = Goalkeeper->GetActorLocation();
+    const FVector Rel = BallPos - Home;
+    const float Depth = FVector::DotProduct(Rel, Outfield);
+    const float Lateral = FVector::CrossProduct(Outfield, Rel).Z;
+    const bool bInDangerZone = Depth >= 130.f &&
+        Depth <= GoalkeeperSweeperTriggerDepthFromGoal &&
+        FMath::Abs(Lateral) <= GoalkeeperSweeperTriggerHalfWidth;
+    const float KeeperDistance = FVector::Dist2D(KeeperPos, BallPos);
+    const float AttackerDistance = FVector::Dist2D(Trainee->GetActorLocation(), BallPos);
+    const float KeeperTravel = KeeperDistance / FMath::Max(1.f, GoalkeeperSweeperGoalkeeperTravelSpeed);
+    const float AttackerTravel = AttackerDistance / FMath::Max(1.f, GoalkeeperSweeperThreatTravelSpeed);
+    // Do not leave the goal for an impossible race. Permit an already-committed
+    // run to complete when the target remains dangerous.
+    const bool bRaceViable = KeeperTravel <= AttackerTravel + GoalkeeperSweeperRaceLoseTolerance;
+    const bool bMayChase = bInDangerZone &&
+        FVector::Dist2D(KeeperPos, Home) <= GoalkeeperSweeperMaxDistanceFromHome &&
+        (bRaceViable || bTrainingGoalkeeperSweeperCommitted6AI);
+    if (!bMayChase)
+    {
+        if (bTrainingGoalkeeperSweeperCommitted6AI)
+        {
+            bTrainingGoalkeeperSweeperCommitted6AI = false;
+            StopMovement();
+            UE_LOG(LogTemp, Display, TEXT("[Training6AI] Sweeper cancelled; returning to tactical positioning"));
+        }
+        return 0;
+    }
+
+    // 6AI.2: prefer a foot clearance immediately at contact range, even when
+    // the trainee is far away. The old distance-to-trainee gate made the keeper
+    // wait until the human arrived before kicking the ball.
+    // The existing match clearance routine requires SoccerMatchManager and is
+    // intentionally NOT called here; this path is training-only.
+    const UCapsuleComponent* KeeperCapsule = Goalkeeper->GetCapsuleComponent();
+    const float GroundZ = KeeperCapsule
+        ? KeeperPos.Z - KeeperCapsule->GetScaledCapsuleHalfHeight()
+        : KeeperPos.Z;
+    const float BallHeight = BallPos.Z - GroundZ;
+    const bool bInFootRange = KeeperDistance <= GoalkeeperSweeperFootCutDistance &&
+        BallHeight >= -20.f && BallHeight <= GoalkeeperSweeperMaxBallHeightForFeet;
+    if (bInFootRange)
+    {
+        if (Trainee->IsPossessingBall()) Trainee->ReleaseBallForAISteal();
+        const FVector ClearanceDirection = (Outfield +
+            FVector::CrossProduct(FVector::UpVector, Outfield) *
+            (Lateral >= 0.f ? 0.25f : -0.25f)).GetSafeNormal2D();
+        Ball->SetPossessed(false);
+        Ball->Kick(ClearanceDirection, GoalkeeperSweeperClearanceHorizontalSpeed, 170.f);
+        bTrainingGoalkeeperSweeperCommitted6AI = false;
+        StopMovement();
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AI2] IMMEDIATE FOOT CLEARANCE keeperDist=%.1f attackerDist=%.1f ballHeight=%.1f"),
+            KeeperDistance, AttackerDistance, BallHeight);
+        return 2;
+    }
+
+    // A high loose ball may still be collected with the same hands collector
+    // used by the match. Foot-range clearances above always take priority.
+    if (KeeperDistance <= GoalkeeperSweeperHandCollectDistance &&
+        AttackerDistance > 50.f)
+    {
+        if (TryGoalkeeperCollectLooseBallWithHands(Goalkeeper, Ball))
+        {
+            if (Trainee->IsPossessingBall()) Trainee->ReleaseBallForAISteal();
+            bTrainingGoalkeeperSweeperCommitted6AI = false;
+            StopMovement();
+            UE_LOG(LogTemp, Display, TEXT("[Training6AI2] INTERCEPTED: keeper collected ball with hands"));
+            return 2;
+        }
+    }
+
+    // Approach to *actual* foot range. Previously the target was 160 cm
+    // behind the ball with another 70 cm of navigation acceptance; the keeper
+    // could stop before getting close enough to perform the clearance.
+    const float TrainingApproachOffset6AI2 = FMath::Min(
+        GoalkeeperSweeperCutTowardGoalOffset, 25.f);
+    FVector Target = BallPos - Outfield * TrainingApproachOffset6AI2;
+    Target.Z = KeeperPos.Z;
+    // Never issue destinations outside the match sweeper envelope.
+    const FVector Planar = Target - Home;
+    const float TDepth = FMath::Clamp(FVector::DotProduct(Planar, Outfield),
+        180.f, GoalkeeperSweeperTriggerDepthFromGoal);
+    const FVector Right(-Outfield.Y, Outfield.X, 0.f);
+    const float TSide = FMath::Clamp(FVector::DotProduct(Planar, Right),
+        -GoalkeeperSweeperTriggerHalfWidth, GoalkeeperSweeperTriggerHalfWidth);
+    Target = Home + Outfield * TDepth + Right * TSide;
+    Target.Z = KeeperPos.Z;
+
+    const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+    if (!bTrainingGoalkeeperSweeperCommitted6AI ||
+        Now - TrainingGoalkeeperSweeperLastRequest6AI > 0.3f)
+    {
+        Goalkeeper->RequestAIMovementMode(ESoccerAIMovementMode::FastRun,
+            ESoccerAIMovementReason::GoalkeeperEmergency, true);
+        MoveToLocationWithAIMovement(ESoccerAIOrder::ChaseBall, Target,
+            FMath::Min(GoalkeeperSweeperAcceptanceRadius, 25.f), false);
+        TrainingGoalkeeperSweeperLastRequest6AI = Now;
+        if (!bTrainingGoalkeeperSweeperCommitted6AI)
+            UE_LOG(LogTemp, Display, TEXT("[Training6AI] SWEEPER START depth=%.0f distance=%.0f race=%.2f/%.2f"),
+                Depth, KeeperDistance, KeeperTravel, AttackerTravel);
+    }
+    bTrainingGoalkeeperSweeperCommitted6AI = true;
+    SetFocus(Ball);
+    return 1;
+}
+
 void ASoccerAIController::MoveTrainingGoalkeeperTo6AA(const FVector& WorldTarget)
 {
     if (WorldTarget.ContainsNaN() || !GetPawn()) return;
@@ -2185,6 +2312,7 @@ void ASoccerAIController::ReturnToHomePosition()
 
 	FVector HomeLocation = HomePositionActor->GetActorLocation();
 
+
 	if (IsValid(MatchManager))
 	{
 		HomeLocation = MatchManager->GetTeamRebasedFieldReferenceLocation(
@@ -2254,6 +2382,8 @@ void ASoccerAIController::BeginTrainingGoalkeeperPlanner6AB(
         UE_LOG(LogTemp, Warning, TEXT("[Training6AB] Planner rejected: keeper/pawn invalid or match manager present"));
         return;
     }
+    bTrainingGoalkeeperSweeperCommitted6AI = false;
+    TrainingGoalkeeperSweeperLastRequest6AI = -100.f;
     bTrainingGoalkeeperPlanner6AB = true;
     TrainingGoalkeeper6AB = Goalkeeper;
     TrainingGoalCenter6AB = GoalCenter;
@@ -2315,6 +2445,8 @@ void ASoccerAIController::EndTrainingGoalkeeperPlanner6AB(ASoccerAICharacter* Go
     bTrainingGoalkeeperSaveActive6Z = false;
     bTrainingGoalkeeperContactDetected6Z = false;
     GoalkeeperDebugSaveTestCharacter = nullptr;
+    bTrainingGoalkeeperSweeperCommitted6AI = false;
+    TrainingGoalkeeperSweeperLastRequest6AI = -100.f;
     bTrainingGoalkeeperPlanner6AB = false;
     TrainingGoalkeeper6AB = nullptr;
     TrainingGoalCenter6AB = FVector::ZeroVector;

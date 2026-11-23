@@ -171,7 +171,36 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     }
     if (!IsExerciseRunning6H() || !IsValid(PracticeBall6B) || !IsValid(Trainee6B)) return;
     ElapsedTime6B += DeltaSeconds;
-    if (bGoalkeeperShotLesson6T) UpdateTrainingGoalkeeper6T(DeltaSeconds);
+    // 6AI: only the new zone lesson permits a proactive goalkeeper rush.
+    // Keep the older GoalkeeperShot lesson's exact 6AG behavior.
+    bool bSweeperOwnsMovement6AI = false;
+    if (bZoneFinishLesson6AH && !bShotReleased6M && !bBetweenShotAttempts6N &&
+        IsValid(TrainingGoalkeeper6T))
+    {
+        if (ASoccerAIController* KeeperController =
+            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController()))
+        {
+            const int32 Result6AI = KeeperController->TickTrainingGoalkeeperSweeper6AI(
+                TrainingGoalkeeper6T, PracticeBall6B, Trainee6B);
+            bSweeperOwnsMovement6AI = Result6AI != 0;
+            if (Result6AI == 2)
+            {
+                // An interception BEFORE a valid zone kick is a lost attempt,
+                // never an animated save of a shot. Reuse the existing 10-attempt
+                // bookkeeping without creating a new physical shot.
+                bKeeperInterceptionThisAttempt6AI = true;
+                bShotReleased6M = true;
+                ShotCharge6M = 0.f;
+                ShotEndDetail6AE = TEXT("arquero anticipo y recupero/rechazo la pelota antes del remate");
+                ResolveShotAttempt6N(ETrainingShotOutcome6P::Intercepted);
+                UE_LOG(LogTemp, Display, TEXT("[Training6AI] Attempt=%d INTERCEPTED before shot"),
+                    ShotsCompleted6N);
+                return;
+            }
+        }
+    }
+    if (bGoalkeeperShotLesson6T && !bSweeperOwnsMovement6AI)
+        UpdateTrainingGoalkeeper6T(DeltaSeconds);
     if (bZoneFinishLesson6AH && !bBetweenShotAttempts6N && !bShotReleased6M)
         DrawZoneFinishTarget6AH();
     if (bChargedShotLesson6M)
@@ -440,11 +469,8 @@ void ASoccerTrainingMovementGameMode6B::UpdateTrainingGoalkeeper6T(float DeltaSe
 void ASoccerTrainingMovementGameMode6B::RegisterChargedShotRelease6M(float ChargeFraction)
 {
     if (!bChargedShotLesson6M || !IsExerciseRunning6H() || bShotReleased6M || bBetweenShotAttempts6N || !IsValid(PracticeBall6B)) return;
-    if (bZoneFinishLesson6AH && !CanStartZoneShot6AH())
-    {
-        ReportInvalidZoneShot6AH();
-        return;
-    }
+    // 6AI.3: a charged kick may begin outside the circle while the ball is
+    // moving toward it. Only the ball's position at the actual kick matters.
     bShotReleased6M = true;
     bGoalScored6M = false;
     bShotInFlight6M = false;
@@ -481,19 +507,34 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
     const FVector BallVelocity = PracticeBall6B->GetBallPhysicsVelocity();
     if (BallVelocity.Size() > 140.f)
     {
-        if (bZoneFinishLesson6AH && !bShotInFlight6M &&
-            !IsBallInsideShotZone6AH())
+        if (bZoneFinishLesson6AH && !bShotInFlight6M)
         {
-            // A late approach/autopass is not a valid launch from the circle.
-            // Retry this SAME attempt; never score an off-zone kick.
-            UE_LOG(LogTemp, Warning,
-                TEXT("[Training6AH] Shot left the foot outside the circle; retry attempt=%d"),
-                ShotAttemptIndex6N + 1);
-            bShotReleased6M = false;
-            bShotInFlight6M = false;
-            bHavePreviousBall6M = false;
-            PrepareShotAttempt6N();
-            return;
+            // 6AI.3: assess the last pre-flight position, rather than the
+            // ball's current position AFTER the kick advanced it this frame.
+            // This lets the player aim/charge while approaching the circle,
+            // yet never awards a goal to a kick launched from outside it.
+            const FVector ZoneLocal = GetZoneCenterLocal6AH(ShotAttemptIndex6N);
+            const float EffectiveRadius = ZoneRadius6AH - PracticeBall6B->GetBallRadiusCm();
+            const bool bValidKickOrigin = bHavePreviousBall6M && EffectiveRadius > 0.f &&
+                FVector::DistSquared2D(PreviousBallLocal6M, ZoneLocal) <= FMath::Square(EffectiveRadius);
+            // 6AI.4: legality is recorded at the kick, but NEVER interrupts
+            // gameplay. The ball, goal and goalkeeper finish the attempt using
+            // exactly the same physical resolution as a kick from inside.
+            bZoneShotOriginChecked6AI4 = true;
+            bZoneShotOriginValid6AI4 = bValidKickOrigin;
+            if (!bValidKickOrigin)
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[Training6AI4] KICK OUTSIDE ZONE: attempt=%d origin=%s center=%s radius=%.1f; allowing play to finish"),
+                    ShotAttemptIndex6N + 1, *PreviousBallLocal6M.ToCompactString(),
+                    *ZoneLocal.ToCompactString(), EffectiveRadius);
+            }
+            else
+            {
+                UE_LOG(LogTemp, Display,
+                    TEXT("[Training6AI4] VALID ORIGIN: attempt=%d origin=%s; awaiting physical result"),
+                    ShotAttemptIndex6N + 1, *PreviousBallLocal6M.ToCompactString());
+            }
         }
         bShotInFlight6M = true;
     }
@@ -844,10 +885,13 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     bShotReleased6M = false;
     bShotInFlight6M = false;
     bHavePreviousBall6M = false;
+    bZoneShotOriginChecked6AI4 = false;
+    bZoneShotOriginValid6AI4 = false;
     bGoalScored6M = false;
     ShotCharge6M = 0.f;
     bBarrierContactThisShot6P = false;
     ShotEndDetail6AE.Empty();
+    bKeeperInterceptionThisAttempt6AI = false;
     bKeeperTouchedThisShot6AF = false;
     KeeperTouchTime6AF = -1.f;
     bPostTouchedThisShot6AF = false;
@@ -1078,6 +1122,8 @@ FString ASoccerTrainingMovementGameMode6B::ShotOutcomeLabel6P(ETrainingShotOutco
     {
     case ETrainingShotOutcome6P::Goal: return TEXT("GOL");
     case ETrainingShotOutcome6P::Saved: return TEXT("ATAJADA");
+    case ETrainingShotOutcome6P::Intercepted: return TEXT("INTERCEPCION DEL ARQUERO");
+    case ETrainingShotOutcome6P::InvalidZone: return TEXT("NO VALIDO: FUERA DE ZONA");
     case ETrainingShotOutcome6P::Post: return TEXT("POSTE SIN GOL");
     case ETrainingShotOutcome6P::Crossbar: return TEXT("TRAVESANO SIN GOL");
     case ETrainingShotOutcome6P::Wide: return TEXT("DESVIADO");
@@ -1105,7 +1151,8 @@ FString ASoccerTrainingMovementGameMode6B::GetLastShotFeedback6P() const
 
 FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
 {
-    int32 Wide = 0, Over = 0, Blocked = 0, Saved = 0, Unresolved = 0, BarrierTouches = 0;
+    int32 Wide = 0, Over = 0, Blocked = 0, Saved = 0, Intercepted = 0, Unresolved = 0, BarrierTouches = 0;
+    int32 InvalidZone = 0;
     int32 PostsWithoutGoal = 0, CrossbarsWithoutGoal = 0;
     int32 KeeperTouches = 0, GoalsAfterKeeperTouch = 0;
     int32 PostContacts = 0, CrossbarContacts = 0, GoalsAfterFrameContact = 0;
@@ -1116,12 +1163,14 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
         switch (Outcome)
         {
         case ETrainingShotOutcome6P::Saved: ++Saved; break;
+        case ETrainingShotOutcome6P::Intercepted: ++Intercepted; break;
         case ETrainingShotOutcome6P::Post: ++PostsWithoutGoal; break;
         case ETrainingShotOutcome6P::Crossbar: ++CrossbarsWithoutGoal; break;
         case ETrainingShotOutcome6P::Wide: ++Wide; break;
         case ETrainingShotOutcome6P::OverBar: ++Over; break;
         case ETrainingShotOutcome6P::Barrier: ++Blocked; break;
         case ETrainingShotOutcome6P::Unresolved: ++Unresolved; break;
+        case ETrainingShotOutcome6P::InvalidZone: ++InvalidZone; break;
         default: break;
         }
         const bool bKeeperContact = ShotGoalkeeperTouches6AF.IsValidIndex(Index)
@@ -1153,7 +1202,7 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
         const float SavePct = OnTarget > 0 ? (100.f * Saved / OnTarget) : 0.f;
 
         Report = FString::Printf(
-            TEXT("REMATES CONTRA ARQUERO\n"
+            TEXT("%s\n"
                  "================================\n"
                  "RESUMEN  (%d intentos)\n"
                  "Goles: %d  |  Atajadas: %d\n"
@@ -1171,12 +1220,24 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
                  "Intentos con impacto en travesano: %d\n\n"
                  "OTROS RESULTADOS\n"
                  "Desviados: %d  |  Sobre travesano: %d\n"
-                 "Barrera: %d  |  Sin resolucion: %d\n"),
+                 "Barrera: %d  |  Sin resolucion: %d\n"
+                 "Intercepciones antes del remate: %d\n"),
+            bZoneFinishLesson6AH ? TEXT("CONDUCCION Y DEFINICION POR ZONAS") : TEXT("REMATES CONTRA ARQUERO"),
             Total, GoalsScored6N, Saved, OnTarget, Total, Accuracy,
             Conversion, SavePct, DirectGoals, GoalsAfterKeeperTouch, KeeperTouches,
             PostsWithoutGoal, CrossbarsWithoutGoal, GoalsAfterFrameContact,
-            PostContacts, CrossbarContacts, Wide, Over, Blocked, Unresolved);
+            PostContacts, CrossbarContacts, Wide, Over, Blocked, Unresolved, Intercepted);
 
+        // 6AI.4: every physical shot consumes exactly one zone attempt.
+        // Invalid-origin shots are not goals even if they crossed the goal line.
+        if (bZoneFinishLesson6AH)
+        {
+            Report += FString::Printf(
+                TEXT("\nVALIDACION DE ZONA\nGoles validos: %d/10\n"
+                     "Remates desde fuera del circulo: %d\n"
+                     "Intentos completados: %d/10\n"),
+                GoalsScored6N, InvalidZone, Total);
+        }
         // A goal with a keeper touch or frame impact is included in Goals
         // exactly once. The other counters describe events, not extra shots.
         Report += TEXT("\n================================\nDETALLE DE CADA REMATE\n");
@@ -1186,6 +1247,12 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
                 ? ShotCharges6P[Index] * 100.f : 0.f;
             Report += FString::Printf(TEXT("\n%02d. %s  |  Potencia %.0f%%\n"),
                 Index + 1, *ShotOutcomeLabel6P(ShotOutcomes6P[Index]), Charge);
+            if (bZoneFinishLesson6AH && ShotOutcomes6P[Index] == ETrainingShotOutcome6P::InvalidZone
+                && ShotPhysicalOutcomes6AI4.IsValidIndex(Index))
+            {
+                Report += FString::Printf(TEXT("   Resultado en cancha: %s (no cuenta)\n"),
+                    *ShotOutcomeLabel6P(ShotPhysicalOutcomes6AI4[Index]));
+            }
             const bool bKeeperTouch = ShotGoalkeeperTouches6AF.IsValidIndex(Index)
                 && ShotGoalkeeperTouches6AF[Index];
             const bool bPost = ShotPostTouches6AG.IsValidIndex(Index)
@@ -1240,9 +1307,32 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
 void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(ETrainingShotOutcome6P Outcome)
 {
     if (!bShotReleased6M || bBetweenShotAttempts6N || bComplete6B) return;
+    // 6AI.4: keep the true physical result for the report, but never count
+    // an out-of-zone kick as a valid goal. The keeper/ball were NOT interrupted.
+    const ETrainingShotOutcome6P PhysicalOutcome6AI4 = Outcome;
+    const bool bInvalidOrigin6AI4 = bZoneFinishLesson6AH &&
+        bZoneShotOriginChecked6AI4 && !bZoneShotOriginValid6AI4;
+    if (bZoneFinishLesson6AH)
+        ShotPhysicalOutcomes6AI4.Add(PhysicalOutcome6AI4);
+    if (bInvalidOrigin6AI4)
+    {
+        ShotEndDetail6AE = FString::Printf(
+            TEXT("remate desde fuera del circulo; resultado en cancha: %s; no cuenta"),
+            *ShotOutcomeLabel6P(PhysicalOutcome6AI4));
+        Outcome = ETrainingShotOutcome6P::InvalidZone;
+    }
     const bool bGoal = Outcome == ETrainingShotOutcome6P::Goal;
     bGoalScored6M = bGoal;
     ShotOutcomes6P.Add(Outcome);
+    if (bZoneFinishLesson6AH)
+    {
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AI4] Attempt=%d/10 origin=%s physical=%s scored=%s; proceeding normally"),
+            ShotsCompleted6N + 1, bZoneShotOriginChecked6AI4
+                ? (bZoneShotOriginValid6AI4 ? TEXT("INSIDE") : TEXT("OUTSIDE"))
+                : TEXT("NO KICK"),
+            *ShotOutcomeLabel6P(PhysicalOutcome6AI4), *ShotOutcomeLabel6P(Outcome));
+    }
     ShotCharges6P.Add(ShotCharge6M);
     ShotBarrierContacts6P.Add(bBarrierContactThisShot6P);
     // 6AE: record supporting evidence, never infer a save from a timeout.
@@ -1330,6 +1420,9 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     ShotsCompleted6N = 0;
     GoalsScored6N = 0;
     ShotOutcomes6P.Empty();
+    ShotPhysicalOutcomes6AI4.Empty();
+    bZoneShotOriginChecked6AI4 = false;
+    bZoneShotOriginValid6AI4 = false;
     ShotCharges6P.Empty();
     ShotBarrierContacts6P.Empty();
     ShotEndDetails6AE.Empty();
@@ -1484,10 +1577,10 @@ FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
             if (bComplete6B) return TEXT("Diez jugadas completadas. Consulta el resultado.");
             if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
             if (bBetweenShotAttempts6N) return GetLastShotFeedback6P() + TEXT(". Preparando la nueva zona...");
-            if (bShotReleased6M) return TEXT("Remate valido desde el circulo. Espera el resultado...");
+            if (bShotReleased6M) return TEXT("Remate en curso. El intento termina normalmente aunque hayas pateado fuera del circulo.");
             return IsBallInsideShotZone6AH()
                 ? TEXT("PELOTA EN ZONA: podes rematar con boton derecho. Apunta al arco.")
-                : TEXT("Conduce o autopasa la pelota hasta el circulo verde. Solo podes patear desde adentro.");
+                : TEXT("Podes apuntar y cargar fuerza en cualquier momento. Solo vale el remate que salga desde el circulo.");
         }
         if (bComplete6B) return TEXT("Diez remates completados. Consulta el resultado.");
         if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
