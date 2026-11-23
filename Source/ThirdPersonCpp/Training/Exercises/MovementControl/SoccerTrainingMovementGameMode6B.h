@@ -10,6 +10,7 @@ class AThirdPersonCppCharacter;
 class USoccerPlayerProfile;
 class AStaticMeshActor;
 class ASoccerAICharacter;
+enum class ESoccerGoalkeeperAction : uint8;
 
 // 6P: keep the cause of each shot result separate from the goal counter.
 enum class ETrainingShotOutcome6P : uint8
@@ -150,6 +151,20 @@ private:
     float KeeperCentralSaveDistance6W = 40.f;
     UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Saves", meta=(ClampMin="1.5"))
     float KeeperSaveRecoverySeconds6W = 2.25f;
+    // 6Y: continuously refreshed plan using the MATCH selector and its
+    // authored montage contact timing. The regular match AI remains disabled.
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Timing", meta=(ClampMin="0.0", ClampMax="0.2"))
+    float KeeperStartTolerance6Y = 0.025f;
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Timing", meta=(ClampMin="0.0", ClampMax="2.0"))
+    float KeeperPlanLogInterval6Y = 0.30f;
+    // Don't alter the keeper's location in the final moments before a planned
+    // montage, because the montage selector scored the keeper's current pose.
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Timing", meta=(ClampMin="0.0", ClampMax="0.5"))
+    float KeeperPreMontageFreezeSeconds6Y = 0.10f;
+    bool bKeeperHasPendingPlan6Y = false;
+    ESoccerGoalkeeperAction KeeperPlannedAction6Y = static_cast<ESoccerGoalkeeperAction>(0);
+    float KeeperPlannedDelay6Y = 0.f;
+    float KeeperNextPlanLogAt6Y = 0.f;
     // 6X: real match montage selector, independent of the training collision approximation.
     bool bKeeperMontageStarted6X = false;
     bool bKeeperSelectorLogged6X = false;

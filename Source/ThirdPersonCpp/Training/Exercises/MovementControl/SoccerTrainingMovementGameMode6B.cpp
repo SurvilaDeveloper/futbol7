@@ -225,6 +225,17 @@ void ASoccerTrainingMovementGameMode6B::UpdateTrainingGoalkeeper6T(float DeltaSe
         return;
     }
 
+    // 6Y: stabilize the goalkeeper's pose immediately before the selected
+    // animation. Earlier in the shot we continue using the 6V positioning.
+    if (bShotInFlight6M && bKeeperHasPendingPlan6Y &&
+        KeeperPlannedDelay6Y <= KeeperPreMontageFreezeSeconds6Y)
+    {
+        TrainingGoalkeeper6T->SetScriptedLocomotionVelocity(
+            FVector::ZeroVector, ESoccerAIMovementMode::Run,
+            ESoccerAIMovementReason::NormalPlay);
+        return;
+    }
+
     // 6X: do not teleport/reorient the goalkeeper while a selected montage
     // is playing; the montage owns the pose during that interval.
     if (bShotInFlight6M && TrainingGoalkeeper6T->IsGoalkeeperActionActive())
@@ -302,6 +313,7 @@ void ASoccerTrainingMovementGameMode6B::RegisterChargedShotRelease6M(float Charg
     bShotReleased6M = true;
     bGoalScored6M = false;
     bShotInFlight6M = false;
+    bKeeperHasPendingPlan6Y = false;
     ShotCharge6M = FMath::Clamp(ChargeFraction, 0.f, 1.f);
     ShotReleaseTime6M = GetWorld()->GetTimeSeconds();
     if (ASoccerField* Field = FindSharedField6L())
@@ -333,9 +345,10 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
     const FVector Current = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
     const FVector BallVelocity = PracticeBall6B->GetBallPhysicsVelocity();
     if (BallVelocity.Size() > 140.f) bShotInFlight6M = true;
-    // 6X: consult the EXACT goalkeeper montage selector used by matches.
-    // The normal controller tick remains disabled so that match-only navigation,
-    // possession and rule systems are not invoked by this training exercise.
+    // 6Y: while the shot is approaching, refresh the match animation selector
+    // each frame rather than latching the first action. Its start delay is
+    // computed from the predicted hand-contact time, not a fixed timer.
+    // We never enable the normal controller Tick: it needs SoccerMatchManager.
     if (bGoalkeeperShotLesson6T && bShotInFlight6M && !bKeeperMontageStarted6X &&
         !bKeeperSaveTriggered6T && IsValid(TrainingGoalkeeper6T))
     {
@@ -346,23 +359,45 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
             ESoccerGoalkeeperAction Action = ESoccerGoalkeeperAction::None;
             float StartDelay = 0.f;
             bool bEmergency = false;
-            if (KeeperController->SelectTrainingGoalkeeperSave6X(
-                    TrainingGoalkeeper6T, PracticeBall6B, Action, StartDelay, bEmergency) &&
-                StartDelay <= 0.f)
+            const bool bSelected = KeeperController->SelectTrainingGoalkeeperSave6X(
+                TrainingGoalkeeper6T, PracticeBall6B, Action, StartDelay, bEmergency);
+            if (bSelected)
             {
-                bKeeperMontageStarted6X = TrainingGoalkeeper6T->StartGoalkeeperAction(Action);
-                UE_LOG(LogTemp, Display,
-                    TEXT("[Training6X] Match selector action=%d, delay=%.3f, emergency=%s, started=%s"),
-                    static_cast<int32>(Action), StartDelay,
-                    bEmergency ? TEXT("yes") : TEXT("no"),
-                    bKeeperMontageStarted6X ? TEXT("yes") : TEXT("no"));
+                const bool bActionChanged = !bKeeperHasPendingPlan6Y || Action != KeeperPlannedAction6Y;
+                bKeeperHasPendingPlan6Y = true;
+                KeeperPlannedAction6Y = Action;
+                KeeperPlannedDelay6Y = StartDelay;
+                const float Now = GetWorld()->GetTimeSeconds();
+                if (bActionChanged || Now >= KeeperNextPlanLogAt6Y)
+                {
+                    UE_LOG(LogTemp, Display,
+                        TEXT("[Training6Y] Plan action=%d delay=%.3f emergency=%s keeper=%s ballSpeed=%.1f"),
+                        static_cast<int32>(Action), StartDelay,
+                        bEmergency ? TEXT("yes") : TEXT("no"),
+                        *GetNameSafe(TrainingGoalkeeper6T), BallVelocity.Size());
+                    KeeperNextPlanLogAt6Y = Now + FMath::Max(0.05f, KeeperPlanLogInterval6Y);
+                }
+                if (StartDelay <= KeeperStartTolerance6Y)
+                {
+                    bKeeperMontageStarted6X = TrainingGoalkeeper6T->StartGoalkeeperAction(Action);
+                    UE_LOG(LogTemp, Display,
+                        TEXT("[Training6Y] Start action=%d delay=%.3f emergency=%s started=%s"),
+                        static_cast<int32>(Action), StartDelay,
+                        bEmergency ? TEXT("yes") : TEXT("no"),
+                        bKeeperMontageStarted6X ? TEXT("yes") : TEXT("no"));
+                    if (bKeeperMontageStarted6X) bKeeperHasPendingPlan6Y = false;
+                }
+            }
+            else
+            {
+                bKeeperHasPendingPlan6Y = false;
             }
         }
         else if (!bKeeperSelectorLogged6X)
         {
             bKeeperSelectorLogged6X = true;
             UE_LOG(LogTemp, Warning,
-                TEXT("[Training6X] Keeper has no SoccerAIController: using 6W fallback."));
+                TEXT("[Training6Y] Keeper has no SoccerAIController; using 6W fallback."));
         }
     }
     // 6W: swept proximity check prevents a fast shot from passing entirely
@@ -506,6 +541,9 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     bKeeperSaveTriggered6T = false;
     bKeeperMontageStarted6X = false;
     bKeeperSelectorLogged6X = false;
+    bKeeperHasPendingPlan6Y = false;
+    KeeperPlannedDelay6Y = 0.f;
+    KeeperNextPlanLogAt6Y = 0.f;
     if (bGoalkeeperShotLesson6T && IsValid(TrainingGoalkeeper6T))
     {
         TrainingGoalkeeper6T->ClearGoalkeeperAction();
