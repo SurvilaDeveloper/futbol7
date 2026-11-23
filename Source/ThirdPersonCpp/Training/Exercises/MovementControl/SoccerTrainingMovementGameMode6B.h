@@ -202,6 +202,10 @@ private:
     // 6AF: a goalkeeper touch / frame impact is evidence, not yet a final result.
     TArray<bool> ShotGoalkeeperTouches6AF;
     TArray<bool> ShotGoalsAfterKeeperTouch6AF;
+    // 6AG: preserve actual frame contacts for each completed attempt.
+    // A goal after a frame impact remains a goal, not a separate attempt.
+    TArray<bool> ShotPostTouches6AG;
+    TArray<bool> ShotCrossbarTouches6AG;
     bool bKeeperTouchedThisShot6AF = false;
     float KeeperTouchTime6AF = -1.f;
     bool bPostTouchedThisShot6AF = false;

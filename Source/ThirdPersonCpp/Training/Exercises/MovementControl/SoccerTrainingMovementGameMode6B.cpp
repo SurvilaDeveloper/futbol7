@@ -1017,66 +1017,125 @@ FString ASoccerTrainingMovementGameMode6B::GetLastShotFeedback6P() const
 FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
 {
     int32 Wide = 0, Over = 0, Blocked = 0, Saved = 0, Unresolved = 0, BarrierTouches = 0;
-    int32 Posts6AF = 0, Crossbars6AF = 0, GoalsWithKeeperTouch6AF = 0, KeeperTouches6AF = 0;
+    int32 PostsWithoutGoal = 0, CrossbarsWithoutGoal = 0;
+    int32 KeeperTouches = 0, GoalsAfterKeeperTouch = 0;
+    int32 PostContacts = 0, CrossbarContacts = 0, GoalsAfterFrameContact = 0;
+
     for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
     {
-        switch (ShotOutcomes6P[Index])
+        const ETrainingShotOutcome6P Outcome = ShotOutcomes6P[Index];
+        switch (Outcome)
         {
         case ETrainingShotOutcome6P::Saved: ++Saved; break;
-        case ETrainingShotOutcome6P::Post: ++Posts6AF; break;
-        case ETrainingShotOutcome6P::Crossbar: ++Crossbars6AF; break;
+        case ETrainingShotOutcome6P::Post: ++PostsWithoutGoal; break;
+        case ETrainingShotOutcome6P::Crossbar: ++CrossbarsWithoutGoal; break;
         case ETrainingShotOutcome6P::Wide: ++Wide; break;
         case ETrainingShotOutcome6P::OverBar: ++Over; break;
         case ETrainingShotOutcome6P::Barrier: ++Blocked; break;
         case ETrainingShotOutcome6P::Unresolved: ++Unresolved; break;
         default: break;
         }
+        const bool bKeeperContact = ShotGoalkeeperTouches6AF.IsValidIndex(Index)
+            && ShotGoalkeeperTouches6AF[Index];
+        const bool bGoalAfterKeeper = ShotGoalsAfterKeeperTouch6AF.IsValidIndex(Index)
+            && ShotGoalsAfterKeeperTouch6AF[Index];
+        const bool bPostContact = ShotPostTouches6AG.IsValidIndex(Index)
+            && ShotPostTouches6AG[Index];
+        const bool bCrossbarContact = ShotCrossbarTouches6AG.IsValidIndex(Index)
+            && ShotCrossbarTouches6AG[Index];
+        if (bKeeperContact) ++KeeperTouches;
+        if (bGoalAfterKeeper) ++GoalsAfterKeeperTouch;
+        if (bPostContact) ++PostContacts;
+        if (bCrossbarContact) ++CrossbarContacts;
+        if (Outcome == ETrainingShotOutcome6P::Goal && (bPostContact || bCrossbarContact))
+            ++GoalsAfterFrameContact;
         if (ShotBarrierContacts6P.IsValidIndex(Index) && ShotBarrierContacts6P[Index])
             ++BarrierTouches;
-        if (ShotGoalkeeperTouches6AF.IsValidIndex(Index) && ShotGoalkeeperTouches6AF[Index])
-            ++KeeperTouches6AF;
-        if (ShotGoalsAfterKeeperTouch6AF.IsValidIndex(Index) && ShotGoalsAfterKeeperTouch6AF[Index])
-            ++GoalsWithKeeperTouch6AF;
     }
 
     FString Report;
     if (bGoalkeeperShotLesson6T)
     {
-        // 6AD: use only confirmed goal-line crossings and confirmed animated
-        // contacts. Do not infer a save from a ball that stopped or a missed
-        // goal-line crossing; those outcomes stay unresolved.
-        const int32 OnTarget6AD = GoalsScored6N + Saved;
-        const float Accuracy6AD = 100.f * static_cast<float>(OnTarget6AD) /
-            FMath::Max(1, ShotOutcomes6P.Num());
-        const float Conversion6AD = 100.f * static_cast<float>(GoalsScored6N) /
-            FMath::Max(1, OnTarget6AD);
-        const float KeeperSavePct6AD = 100.f * static_cast<float>(Saved) /
-            FMath::Max(1, OnTarget6AD);
+        const int32 Total = ShotOutcomes6P.Num();
+        const int32 OnTarget = GoalsScored6N + Saved;
+        const int32 DirectGoals = FMath::Max(0, GoalsScored6N - GoalsAfterKeeperTouch);
+        const float Accuracy = Total > 0 ? (100.f * OnTarget / Total) : 0.f;
+        const float Conversion = OnTarget > 0 ? (100.f * GoalsScored6N / OnTarget) : 0.f;
+        const float SavePct = OnTarget > 0 ? (100.f * Saved / OnTarget) : 0.f;
+
         Report = FString::Printf(
-            TEXT("\nREMATES CONTRA ARQUERO\n"
-                 "Al arco: %d / %d (%.0f%%)  |  Goles: %d\n"
-                 "Atajadas confirmadas: %d  |  Efectividad ante el arquero: %.0f%%\n"
-                 "Porcentaje de atajadas del arquero: %.0f%%\n"
-                 "Desviados: %d  |  Sobre el travesaño: %d\n"
-                 "Barrera: %d  |  Sin resolución: %d\n"),
-            OnTarget6AD, ShotOutcomes6P.Num(), Accuracy6AD, GoalsScored6N,
-            Saved, Conversion6AD, KeeperSavePct6AD, Wide, Over, Blocked, Unresolved);
-    }
-    else
-    {
-        // Preserve the original report for the charged-shot lesson.
-        Report = FString::Printf(
-            TEXT("Desviados: %d  |  Sobre travesaño: %d\nAtajadas: %d  |  Barrera: %d  |  Sin resolución: %d  |  Contactos barrera: %d\n"),
-            Wide, Over, Saved, Blocked, Unresolved, BarrierTouches);
+            TEXT("REMATES CONTRA ARQUERO\n"
+                 "================================\n"
+                 "RESUMEN  (%d intentos)\n"
+                 "Goles: %d  |  Atajadas: %d\n"
+                 "Al arco: %d/%d (%.1f%%)\n"
+                 "Conversion de remates al arco: %.1f%%\n"
+                 "Porcentaje de atajadas: %.1f%%\n\n"
+                 "INTERVENCIONES DEL ARQUERO\n"
+                 "Goles sin toque del arquero: %d\n"
+                 "Goles tras toque del arquero: %d\n"
+                 "Intentos con contacto del arquero: %d\n\n"
+                 "POSTES Y TRAVESANO\n"
+                 "Postes sin gol: %d  |  Travesanos sin gol: %d\n"
+                 "Goles tras rebote en el marco: %d\n"
+                 "Intentos con impacto en poste: %d\n"
+                 "Intentos con impacto en travesano: %d\n\n"
+                 "OTROS RESULTADOS\n"
+                 "Desviados: %d  |  Sobre travesano: %d\n"
+                 "Barrera: %d  |  Sin resolucion: %d\n"),
+            Total, GoalsScored6N, Saved, OnTarget, Total, Accuracy,
+            Conversion, SavePct, DirectGoals, GoalsAfterKeeperTouch, KeeperTouches,
+            PostsWithoutGoal, CrossbarsWithoutGoal, GoalsAfterFrameContact,
+            PostContacts, CrossbarContacts, Wide, Over, Blocked, Unresolved);
+
+        // A goal with a keeper touch or frame impact is included in Goals
+        // exactly once. The other counters describe events, not extra shots.
+        Report += TEXT("\n================================\nDETALLE DE CADA REMATE\n");
+        for (int32 Index = 0; Index < Total; ++Index)
+        {
+            const float Charge = ShotCharges6P.IsValidIndex(Index)
+                ? ShotCharges6P[Index] * 100.f : 0.f;
+            Report += FString::Printf(TEXT("\n%02d. %s  |  Potencia %.0f%%\n"),
+                Index + 1, *ShotOutcomeLabel6P(ShotOutcomes6P[Index]), Charge);
+            const bool bKeeperTouch = ShotGoalkeeperTouches6AF.IsValidIndex(Index)
+                && ShotGoalkeeperTouches6AF[Index];
+            const bool bPost = ShotPostTouches6AG.IsValidIndex(Index)
+                && ShotPostTouches6AG[Index];
+            const bool bCrossbar = ShotCrossbarTouches6AG.IsValidIndex(Index)
+                && ShotCrossbarTouches6AG[Index];
+            if (bKeeperTouch || bPost || bCrossbar)
+            {
+                Report += TEXT("   Contactos:");
+                if (bKeeperTouch) Report += TEXT(" arquero");
+                if (bPost) Report += TEXT(" poste");
+                if (bCrossbar) Report += TEXT(" travesano");
+                Report += TEXT("\n");
+            }
+            if (ShotGoalsAfterKeeperTouch6AF.IsValidIndex(Index)
+                && ShotGoalsAfterKeeperTouch6AF[Index])
+            {
+                Report += TEXT("   GOL TRAS INTERVENCION DEL ARQUERO\n");
+            }
+            else if (ShotOutcomes6P[Index] == ETrainingShotOutcome6P::Goal
+                && (bPost || bCrossbar))
+            {
+                Report += TEXT("   GOL TRAS REBOTE EN EL MARCO\n");
+            }
+            const FString Reason = ShotEndDetails6AE.IsValidIndex(Index)
+                ? ShotEndDetails6AE[Index] : TEXT("motivo no registrado");
+            Report += FString::Printf(TEXT("   Motivo: %s\n"), *Reason);
+        }
+        if (Unresolved > 0)
+            Report += TEXT("\nNota: los intentos sin resolucion no cuentan como goles ni atajadas.\n");
+        Report += TEXT("\nLos goles con toque del arquero o rebote en el marco ya estan incluidos en Goles.\n");
+        return Report;
     }
 
-    if (bGoalkeeperShotLesson6T)
-    {
-        Report += FString::Printf(
-            TEXT("Goles tras toque del arquero: %d (incluidos en goles)\n"
-                 "Contactos del arquero: %d  |  Postes sin gol: %d  |  Travesanos sin gol: %d\n"),
-            GoalsWithKeeperTouch6AF, KeeperTouches6AF, Posts6AF, Crossbars6AF);
-    }
+    // Keep the original report layout for REMATES without a goalkeeper.
+    Report = FString::Printf(
+        TEXT("Desviados: %d  |  Sobre travesano: %d\n"
+             "Atajadas: %d  |  Barrera: %d  |  Sin resolucion: %d  |  Contactos barrera: %d\n"),
+        Wide, Over, Saved, Blocked, Unresolved, BarrierTouches);
     Report += TEXT("\nDetalle por intento:\n");
     for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
     {
@@ -1085,21 +1144,6 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
         const float Charge = ShotCharges6P.IsValidIndex(Index) ? ShotCharges6P[Index] * 100.f : 0.f;
         Report += FString::Printf(TEXT("%02d: %s (%.0f%%)"),
             Index + 1, *ShotOutcomeLabel6P(ShotOutcomes6P[Index]), Charge);
-    }
-    if (bGoalkeeperShotLesson6T)
-    {
-        // One detail per line is easier to read in the scrollable results UI.
-        Report += TEXT("\n\nMotivo de cada resultado:\n");
-        for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
-        {
-            const FString Reason = ShotEndDetails6AE.IsValidIndex(Index)
-                ? ShotEndDetails6AE[Index] : TEXT("no registrado");
-            Report += FString::Printf(TEXT("%02d: %s\n"), Index + 1, *Reason);
-        }
-    }
-    if (bGoalkeeperShotLesson6T && Unresolved > 0)
-    {
-        Report += TEXT("\n\nNota: los intentos sin resolución no se cuentan como goles ni como atajadas.");
     }
     return Report;
 }
@@ -1118,6 +1162,8 @@ void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(ETrainingShotOutcom
     ShotEndDetails6AE.Add(Reason6AE);
     ShotGoalkeeperTouches6AF.Add(bKeeperTouchedThisShot6AF);
     ShotGoalsAfterKeeperTouch6AF.Add(bGoal && bKeeperTouchedThisShot6AF);
+    ShotPostTouches6AG.Add(bPostTouchedThisShot6AF);
+    ShotCrossbarTouches6AG.Add(bCrossbarTouchedThisShot6AF);
     if (bGoalkeeperShotLesson6T)
     {
         UE_LOG(LogTemp, Display,
@@ -1200,6 +1246,8 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     ShotEndDetails6AE.Empty();
     ShotGoalkeeperTouches6AF.Empty();
     ShotGoalsAfterKeeperTouch6AF.Empty();
+    ShotPostTouches6AG.Empty();
+    ShotCrossbarTouches6AG.Empty();
     bTrackFrameImpact6AF = bGoalkeeperShotLesson6T;
     if (bTrackFrameImpact6AF && IsValid(PracticeBall6B))
     {
