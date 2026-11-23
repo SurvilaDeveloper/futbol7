@@ -454,6 +454,7 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
         if (IsValid(KeeperController) && KeeperController->ConsumeTrainingGoalkeeperContact6Z())
         {
             bKeeperSaveTriggered6T = true;
+            ShotEndDetail6AE = TEXT("contacto animado del arquero confirmado");
             UE_LOG(LogTemp, Display, TEXT("[Training6Z] SAVED: confirmed by match hand/body contact detector"));
             ResolveShotAttempt6N(ETrainingShotOutcome6P::Saved);
             return;
@@ -489,7 +490,27 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
             const ETrainingShotOutcome6P Outcome = !bInsidePosts ? ETrainingShotOutcome6P::Wide
                 : !bUnderCrossbar ? ETrainingShotOutcome6P::OverBar
                 : ETrainingShotOutcome6P::Goal;
+            ShotEndDetail6AE = Outcome == ETrainingShotOutcome6P::Goal
+                ? TEXT("cruce valido de la linea de gol")
+                : Outcome == ETrainingShotOutcome6P::Wide
+                    ? TEXT("cruce de linea de fondo fuera de postes")
+                    : TEXT("cruce sobre travesano o altura no valida");
             ResolveShotAttempt6N(Outcome);
+            return;
+        }
+    }
+    // 6AE: a ball crossing either touchline is observably out of play even
+    // when it never reaches the goal line. Only classify after actual flight;
+    // a nearly stationary or pre-kick ball is not evidence of a wide shot.
+    if (bShotInFlight6M && bHavePreviousBall6M)
+    {
+        const float HalfWidth = SoccerFieldDimensions::HalfPitchWidthCm;
+        const float BallRadius = PracticeBall6B->GetBallRadiusCm();
+        if (FMath::Abs(PreviousBallLocal6M.Y) <= HalfWidth + BallRadius &&
+            FMath::Abs(Current.Y) > HalfWidth + BallRadius)
+        {
+            ShotEndDetail6AE = TEXT("salio por linea lateral");
+            ResolveShotAttempt6N(ETrainingShotOutcome6P::Wide);
             return;
         }
     }
@@ -500,8 +521,22 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
     if (SinceRelease > 15.f ||
         (bShotInFlight6M && SinceRelease > 3.f && BallVelocity.Size() < 35.f))
     {
-        // No definitive goal-line crossing. A barrier collision is evidence;
-        // otherwise keep an unresolved result instead of guessing the cause.
+        // 6AE: explain WHY there is no definitive result instead of using
+        // 'SIN RESOLUCION' as an opaque bucket. No inferred goalkeeper save.
+        if (bBarrierContactThisShot6P)
+            ShotEndDetail6AE = TEXT("contacto con barrera confirmado");
+        else if (!bShotInFlight6M)
+            ShotEndDetail6AE = TEXT("no se detecto remate en vuelo");
+        else if (BallVelocity.Size() < 35.f)
+            ShotEndDetail6AE = TEXT("pelota detenida sin cruce confirmado");
+        else
+            ShotEndDetail6AE = TEXT("tiempo agotado con pelota en movimiento");
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AE] Closing attempt=%d reason=%s elapsed=%.2f speed=%.1f ballLocal=%s keeperPossession=%s"),
+            ShotAttemptIndex6N + 1, *ShotEndDetail6AE, SinceRelease,
+            BallVelocity.Size(), *Current.ToCompactString(),
+            IsValid(TrainingGoalkeeper6T) && TrainingGoalkeeper6T->IsAIPossessingBall()
+                ? TEXT("YES") : TEXT("NO"));
         ResolveShotAttempt6N(bBarrierContactThisShot6P
             ? ETrainingShotOutcome6P::Barrier : ETrainingShotOutcome6P::Unresolved);
     }
@@ -645,6 +680,7 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     bGoalScored6M = false;
     ShotCharge6M = 0.f;
     bBarrierContactThisShot6P = false;
+    ShotEndDetail6AE.Empty();
     bKeeperSaveTriggered6T = false;
     bKeeperMontageStarted6X = false;
     bKeeperSelectorLogged6X = false;
@@ -950,6 +986,17 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
         Report += FString::Printf(TEXT("%02d: %s (%.0f%%)"),
             Index + 1, *ShotOutcomeLabel6P(ShotOutcomes6P[Index]), Charge);
     }
+    if (bGoalkeeperShotLesson6T)
+    {
+        // One detail per line is easier to read in the scrollable results UI.
+        Report += TEXT("\n\nMotivo de cada resultado:\n");
+        for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
+        {
+            const FString Reason = ShotEndDetails6AE.IsValidIndex(Index)
+                ? ShotEndDetails6AE[Index] : TEXT("no registrado");
+            Report += FString::Printf(TEXT("%02d: %s\n"), Index + 1, *Reason);
+        }
+    }
     if (bGoalkeeperShotLesson6T && Unresolved > 0)
     {
         Report += TEXT("\n\nNota: los intentos sin resolución no se cuentan como goles ni como atajadas.");
@@ -965,6 +1012,15 @@ void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(ETrainingShotOutcom
     ShotOutcomes6P.Add(Outcome);
     ShotCharges6P.Add(ShotCharge6M);
     ShotBarrierContacts6P.Add(bBarrierContactThisShot6P);
+    // 6AE: record supporting evidence, never infer a save from a timeout.
+    const FString Reason6AE = ShotEndDetail6AE.IsEmpty()
+        ? TEXT("resultado detectado sin detalle adicional") : ShotEndDetail6AE;
+    ShotEndDetails6AE.Add(Reason6AE);
+    if (bGoalkeeperShotLesson6T)
+    {
+        UE_LOG(LogTemp, Display, TEXT("[Training6AE] Attempt=%d reason=%s outcome=%s"),
+            ShotsCompleted6N + 1, *Reason6AE, *ShotOutcomeLabel6P(Outcome));
+    }
     ++ShotsCompleted6N;
     if (bGoal) ++GoalsScored6N;
     if (bGoalkeeperShotLesson6T)
@@ -1029,6 +1085,8 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     ShotOutcomes6P.Empty();
     ShotCharges6P.Empty();
     ShotBarrierContacts6P.Empty();
+    ShotEndDetails6AE.Empty();
+    ShotEndDetail6AE.Empty();
     bBarrierContactThisShot6P = false;
     bBetweenShotAttempts6N = false;
     bComplete6B = false;

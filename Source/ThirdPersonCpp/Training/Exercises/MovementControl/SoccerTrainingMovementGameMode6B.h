@@ -195,6 +195,9 @@ private:
     TArray<ETrainingShotOutcome6P> ShotOutcomes6P;
     TArray<float> ShotCharges6P;
     TArray<bool> ShotBarrierContacts6P;
+    // 6AE: explanatory evidence alongside each outcome (training only).
+    TArray<FString> ShotEndDetails6AE;
+    FString ShotEndDetail6AE;
     bool bBarrierContactThisShot6P = false;
     bool bBetweenShotAttempts6N = false;
     float NextAttemptAt6N = 0.f;
