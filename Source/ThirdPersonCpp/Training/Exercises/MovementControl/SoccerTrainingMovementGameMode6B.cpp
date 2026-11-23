@@ -98,10 +98,11 @@ void ASoccerTrainingMovementGameMode6B::StartPlay()
 {
     const FString Lesson = UGameplayStatics::ParseOption(OptionsString, TEXT("TrainingLesson"));
     bAutoPassLesson6J = Lesson.Equals(TEXT("AutoPass"), ESearchCase::IgnoreCase);
-    bGoalkeeperShotLesson6T = Lesson.Equals(TEXT("GoalkeeperShot"), ESearchCase::IgnoreCase);
+    bZoneFinishLesson6AH = Lesson.Equals(TEXT("ZoneFinish"), ESearchCase::IgnoreCase);
+    bGoalkeeperShotLesson6T = bZoneFinishLesson6AH || Lesson.Equals(TEXT("GoalkeeperShot"), ESearchCase::IgnoreCase);
     bChargedShotLesson6M = bGoalkeeperShotLesson6T || Lesson.Equals(TEXT("ChargedShot"), ESearchCase::IgnoreCase);
     UE_LOG(LogTemp, Display, TEXT("[Training6J] Lesson: %s"),
-        bGoalkeeperShotLesson6T ? TEXT("GoalkeeperShot") : bChargedShotLesson6M ? TEXT("ChargedShot") : bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
+        bZoneFinishLesson6AH ? TEXT("ZoneFinish") : bGoalkeeperShotLesson6T ? TEXT("GoalkeeperShot") : bChargedShotLesson6M ? TEXT("ChargedShot") : bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
     // 6L: ASoccerField can live in a shared, Always Loaded streaming level.
     // Never create the temporary cube when the real field is present.
     if (FindSharedField6L())
@@ -171,6 +172,8 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     if (!IsExerciseRunning6H() || !IsValid(PracticeBall6B) || !IsValid(Trainee6B)) return;
     ElapsedTime6B += DeltaSeconds;
     if (bGoalkeeperShotLesson6T) UpdateTrainingGoalkeeper6T(DeltaSeconds);
+    if (bZoneFinishLesson6AH && !bBetweenShotAttempts6N && !bShotReleased6M)
+        DrawZoneFinishTarget6AH();
     if (bChargedShotLesson6M)
     {
         VerifyShotBallReset6AB2();
@@ -437,6 +440,11 @@ void ASoccerTrainingMovementGameMode6B::UpdateTrainingGoalkeeper6T(float DeltaSe
 void ASoccerTrainingMovementGameMode6B::RegisterChargedShotRelease6M(float ChargeFraction)
 {
     if (!bChargedShotLesson6M || !IsExerciseRunning6H() || bShotReleased6M || bBetweenShotAttempts6N || !IsValid(PracticeBall6B)) return;
+    if (bZoneFinishLesson6AH && !CanStartZoneShot6AH())
+    {
+        ReportInvalidZoneShot6AH();
+        return;
+    }
     bShotReleased6M = true;
     bGoalScored6M = false;
     bShotInFlight6M = false;
@@ -471,7 +479,24 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
     const float SinceRelease = GetWorld()->GetTimeSeconds() - ShotReleaseTime6M;
     const FVector Current = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
     const FVector BallVelocity = PracticeBall6B->GetBallPhysicsVelocity();
-    if (BallVelocity.Size() > 140.f) bShotInFlight6M = true;
+    if (BallVelocity.Size() > 140.f)
+    {
+        if (bZoneFinishLesson6AH && !bShotInFlight6M &&
+            !IsBallInsideShotZone6AH())
+        {
+            // A late approach/autopass is not a valid launch from the circle.
+            // Retry this SAME attempt; never score an off-zone kick.
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Training6AH] Shot left the foot outside the circle; retry attempt=%d"),
+                ShotAttemptIndex6N + 1);
+            bShotReleased6M = false;
+            bShotInFlight6M = false;
+            bHavePreviousBall6M = false;
+            PrepareShotAttempt6N();
+            return;
+        }
+        bShotInFlight6M = true;
+    }
     // 6Z: only the match animated-contact solver can validate a save.
     // The AnimNotifyState_GKContactWindow drives hand/body checks on the
     // existing goalkeeper controller, even with its regular Tick disabled.
@@ -620,6 +645,66 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
     }
 }
 
+// 6AH: all coordinates are local to ASoccerField; no TargetPoints or hardcoded world positions.
+FVector ASoccerTrainingMovementGameMode6B::GetZoneCenterLocal6AH(int32 AttemptIndex) const
+{
+    const float XFraction[10] = {0.47f, 0.57f, 0.53f, 0.43f, 0.66f,
+                                0.63f, 0.72f, 0.69f, 0.75f, 0.77f};
+    const float YFraction[10] = {0.f, -0.25f, 0.25f, 0.f, -0.38f,
+                                0.38f, -0.22f, 0.22f, -0.46f, 0.f};
+    const int32 Index = FMath::Clamp(AttemptIndex, 0, 9);
+    return FVector(SoccerFieldDimensions::HalfPitchLengthCm * XFraction[Index],
+        SoccerFieldDimensions::HalfPitchWidthCm * YFraction[Index], 8.f);
+}
+
+FVector ASoccerTrainingMovementGameMode6B::GetZoneCenterWorld6AH() const
+{
+    if (const ASoccerField* Field = FindSharedField6L())
+        return Field->PitchLocalToWorld(GetZoneCenterLocal6AH(ShotAttemptIndex6N));
+    return FVector::ZeroVector;
+}
+
+bool ASoccerTrainingMovementGameMode6B::IsBallInsideShotZone6AH() const
+{
+    if (!bZoneFinishLesson6AH || !IsValid(PracticeBall6B)) return false;
+    const ASoccerField* Field = FindSharedField6L();
+    if (!Field) return false;
+    const FVector BallLocal = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
+    const FVector ZoneLocal = GetZoneCenterLocal6AH(ShotAttemptIndex6N);
+    const float EffectiveRadius = ZoneRadius6AH - PracticeBall6B->GetBallRadiusCm();
+    return EffectiveRadius > 0.f && FVector::Dist2D(BallLocal, ZoneLocal) <= EffectiveRadius;
+}
+
+bool ASoccerTrainingMovementGameMode6B::CanStartZoneShot6AH() const
+{
+    return bZoneFinishLesson6AH && IsExerciseRunning6H() &&
+        !bShotReleased6M && !bBetweenShotAttempts6N && IsBallInsideShotZone6AH();
+}
+
+void ASoccerTrainingMovementGameMode6B::ReportInvalidZoneShot6AH()
+{
+    if (!GetWorld() || GetWorld()->GetTimeSeconds() - LastZoneWarningAt6AH < 0.75f) return;
+    LastZoneWarningAt6AH = GetWorld()->GetTimeSeconds();
+    UE_LOG(LogTemp, Warning,
+        TEXT("[Training6AH] Shot BLOCKED: ball is outside the target circle, attempt=%d"),
+        ShotAttemptIndex6N + 1);
+}
+
+void ASoccerTrainingMovementGameMode6B::DrawZoneFinishTarget6AH() const
+{
+    if (!GetWorld() || !bZoneFinishLesson6AH) return;
+    const ASoccerField* Field = FindSharedField6L();
+    if (!Field) return;
+    const FVector Center = Field->PitchLocalToWorld(GetZoneCenterLocal6AH(ShotAttemptIndex6N));
+    const FVector XAxis = Field->GetActorRotation().RotateVector(FVector(1.f, 0.f, 0.f));
+    const FVector YAxis = Field->GetActorRotation().RotateVector(FVector(0.f, 1.f, 0.f));
+    const FColor Color = IsBallInsideShotZone6AH() ? FColor::Green : FColor::Yellow;
+    DrawDebugCircle(GetWorld(), Center, ZoneRadius6AH, 64, Color, false, 0.f, 0, 8.f,
+        XAxis, YAxis, false);
+    DrawDebugLine(GetWorld(), Center, Center + FVector(0.f, 0.f, 120.f), Color,
+        false, 0.f, 0, 2.5f);
+}
+
 FVector ASoccerTrainingMovementGameMode6B::GetShotBallLocal6N(int32 AttemptIndex) const
 {
     // Repeatable positions, inside the playable pitch, scaled to field dimensions.
@@ -711,11 +796,15 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     // pose out of sync with the actor transform on the next physics step.
     PracticeBall6B->SetPossessed(true);
 
-    const FVector BallLocal = GetShotBallLocal6N(ShotAttemptIndex6N);
+    const FVector BallLocal = bZoneFinishLesson6AH
+        ? FVector(260.f, 0.f, 70.f)
+        : GetShotBallLocal6N(ShotAttemptIndex6N);
     // 6O: update the obstacle layout before the player takes the next kick.
     if (bGoalkeeperShotLesson6T) ClearPracticeBarriers6O();
     else SetupPracticeBarriers6O(BallLocal);
-    const FVector PlayerLocal(BallLocal.X - 300.f, BallLocal.Y, 130.f);
+    const FVector PlayerLocal = bZoneFinishLesson6AH
+        ? FVector(0.f, 0.f, 130.f)
+        : FVector(BallLocal.X - 300.f, BallLocal.Y, 130.f);
     Trainee6B->SetActorLocationAndRotation(Field->PitchLocalToWorld(PlayerLocal),
         Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
     const FVector BallWorld = FindSafeShotBallSpawn6AB2(Field->PitchLocalToWorld(BallLocal));
@@ -1390,6 +1479,16 @@ FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
 {
     if (bChargedShotLesson6M)
     {
+        if (bZoneFinishLesson6AH)
+        {
+            if (bComplete6B) return TEXT("Diez jugadas completadas. Consulta el resultado.");
+            if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
+            if (bBetweenShotAttempts6N) return GetLastShotFeedback6P() + TEXT(". Preparando la nueva zona...");
+            if (bShotReleased6M) return TEXT("Remate valido desde el circulo. Espera el resultado...");
+            return IsBallInsideShotZone6AH()
+                ? TEXT("PELOTA EN ZONA: podes rematar con boton derecho. Apunta al arco.")
+                : TEXT("Conduce o autopasa la pelota hasta el circulo verde. Solo podes patear desde adentro.");
+        }
         if (bComplete6B) return TEXT("Diez remates completados. Consulta el resultado.");
         if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
         if (bBetweenShotAttempts6N)
@@ -1469,8 +1568,10 @@ void ASoccerTrainingMovementGameMode6B::EnsurePlayerStart6B()
         if (bChargedShotLesson6M)
         {
             const FVector BallLocal = GetShotBallLocal6N(0);
-            World->SpawnActor<APlayerStart>(Field->PitchLocalToWorld(
-                FVector(BallLocal.X - 300.f, BallLocal.Y, 130.f)), Field->GetActorRotation());
+            const FVector SpawnLocal = bZoneFinishLesson6AH
+                ? FVector(0.f, 0.f, 130.f)
+                : FVector(BallLocal.X - 300.f, BallLocal.Y, 130.f);
+            World->SpawnActor<APlayerStart>(Field->PitchLocalToWorld(SpawnLocal), Field->GetActorRotation());
             return;
         }
         const FVector LocalStart(-0.78f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f);
@@ -1501,7 +1602,8 @@ void ASoccerTrainingMovementGameMode6B::EnsureBall6B()
     FRotator BallRotation = FRotator::ZeroRotator;
     if (ASoccerField* Field = FindSharedField6L())
     {
-        const FVector LocalBall = bChargedShotLesson6M ? GetShotBallLocal6N(0)
+        const FVector LocalBall = bZoneFinishLesson6AH ? FVector(260.f, 0.f, 70.f)
+            : bChargedShotLesson6M ? GetShotBallLocal6N(0)
             : FVector(-0.63f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 70.f);
         BallPosition = Field->PitchLocalToWorld(LocalBall);
         BallRotation = Field->GetActorRotation();

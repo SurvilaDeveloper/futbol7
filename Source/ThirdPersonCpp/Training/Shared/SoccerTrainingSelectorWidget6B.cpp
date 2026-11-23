@@ -87,7 +87,7 @@ void USoccerTrainingSelectorWidget6B::BuildSelector6B()
 
     USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>();
     Size->SetWidthOverride(740.f);
-    Size->SetHeightOverride(835.f);
+    Size->SetHeightOverride(930.f);
     Scale->AddChild(Size);
     if (UScaleBoxSlot* ScaleSlot = Cast<UScaleBoxSlot>(Size->Slot))
     {
@@ -120,6 +120,9 @@ void USoccerTrainingSelectorWidget6B::BuildSelector6B()
     GoalkeeperShotButton6T = MakeButton(WidgetTree, TEXT("REMATES CONTRA ARQUERO"), true);
     GoalkeeperShotButton6T->OnClicked.AddDynamic(this, &USoccerTrainingSelectorWidget6B::OpenGoalkeeperShots6T);
     AddRow(List, GoalkeeperShotButton6T, 12.f);
+    ZoneFinishButton6AH = MakeButton(WidgetTree, TEXT("CONDUCCIÓN Y DEFINICIÓN POR ZONAS"), true);
+    ZoneFinishButton6AH->OnClicked.AddDynamic(this, &USoccerTrainingSelectorWidget6B::OpenZoneFinish6AH);
+    AddRow(List, ZoneFinishButton6AH, 12.f);
 
     BackButton6B = MakeButton(WidgetTree, TEXT("VOLVER AL MENÚ PRINCIPAL"), false);
     BackButton6B->OnClicked.AddDynamic(this,
@@ -137,12 +140,13 @@ void USoccerTrainingSelectorWidget6B::FocusFirstExercise6B()
 
 void USoccerTrainingSelectorWidget6B::Navigate6B(int32 Offset)
 {
-    UButton* Items[5] = { MovementButton6B, AutoPassButton6J, ChargedShotButton6M, GoalkeeperShotButton6T, BackButton6B };
-    const int32 Current = IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus() ? 4
+    UButton* Items[6] = { MovementButton6B, AutoPassButton6J, ChargedShotButton6M, GoalkeeperShotButton6T, ZoneFinishButton6AH, BackButton6B };
+    const int32 Current = IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus() ? 5
+        : IsValid(ZoneFinishButton6AH) && ZoneFinishButton6AH->HasKeyboardFocus() ? 4
         : IsValid(GoalkeeperShotButton6T) && GoalkeeperShotButton6T->HasKeyboardFocus() ? 3
         : IsValid(ChargedShotButton6M) && ChargedShotButton6M->HasKeyboardFocus() ? 2
         : IsValid(AutoPassButton6J) && AutoPassButton6J->HasKeyboardFocus() ? 1 : 0;
-    const int32 Next = (Current + Offset + 5) % 5;
+    const int32 Next = (Current + Offset + 6) % 6;
     if (IsValid(Items[Next])) Items[Next]->SetKeyboardFocus();
 }
 
@@ -170,6 +174,9 @@ void USoccerTrainingSelectorWidget6B::NativeTick(const FGeometry& Geometry, floa
         GoalkeeperShotButton6T->SetBackgroundColor(GoalkeeperShotButton6T->HasKeyboardFocus()
             ? FLinearColor(0.48f, 0.99f, 0.66f, 1.f) : Green);
     }
+    if (IsValid(ZoneFinishButton6AH))
+        ZoneFinishButton6AH->SetBackgroundColor(ZoneFinishButton6AH->HasKeyboardFocus()
+            ? FLinearColor(0.48f, 0.99f, 0.66f, 1.f) : Green);
     if (IsValid(BackButton6B))
     {
         BackButton6B->SetBackgroundColor(BackButton6B->HasKeyboardFocus()
@@ -208,6 +215,13 @@ void USoccerTrainingSelectorWidget6B::OpenGoalkeeperShots6T()
         true, TEXT("TrainingLesson=GoalkeeperShot"));
 }
 
+void USoccerTrainingSelectorWidget6B::OpenZoneFinish6AH()
+{
+    UGameplayStatics::OpenLevel(this,
+        FName(TEXT("/Game/ThirdPersonCPP/Maps/Training/MovementControl/SoccerTrainingMovementMap")),
+        true, TEXT("TrainingLesson=ZoneFinish"));
+}
+
 void USoccerTrainingSelectorWidget6B::Back6B()
 {
     OnTrainingSelectorClosed6B.Broadcast();
@@ -243,6 +257,7 @@ FReply USoccerTrainingSelectorWidget6B::NativeOnPreviewKeyDown(
         Key == EKeys::Gamepad_FaceButton_Bottom)
     {
         if (IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus()) Back6B();
+        else if (IsValid(ZoneFinishButton6AH) && ZoneFinishButton6AH->HasKeyboardFocus()) OpenZoneFinish6AH();
         else if (IsValid(GoalkeeperShotButton6T) && GoalkeeperShotButton6T->HasKeyboardFocus()) OpenGoalkeeperShots6T();
         else if (IsValid(ChargedShotButton6M) && ChargedShotButton6M->HasKeyboardFocus()) OpenChargedShot6M();
         else if (IsValid(AutoPassButton6J) && AutoPassButton6J->HasKeyboardFocus()) OpenAutoPass6J();

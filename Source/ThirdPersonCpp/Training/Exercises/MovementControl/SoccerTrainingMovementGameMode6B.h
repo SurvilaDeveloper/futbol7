@@ -36,6 +36,12 @@ public:
     bool IsAutoPassLesson6J() const { return bAutoPassLesson6J; }
     bool IsChargedShotLesson6M() const { return bChargedShotLesson6M; }
     bool IsGoalkeeperShotLesson6T() const { return bGoalkeeperShotLesson6T; }
+    bool IsZoneFinishLesson6AH() const { return bZoneFinishLesson6AH; }
+    bool IsBallInsideShotZone6AH() const;
+    bool CanStartZoneShot6AH() const;
+    void ReportInvalidZoneShot6AH();
+    FVector GetZoneCenterWorld6AH() const;
+    float GetZoneRadius6AH() const { return ZoneRadius6AH; }
     bool HasShotBeenReleased6M() const { return bShotReleased6M; }
     bool WasGoalScored6M() const { return bGoalScored6M; }
     float GetShotCharge6M() const { return ShotCharge6M; }
@@ -101,6 +107,13 @@ private:
     bool bAutoPassLesson6J = false;
     bool bChargedShotLesson6M = false;
     bool bGoalkeeperShotLesson6T = false;
+    bool bZoneFinishLesson6AH = false;
+    UPROPERTY(EditAnywhere, Category="Training|Zone Finish|Target", meta=(ClampMin="100.0", ClampMax="800.0"))
+    float ZoneRadius6AH = 260.f;
+    float LastZoneWarningAt6AH = -100.f;
+    // Fixed, field-relative targets so each of the ten attempts can be reproduced.
+    FVector GetZoneCenterLocal6AH(int32 AttemptIndex) const;
+    void DrawZoneFinishTarget6AH() const;
     // 6Z.3: Optional Data Asset for the goalkeeper in the training level.
     // Leave unset to preserve a profile already assigned by another system.
     UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Profile")

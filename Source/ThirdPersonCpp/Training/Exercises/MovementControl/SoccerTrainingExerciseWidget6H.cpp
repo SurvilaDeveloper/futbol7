@@ -124,7 +124,7 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
     const bool bShot = Mode && Mode->IsChargedShotLesson6M();
-    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("ENTRENAMIENTO | REMATES CONTRA ARQUERO") : bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
+    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("ENTRENAMIENTO | CONDUCCIÓN Y DEFINICIÓN") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("ENTRENAMIENTO | REMATES CONTRA ARQUERO") : bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
         ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
     if (Body6H)
@@ -133,7 +133,15 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         BodyFont6P.Size = 19;
         Body6H->SetFont(BodyFont6P);
     }
-    if (Body6H) Body6H->SetText(FText::FromString((Mode && Mode->IsGoalkeeperShotLesson6T())
+    if (Body6H) Body6H->SetText(FText::FromString((Mode && Mode->IsZoneFinishLesson6AH())
+        ? TEXT("Diez jugadas de conducción y definición. Empezás en el centro de la cancha, con la pelota unos metros adelante.\n\n"
+               "Con clic izquierdo podés buscar la pelota y hacer autopases. También podés conducirla con I, J, K y L. "
+               "Llevá la pelota hasta el círculo amarillo de cada intento: cuando quede COMPLETAMENTE dentro se pondrá verde.\n\n"
+               "Solo entonces podés usar el botón derecho para cargar y ejecutar un remate al arco. "
+               "El remate debe SALIR desde la zona; fuera de ella se bloquea y no se consume el intento.\n\n"
+               "El arquero usa por ahora sus atajadas normales. En la siguiente etapa incorporaremos sus salidas a interceptar. "
+               "Las diez zonas cambian de lugar y al terminar verás las estadísticas.")
+        : (Mode && Mode->IsGoalkeeperShotLesson6T())
         ? TEXT("Practicarás diez remates contra un arquero, desde diferentes posiciones.\n\n"
                "No hace falta tomar posesión: apunta con la cruz verde, mantén presionado el botón derecho "
                "para cargar la fuerza y suéltalo. El jugador irá hacia la pelota para rematar.\n\n"
@@ -184,7 +192,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
     const bool bShot = Mode && Mode->IsChargedShotLesson6M();
-    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("RESULTADOS CONTRA ARQUERO") : bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
+    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("RESULTADOS | DEFINICIÓN POR ZONAS") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("RESULTADOS CONTRA ARQUERO") : bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
         ? TEXT("AUTOPASES COMPLETADOS") : TEXT("RECORRIDO COMPLETADO")));
     if (Mode)
     {

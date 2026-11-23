@@ -106,6 +106,15 @@ bool ASoccerTrainingPlayerController6B::InputKey(
                 return true;
             AThirdPersonCppCharacter* Shooter = Cast<AThirdPersonCppCharacter>(GetPawn());
             if (!Shooter) return true; // Existing match kick chases the ball on release.
+            if (TrainingMode->IsZoneFinishLesson6AH() &&
+                (EventType == IE_Pressed || EventType == IE_Released) &&
+                !TrainingMode->IsBallInsideShotZone6AH())
+            {
+                if (EventType == IE_Released)
+                    Shooter->ReleaseBallForMatchRestart(false); // cancel pending kick charge
+                TrainingMode->ReportInvalidZoneShot6AH();
+                return true;
+            }
             if (EventType == IE_Released)
             {
                 float Charge = 0.f;
@@ -133,7 +142,8 @@ bool ASoccerTrainingPlayerController6B::InputKey(
                     return true;
                 }
             }
-            else if (TrainingMode->IsChargedShotLesson6M())
+            else if (TrainingMode->IsChargedShotLesson6M() &&
+                     !TrainingMode->IsZoneFinishLesson6AH())
             {
                 // Shooting lesson uses right click only. No collection or autopass.
                 return true;
@@ -217,7 +227,7 @@ void ASoccerTrainingPlayerController6B::RestartTraining6B()
             const bool bShot = TrainingMode && TrainingMode->IsChargedShotLesson6M();
             UGameplayStatics::OpenLevel(this,
                 FName(*(Folder + TEXT("/") + ShortName)), true,
-                (TrainingMode && TrainingMode->IsGoalkeeperShotLesson6T()) ? TEXT("TrainingLesson=GoalkeeperShot") : bShot ? TEXT("TrainingLesson=ChargedShot") : bAutoPass ? TEXT("TrainingLesson=AutoPass") : TEXT(""));
+                (TrainingMode && TrainingMode->IsZoneFinishLesson6AH()) ? TEXT("TrainingLesson=ZoneFinish") : (TrainingMode && TrainingMode->IsGoalkeeperShotLesson6T()) ? TEXT("TrainingLesson=GoalkeeperShot") : bShot ? TEXT("TrainingLesson=ChargedShot") : bAutoPass ? TEXT("TrainingLesson=AutoPass") : TEXT(""));
         }
     }
 }
