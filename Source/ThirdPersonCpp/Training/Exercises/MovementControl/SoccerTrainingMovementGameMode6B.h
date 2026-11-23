@@ -215,6 +215,14 @@ private:
     TArray<ETrainingShotOutcome6P> ShotPhysicalOutcomes6AI4;
     bool bZoneShotOriginChecked6AI4 = false;
     bool bZoneShotOriginValid6AI4 = false;
+    // 6AJ: record the full ten-attempt journey independently of the shot result.
+    // None of these fields affect the goalkeeper, kick, ball or match code.
+    bool bReachedShotZoneThisAttempt6AJ = false;
+    float ZoneAttemptStartSeconds6AJ = 0.f;
+    TArray<bool> ShotZoneReached6AJ;
+    TArray<float> ShotZoneAttemptSeconds6AJ;
+    TArray<bool> ShotOriginInside6AJ;
+    TArray<bool> ShotHadKick6AJ;
     TArray<float> ShotCharges6P;
     TArray<bool> ShotBarrierContacts6P;
     // 6AE: explanatory evidence alongside each outcome (training only).

@@ -171,6 +171,13 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     }
     if (!IsExerciseRunning6H() || !IsValid(PracticeBall6B) || !IsValid(Trainee6B)) return;
     ElapsedTime6B += DeltaSeconds;
+    // 6AJ: a zone is reached when the BALL (including its physical radius)
+    // enters the target, not when the player crosses the marker.
+    if (bZoneFinishLesson6AH && !bBetweenShotAttempts6N && !bShotReleased6M &&
+        IsBallInsideShotZone6AH())
+    {
+        bReachedShotZoneThisAttempt6AJ = true;
+    }
     // 6AI: only the new zone lesson permits a proactive goalkeeper rush.
     // Keep the older GoalkeeperShot lesson's exact 6AG behavior.
     bool bSweeperOwnsMovement6AI = false;
@@ -522,6 +529,7 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
             // exactly the same physical resolution as a kick from inside.
             bZoneShotOriginChecked6AI4 = true;
             bZoneShotOriginValid6AI4 = bValidKickOrigin;
+            bReachedShotZoneThisAttempt6AJ |= bValidKickOrigin;
             if (!bValidKickOrigin)
             {
                 UE_LOG(LogTemp, Warning,
@@ -887,6 +895,11 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     bHavePreviousBall6M = false;
     bZoneShotOriginChecked6AI4 = false;
     bZoneShotOriginValid6AI4 = false;
+    if (bZoneFinishLesson6AH)
+    {
+        bReachedShotZoneThisAttempt6AJ = false;
+        ZoneAttemptStartSeconds6AJ = GetWorld()->GetTimeSeconds();
+    }
     bGoalScored6M = false;
     ShotCharge6M = 0.f;
     bBarrierContactThisShot6P = false;
@@ -1191,6 +1204,136 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
             ++BarrierTouches;
     }
 
+    // 6AJ: This exercise judges two independent facts: did the kick start in
+    // the zone, and what happened physically? Never count an invalid physical
+    // goal as a valid goal, nor count keeper contacts as extra attempts.
+    if (bZoneFinishLesson6AH)
+    {
+        const int32 Total = ShotOutcomes6P.Num();
+        int32 ZonesReached = 0, KicksInside = 0, KicksOutside = 0;
+        int32 NoKickInterceptions = 0, ValidGoals = 0, ValidSaves = 0;
+        int32 ValidWide = 0, ValidOver = 0, ValidPost = 0, ValidCrossbar = 0;
+        int32 ValidUnresolved = 0, InvalidPhysicalGoals = 0;
+        int32 GoalsAfterKeeper = 0, GoalsAfterFrame = 0;
+        int32 KeeperContactEvents = 0, PostEvents = 0, CrossbarEvents = 0;
+        float TotalAttemptSeconds = 0.f;
+        for (int32 I = 0; I < Total; ++I)
+        {
+            const ETrainingShotOutcome6P Scored = ShotOutcomes6P[I];
+            const ETrainingShotOutcome6P Physical = ShotPhysicalOutcomes6AI4.IsValidIndex(I)
+                ? ShotPhysicalOutcomes6AI4[I] : Scored;
+            const bool bInZone = ShotOriginInside6AJ.IsValidIndex(I) && ShotOriginInside6AJ[I];
+            const bool bKick = ShotHadKick6AJ.IsValidIndex(I) && ShotHadKick6AJ[I];
+            const bool bPost = ShotPostTouches6AG.IsValidIndex(I) && ShotPostTouches6AG[I];
+            const bool bCrossbar = ShotCrossbarTouches6AG.IsValidIndex(I) && ShotCrossbarTouches6AG[I];
+            const bool bKeeperTouch = ShotGoalkeeperTouches6AF.IsValidIndex(I) && ShotGoalkeeperTouches6AF[I];
+            if (ShotZoneReached6AJ.IsValidIndex(I) && ShotZoneReached6AJ[I]) ++ZonesReached;
+            if (bKick && bInZone) ++KicksInside;
+            if (bKick && !bInZone) ++KicksOutside;
+            if (!bKick && Physical == ETrainingShotOutcome6P::Intercepted) ++NoKickInterceptions;
+            if (ShotZoneAttemptSeconds6AJ.IsValidIndex(I)) TotalAttemptSeconds += ShotZoneAttemptSeconds6AJ[I];
+            if (bKeeperTouch) ++KeeperContactEvents;
+            if (bPost) ++PostEvents;
+            if (bCrossbar) ++CrossbarEvents;
+            if (bKick && !bInZone && Physical == ETrainingShotOutcome6P::Goal) ++InvalidPhysicalGoals;
+            if (!bInZone) continue;
+            switch (Physical)
+            {
+            case ETrainingShotOutcome6P::Goal:
+                ++ValidGoals;
+                if (bKeeperTouch) ++GoalsAfterKeeper;
+                if (bPost || bCrossbar) ++GoalsAfterFrame;
+                break;
+            case ETrainingShotOutcome6P::Saved: ++ValidSaves; break;
+            case ETrainingShotOutcome6P::Wide: ++ValidWide; break;
+            case ETrainingShotOutcome6P::OverBar: ++ValidOver; break;
+            case ETrainingShotOutcome6P::Post: ++ValidPost; break;
+            case ETrainingShotOutcome6P::Crossbar: ++ValidCrossbar; break;
+            default: ++ValidUnresolved; break;
+            }
+        }
+        const int32 OnTarget = ValidGoals + ValidSaves;
+        const float ZonePct = Total ? 100.f * ZonesReached / Total : 0.f;
+        const float GoalPct = Total ? 100.f * ValidGoals / Total : 0.f;
+        const float Accuracy = KicksInside ? 100.f * OnTarget / KicksInside : 0.f;
+        const float Conversion = OnTarget ? 100.f * ValidGoals / OnTarget : 0.f;
+        const float AverageSeconds = Total ? TotalAttemptSeconds / Total : 0.f;
+        FString ZoneReport = FString::Printf(
+            TEXT("CONDUCCION Y DEFINICION POR ZONAS\n"
+                 "================================\n"
+                 "RESUMEN GENERAL (%d/10 intentos)\n"
+                 "Zonas alcanzadas con pelota: %d/%d (%.1f%%)\n"
+                 "Remates validos desde zona: %d\n"
+                 "Remates desde fuera: %d\n"
+                 "Intercepciones antes de patear: %d\n"
+                 "Goles validos: %d/%d (%.1f%%)\n"
+                 "Tiempo promedio por intento: %.1f s\n\n"
+                 "DEFINICION DESDE LA ZONA\n"
+                 "Goles: %d | Atajadas: %d\n"
+                 "Al arco confirmados: %d/%d (%.1f%%)\n"
+                 "Conversion de remates al arco: %.1f%%\n"
+                 "Desviados: %d | Sobre travesano: %d\n"
+                 "Poste sin gol: %d | Travesano sin gol: %d\n"
+                 "Otros resultados: %d\n\n"
+                 "INTERVENCIONES Y REBOTES\n"
+                 "Goles validos tras toque del arquero: %d\n"
+                 "Goles validos tras rebote en marco: %d\n"
+                 "Intentos con contacto de arquero: %d\n"
+                 "Intentos con impacto en poste: %d\n"
+                 "Intentos con impacto en travesano: %d\n\n"
+                 "FUERA DE ZONA\n"
+                 "Goles fisicos anulados por zona: %d\n"),
+            Total, ZonesReached, Total, ZonePct, KicksInside, KicksOutside,
+            NoKickInterceptions, ValidGoals, Total, GoalPct, AverageSeconds,
+            ValidGoals, ValidSaves, OnTarget, KicksInside, Accuracy, Conversion,
+            ValidWide, ValidOver, ValidPost, ValidCrossbar, ValidUnresolved,
+            GoalsAfterKeeper, GoalsAfterFrame, KeeperContactEvents, PostEvents,
+            CrossbarEvents, InvalidPhysicalGoals);
+
+        ZoneReport += TEXT("\n================================\nDETALLE DE LOS DIEZ INTENTOS\n");
+        for (int32 I = 0; I < Total; ++I)
+        {
+            const ETrainingShotOutcome6P Scored = ShotOutcomes6P[I];
+            const ETrainingShotOutcome6P Physical = ShotPhysicalOutcomes6AI4.IsValidIndex(I)
+                ? ShotPhysicalOutcomes6AI4[I] : Scored;
+            const bool bInZone = ShotOriginInside6AJ.IsValidIndex(I) && ShotOriginInside6AJ[I];
+            const bool bKick = ShotHadKick6AJ.IsValidIndex(I) && ShotHadKick6AJ[I];
+            const bool bReached = ShotZoneReached6AJ.IsValidIndex(I) && ShotZoneReached6AJ[I];
+            const float Seconds = ShotZoneAttemptSeconds6AJ.IsValidIndex(I)
+                ? ShotZoneAttemptSeconds6AJ[I] : 0.f;
+            const float Charge = ShotCharges6P.IsValidIndex(I) ? 100.f * ShotCharges6P[I] : 0.f;
+            const bool bKeeperTouch = ShotGoalkeeperTouches6AF.IsValidIndex(I) && ShotGoalkeeperTouches6AF[I];
+            const bool bPost = ShotPostTouches6AG.IsValidIndex(I) && ShotPostTouches6AG[I];
+            const bool bCrossbar = ShotCrossbarTouches6AG.IsValidIndex(I) && ShotCrossbarTouches6AG[I];
+            const TCHAR* Origin = !bKick ? TEXT("SIN REMATE") : (bInZone ? TEXT("DENTRO") : TEXT("FUERA"));
+            ZoneReport += FString::Printf(
+                TEXT("\n%02d. %s | Origen: %s | Zona alcanzada: %s\n"
+                     "    Tiempo: %.1f s | Potencia: %.0f%%\n"),
+                I + 1, *ShotOutcomeLabel6P(Scored), Origin,
+                bReached ? TEXT("SI") : TEXT("NO"), Seconds, Charge);
+            if (bKick && !bInZone)
+                ZoneReport += FString::Printf(TEXT("    Resultado fisico: %s (no cuenta)\n"),
+                    *ShotOutcomeLabel6P(Physical));
+            if (bKeeperTouch || bPost || bCrossbar)
+            {
+                ZoneReport += TEXT("    Contactos:");
+                if (bKeeperTouch) ZoneReport += TEXT(" arquero");
+                if (bPost) ZoneReport += TEXT(" poste");
+                if (bCrossbar) ZoneReport += TEXT(" travesano");
+                ZoneReport += TEXT("\n");
+            }
+            if (bInZone && Physical == ETrainingShotOutcome6P::Goal && bKeeperTouch)
+                ZoneReport += TEXT("    GOL VALIDO TRAS TOQUE DEL ARQUERO\n");
+            if (bInZone && Physical == ETrainingShotOutcome6P::Goal && (bPost || bCrossbar))
+                ZoneReport += TEXT("    GOL VALIDO TRAS REBOTE EN MARCO\n");
+            if (ShotEndDetails6AE.IsValidIndex(I))
+                ZoneReport += FString::Printf(TEXT("    Motivo: %s\n"), *ShotEndDetails6AE[I]);
+        }
+        ZoneReport += TEXT("\nSolo los goles originados dentro del circulo suman puntos. "
+                           "Los contactos y rebotes son eventos complementarios.\n");
+        return ZoneReport;
+    }
+
     FString Report;
     if (bGoalkeeperShotLesson6T)
     {
@@ -1310,6 +1453,16 @@ void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(ETrainingShotOutcom
     // 6AI.4: keep the true physical result for the report, but never count
     // an out-of-zone kick as a valid goal. The keeper/ball were NOT interrupted.
     const ETrainingShotOutcome6P PhysicalOutcome6AI4 = Outcome;
+    if (bZoneFinishLesson6AH)
+    {
+        const bool bHadKick6AJ = bZoneShotOriginChecked6AI4;
+        ShotHadKick6AJ.Add(bHadKick6AJ);
+        ShotOriginInside6AJ.Add(bHadKick6AJ && bZoneShotOriginValid6AI4);
+        ShotZoneReached6AJ.Add(bReachedShotZoneThisAttempt6AJ ||
+            (bHadKick6AJ && bZoneShotOriginValid6AI4));
+        ShotZoneAttemptSeconds6AJ.Add(FMath::Max(0.f,
+            GetWorld()->GetTimeSeconds() - ZoneAttemptStartSeconds6AJ));
+    }
     const bool bInvalidOrigin6AI4 = bZoneFinishLesson6AH &&
         bZoneShotOriginChecked6AI4 && !bZoneShotOriginValid6AI4;
     if (bZoneFinishLesson6AH)
@@ -1357,6 +1510,19 @@ void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(ETrainingShotOutcom
     {
         UE_LOG(LogTemp, Display, TEXT("[Training6AE] Attempt=%d reason=%s outcome=%s"),
             ShotsCompleted6N + 1, *Reason6AE, *ShotOutcomeLabel6P(Outcome));
+    }
+    if (bZoneFinishLesson6AH)
+    {
+        const int32 Index6AJ = ShotOutcomes6P.Num() - 1;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AJ] Attempt=%d reachedZone=%s origin=%s result=%s elapsed=%.1fs"),
+            Index6AJ + 1,
+            ShotZoneReached6AJ.IsValidIndex(Index6AJ) && ShotZoneReached6AJ[Index6AJ] ? TEXT("YES") : TEXT("NO"),
+            ShotHadKick6AJ.IsValidIndex(Index6AJ) && ShotHadKick6AJ[Index6AJ]
+                ? (ShotOriginInside6AJ.IsValidIndex(Index6AJ) && ShotOriginInside6AJ[Index6AJ]
+                    ? TEXT("INSIDE") : TEXT("OUTSIDE")) : TEXT("NO KICK"),
+            *ShotOutcomeLabel6P(Outcome),
+            ShotZoneAttemptSeconds6AJ.IsValidIndex(Index6AJ) ? ShotZoneAttemptSeconds6AJ[Index6AJ] : 0.f);
     }
     ++ShotsCompleted6N;
     if (bGoal) ++GoalsScored6N;
@@ -1421,6 +1587,12 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     GoalsScored6N = 0;
     ShotOutcomes6P.Empty();
     ShotPhysicalOutcomes6AI4.Empty();
+    ShotZoneReached6AJ.Empty();
+    ShotZoneAttemptSeconds6AJ.Empty();
+    ShotOriginInside6AJ.Empty();
+    ShotHadKick6AJ.Empty();
+    bReachedShotZoneThisAttempt6AJ = false;
+    ZoneAttemptStartSeconds6AJ = 0.f;
     bZoneShotOriginChecked6AI4 = false;
     bZoneShotOriginValid6AI4 = false;
     ShotCharges6P.Empty();
