@@ -210,6 +210,17 @@ public:
 		ASoccerAICharacter* SoccerCharacter
 	);
 
+    // 6Z: training uses the SAME animated impact path as a match.
+    // The normal controller Tick remains disabled; AnimNotifyState_GKContactWindow
+    // calls HandleGoalkeeperContactWindowTick independently of that Tick.
+    bool StartTrainingGoalkeeperSave6Z(
+        ASoccerAICharacter* SoccerCharacter,
+        ASoccerBall* SoccerBall,
+        ESoccerGoalkeeperAction Action);
+    bool ConsumeTrainingGoalkeeperContact6Z();
+    void ResetTrainingGoalkeeperSave6Z(ASoccerAICharacter* SoccerCharacter);
+
+
     // Training 6X: expose the same hand-track/montage selector used in matches.
     // This does not start a montage or change the normal AI tick.
     bool SelectTrainingGoalkeeperSave6X(
@@ -2426,6 +2437,9 @@ private:
 	bool TryExecutePendingGoalkeeperSaveImpact(
 		ASoccerAICharacter* SoccerCharacter
 	);
+
+    bool bTrainingGoalkeeperSaveActive6Z = false;
+    bool bTrainingGoalkeeperContactDetected6Z = false;
 
 	bool TryExecuteGoalkeeperEmergencyBodyContact(
 		ASoccerAICharacter* SoccerCharacter

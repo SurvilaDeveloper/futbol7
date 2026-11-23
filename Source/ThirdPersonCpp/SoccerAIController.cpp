@@ -2235,6 +2235,41 @@ void ASoccerAIController::FacePawnTowardLocation(
 
 // Training 6X: the normal goalkeeper selection algorithm remains the single
 // source of truth for montage choice and time-to-contact estimation.
+bool ASoccerAIController::StartTrainingGoalkeeperSave6Z(
+    ASoccerAICharacter* SoccerCharacter,
+    ASoccerBall* SoccerBall,
+    ESoccerGoalkeeperAction Action)
+{
+    bTrainingGoalkeeperSaveActive6Z = false;
+    bTrainingGoalkeeperContactDetected6Z = false;
+    // Existing match debug/test entrypoint starts the authored montage and
+    // prepares PendingGoalkeeperSaveImpact (hand and body collision solver).
+    // It does not require the controller's normal match AI Tick.
+    const bool bStarted = StartGoalkeeperDebugSaveTest(
+        SoccerCharacter, SoccerBall, Action, false);
+    bTrainingGoalkeeperSaveActive6Z = bStarted;
+    UE_LOG(LogTemp, Display,
+        TEXT("[Training6Z] Animated save started=%s action=%d impactPending=%s"),
+        bStarted ? TEXT("YES") : TEXT("NO"), static_cast<int32>(Action),
+        HasPendingGoalkeeperSaveImpactFor(SoccerCharacter) ? TEXT("YES") : TEXT("NO"));
+    return bStarted;
+}
+
+bool ASoccerAIController::ConsumeTrainingGoalkeeperContact6Z()
+{
+    const bool bContact = bTrainingGoalkeeperContactDetected6Z;
+    bTrainingGoalkeeperContactDetected6Z = false;
+    return bContact;
+}
+
+void ASoccerAIController::ResetTrainingGoalkeeperSave6Z(
+    ASoccerAICharacter* SoccerCharacter)
+{
+    FinishGoalkeeperDebugSaveTest(SoccerCharacter);
+    bTrainingGoalkeeperSaveActive6Z = false;
+    bTrainingGoalkeeperContactDetected6Z = false;
+}
+
 bool ASoccerAIController::SelectTrainingGoalkeeperSave6X(
     const ASoccerAICharacter* Goalkeeper,
     const ASoccerBall* Ball,
@@ -11503,6 +11538,15 @@ void ASoccerAIController::HandleGoalkeeperContactWindowBegin(
 		return;
 	}
 
+    if (bTrainingGoalkeeperSaveActive6Z &&
+        SoccerCharacter == GoalkeeperDebugSaveTestCharacter)
+    {
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6Z] Contact window BEGIN: impactPending=%s"),
+            HasPendingGoalkeeperSaveImpactFor(SoccerCharacter)
+                ? TEXT("YES") : TEXT("NO"));
+    }
+
 	if (!HasPendingGoalkeeperSaveImpactFor(SoccerCharacter))
 	{
 		SetGoalkeeperPersistentLineIfEnabled(
@@ -11590,6 +11634,15 @@ void ASoccerAIController::HandleGoalkeeperContactWindowEnd(
 	{
 		return;
 	}
+
+    if (bTrainingGoalkeeperSaveActive6Z &&
+        SoccerCharacter == GoalkeeperDebugSaveTestCharacter)
+    {
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6Z] Contact window END: confirmed=%s"),
+            bTrainingGoalkeeperContactDetected6Z
+                ? TEXT("YES") : TEXT("NO"));
+    }
 
 	if (HasPendingGoalkeeperSaveImpactFor(SoccerCharacter))
 	{
@@ -12350,6 +12403,28 @@ bool ASoccerAIController::TryExecutePendingGoalkeeperSaveImpact(
 		EffectiveContactDistance =
 			ContactResult.ClosestHandDistance;
 	}
+
+    if (bTrainingGoalkeeperSaveActive6Z &&
+        SoccerCharacter == GoalkeeperDebugSaveTestCharacter)
+    {
+        bTrainingGoalkeeperContactDetected6Z = true;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6Z] REAL animated contact: action=%d hand=%s body=%s"),
+            static_cast<int32>(GoalkeeperAction),
+            ContactResult.bHandContact ? TEXT("YES") : TEXT("NO"),
+            ContactResult.bBodyContact ? TEXT("YES") : TEXT("NO"));
+    }
+
+    if (bTrainingGoalkeeperSaveActive6Z &&
+        SoccerCharacter == GoalkeeperDebugSaveTestCharacter)
+    {
+        bTrainingGoalkeeperContactDetected6Z = true;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6Z] REAL animated contact: action=%d hand=%s body=%s"),
+            static_cast<int32>(GoalkeeperAction),
+            ContactResult.bHandContact ? TEXT("YES") : TEXT("NO"),
+            ContactResult.bBodyContact ? TEXT("YES") : TEXT("NO"));
+    }
 
 	ClearPendingGoalkeeperSaveImpact();
 

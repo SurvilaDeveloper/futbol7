@@ -99,6 +99,11 @@ private:
     bool bAutoPassLesson6J = false;
     bool bChargedShotLesson6M = false;
     bool bGoalkeeperShotLesson6T = false;
+    // 6Z.3: Optional Data Asset for the goalkeeper in the training level.
+    // Leave unset to preserve a profile already assigned by another system.
+    UPROPERTY(EditAnywhere, Category="Training|Goalkeeper|Profile")
+    TSoftObjectPtr<USoccerPlayerProfile> TrainingGoalkeeperProfile6Z3;
+
     UPROPERTY(Transient) ASoccerAICharacter* TrainingGoalkeeper6T = nullptr;
     // 6V: training-only goalkeeper positioning. These mirror the geometric
     // principles of SoccerMatchManager, not its runtime Blueprint overrides.
@@ -220,6 +225,7 @@ private:
     void DrawCheckpoint6B() const;
     void TickChargedShot6M(float DeltaSeconds);
     void FindTrainingGoalkeeper6T();
+    void EnsureTrainingGoalkeeperProfile6Z3();
     void UpdateTrainingGoalkeeper6T(float DeltaSeconds);
     void ResolveShotAttempt6N(ETrainingShotOutcome6P Outcome);
     UFUNCTION()

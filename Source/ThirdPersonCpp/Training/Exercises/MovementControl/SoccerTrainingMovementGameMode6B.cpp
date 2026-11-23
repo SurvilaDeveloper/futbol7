@@ -165,6 +165,7 @@ void ASoccerTrainingMovementGameMode6B::FindTrainingGoalkeeper6T()
         if (IsValid(Candidate) && Candidate->GetPlayerRole() == ESoccerPlayerRole::Goalkeeper)
         {
             TrainingGoalkeeper6T = Candidate;
+            EnsureTrainingGoalkeeperProfile6Z3();
             // 6X.1: Diagnose the ACTUAL possessing controller, not merely the
             // AIControllerClass configured on the goalkeeper Blueprint.
             AController* Controller = Candidate->GetController();
@@ -199,6 +200,54 @@ void ASoccerTrainingMovementGameMode6B::FindTrainingGoalkeeper6T()
         }
     }
     UE_LOG(LogTemp, Warning, TEXT("[Training6T] No goalkeeper in training map. Copy a goalkeeper actor from the match to the TRAINING persistent level."));
+}
+
+// 6Z.3: Assign a profile only when explicitly configured, then report the
+// effective goalkeeper abilities. Never overwrite the human training profile.
+void ASoccerTrainingMovementGameMode6B::EnsureTrainingGoalkeeperProfile6Z3()
+{
+    if (!IsValid(TrainingGoalkeeper6T)) return;
+
+    if (!TrainingGoalkeeperProfile6Z3.IsNull())
+    {
+        USoccerPlayerProfile* RequestedProfile = TrainingGoalkeeperProfile6Z3.LoadSynchronous();
+        if (IsValid(RequestedProfile))
+        {
+            TrainingGoalkeeper6T->SetPlayerProfileForMatch(RequestedProfile);
+            UE_LOG(LogTemp, Display, TEXT("[Training6Z3] Assigned goalkeeper profile asset=%s"),
+                *RequestedProfile->GetPathName());
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Training6Z3] Could not load configured goalkeeper profile asset=%s"),
+                *TrainingGoalkeeperProfile6Z3.ToSoftObjectPath().ToString());
+        }
+    }
+
+    const USoccerPlayerProfile* EffectiveProfile = TrainingGoalkeeper6T->GetPlayerProfile();
+    if (!IsValid(EffectiveProfile))
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[Training6Z3] Keeper=%s HasProfile=NO ProfileId=NINGUNO. Configure TrainingGoalkeeperProfile6Z3 in the training GameMode."),
+            *GetNameSafe(TrainingGoalkeeper6T));
+        return;
+    }
+
+    const FSoccerPlayerAttributes& A = EffectiveProfile->Attributes;
+    UE_LOG(LogTemp, Display,
+        TEXT("[Training6Z3] Keeper=%s HasProfile=YES ProfileId=%s ProfileAsset=%s | Reflexes=%.0f Positioning=%.0f Handling=%.0f Diving=%.0f Distribution=%.0f | Anticipation=%.0f DefensiveReaction=%.0f Composure=%.0f"),
+        *GetNameSafe(TrainingGoalkeeper6T),
+        *TrainingGoalkeeper6T->GetPlayerProfileId().ToString(),
+        *EffectiveProfile->GetPathName(),
+        static_cast<double>(A.Goalkeeper.Reflexes),
+        static_cast<double>(A.Goalkeeper.Positioning),
+        static_cast<double>(A.Goalkeeper.Handling),
+        static_cast<double>(A.Goalkeeper.Diving),
+        static_cast<double>(A.Goalkeeper.Distribution),
+        static_cast<double>(A.Tactical.Anticipation),
+        static_cast<double>(A.Tactical.DefensiveReaction),
+        static_cast<double>(A.Tactical.Composure));
 }
 
 void ASoccerTrainingMovementGameMode6B::UpdateTrainingGoalkeeper6T(float DeltaSeconds)
@@ -345,6 +394,23 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
     const FVector Current = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
     const FVector BallVelocity = PracticeBall6B->GetBallPhysicsVelocity();
     if (BallVelocity.Size() > 140.f) bShotInFlight6M = true;
+    // 6Z: only the match animated-contact solver can validate a save.
+    // The AnimNotifyState_GKContactWindow drives hand/body checks on the
+    // existing goalkeeper controller, even with its regular Tick disabled.
+    if (bGoalkeeperShotLesson6T && bShotInFlight6M &&
+        !bKeeperSaveTriggered6T && IsValid(TrainingGoalkeeper6T))
+    {
+        ASoccerAIController* KeeperController =
+            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController());
+        if (IsValid(KeeperController) && KeeperController->ConsumeTrainingGoalkeeperContact6Z())
+        {
+            bKeeperSaveTriggered6T = true;
+            UE_LOG(LogTemp, Display, TEXT("[Training6Z] SAVED: confirmed by match hand/body contact detector"));
+            ResolveShotAttempt6N(ETrainingShotOutcome6P::Saved);
+            return;
+        }
+    }
+
     // 6Y: while the shot is approaching, refresh the match animation selector
     // each frame rather than latching the first action. Its start delay is
     // computed from the predicted hand-contact time, not a fixed timer.
@@ -379,7 +445,8 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
                 }
                 if (StartDelay <= KeeperStartTolerance6Y)
                 {
-                    bKeeperMontageStarted6X = TrainingGoalkeeper6T->StartGoalkeeperAction(Action);
+                    bKeeperMontageStarted6X = KeeperController->StartTrainingGoalkeeperSave6Z(
+                        TrainingGoalkeeper6T, PracticeBall6B, Action);
                     UE_LOG(LogTemp, Display,
                         TEXT("[Training6Y] Start action=%d delay=%.3f emergency=%s started=%s"),
                         static_cast<int32>(Action), StartDelay,
@@ -397,68 +464,12 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
         {
             bKeeperSelectorLogged6X = true;
             UE_LOG(LogTemp, Warning,
-                TEXT("[Training6Y] Keeper has no SoccerAIController; using 6W fallback."));
+                TEXT("[Training6Z] Keeper has no SoccerAIController; animated save unavailable."));
         }
     }
-    // 6W: swept proximity check prevents a fast shot from passing entirely
-    // through the goalkeeper's contact zone between two game ticks. This is a
-    // training-only approximation, not the match AI's animation contact solver.
-    if (bGoalkeeperShotLesson6T && bShotInFlight6M && !bKeeperSaveTriggered6T &&
-        IsValid(TrainingGoalkeeper6T) && BallVelocity.Size2D() > KeeperMinimumShotSpeed6W &&
-        bHavePreviousBall6M && Field->GetActorRotation().UnrotateVector(BallVelocity).X > KeeperMinimumForwardSpeed6W)
-    {
-        const FVector KeeperLocal = Field->WorldToPitchLocal(TrainingGoalkeeper6T->GetActorLocation());
-        const FVector Segment = Current - PreviousBallLocal6M;
-        const float SegmentLengthSquared = Segment.SizeSquared();
-        const float Fraction = SegmentLengthSquared > KINDA_SMALL_NUMBER
-            ? FMath::Clamp(FVector::DotProduct(KeeperLocal - PreviousBallLocal6M, Segment) /
-                SegmentLengthSquared, 0.f, 1.f)
-            : 1.f;
-        const FVector ClosestBall = FMath::Lerp(PreviousBallLocal6M, Current, Fraction);
-        const float LateralDistance = FVector::Dist2D(ClosestBall, KeeperLocal);
-        const float Height = ClosestBall.Z - KeeperLocal.Z;
-        const float BallRadius = PracticeBall6B->GetBallRadiusCm();
-        const float Reach = FMath::Max(0.f, KeeperContactReach6W) + BallRadius;
-        const bool bInReach = LateralDistance <= Reach &&
-            Height >= -BallRadius && Height <= KeeperContactMaxHeight6W;
-
-        // Avoid crediting saves on shots that have already passed the goal line.
-        if (bInReach && ClosestBall.X <= SoccerFieldDimensions::RightGoalLineX)
-        {
-            const bool bBallLeft = ClosestBall.Y < KeeperLocal.Y;
-            // Select a montage family according to height and lateral reach.
-            // The configured goalkeeper Blueprint owns the actual montages.
-            ESoccerGoalkeeperAction SaveAction = ESoccerGoalkeeperAction::CatchAbdomen;
-            if (Height < KeeperLowShotHeight6W)
-                SaveAction = bBallLeft ? ESoccerGoalkeeperAction::DivingSaveFloorToLeft
-                                       : ESoccerGoalkeeperAction::DivingSaveFloorToRight;
-            else if (Height > KeeperHighShotHeight6W)
-                SaveAction = bBallLeft ? ESoccerGoalkeeperAction::CatchOverHeadJumpToLeft
-                                       : ESoccerGoalkeeperAction::CatchOverHeadJumpToRight;
-            else if (LateralDistance > KeeperCentralSaveDistance6W)
-                SaveAction = bBallLeft ? ESoccerGoalkeeperAction::DivingSaveOneMeterToLeft
-                                       : ESoccerGoalkeeperAction::DivingSaveOneMeterToRight;
-
-            const bool bActionStarted = bKeeperMontageStarted6X ||
-                TrainingGoalkeeper6T->IsGoalkeeperActionActive() ||
-                TrainingGoalkeeper6T->StartGoalkeeperAction(SaveAction);
-            // Retain the 6T deflection as an explicit approximation until the
-            // full match contact solver can operate without SoccerMatchManager.
-            const FVector LocalBallVelocity = Field->GetActorRotation().UnrotateVector(BallVelocity);
-            const FVector DeflectedVelocity(
-                -FMath::Max(320.f, FVector2D(LocalBallVelocity.X, LocalBallVelocity.Y).Size() * .42f),
-                bBallLeft ? -240.f : 240.f,
-                FMath::Max(75.f, LocalBallVelocity.Z * .3f));
-            PracticeBall6B->ApplyAerialContactVelocity(
-                Field->GetActorRotation().RotateVector(DeflectedVelocity));
-            bKeeperSaveTriggered6T = true;
-            UE_LOG(LogTemp, Display,
-                TEXT("[Training6W] Save detected. Reach=%.1f cm, height=%.1f cm, action started=%s"),
-                LateralDistance, Height, bActionStarted ? TEXT("yes") : TEXT("no"));
-            ResolveShotAttempt6N(ETrainingShotOutcome6P::Saved);
-            return;
-        }
-    }
+    // 6Z: removed the old 6W radius-based automatic deflection.
+    // It could report a save without the hands/body intersecting the ball,
+    // and interfere with the actual montage's contact windows.
     if (bShotInFlight6M && bHavePreviousBall6M)
     {
         const float GoalX = SoccerFieldDimensions::RightGoalLineX;
@@ -519,8 +530,10 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     Trainee6B->ReleaseBallForMatchRestart(false);
     if (UCharacterMovementComponent* Movement = Trainee6B->GetCharacterMovement())
         Movement->StopMovementImmediately();
-    PracticeBall6B->SetPossessed(false);
-    PracticeBall6B->StopBallKeepingPhysics();
+    // 6Z.2: freeze the root physics body BEFORE teleporting. Moving a
+    // simulating rigid body and then resetting velocity can leave its physics
+    // pose out of sync with the actor transform on the next physics step.
+    PracticeBall6B->SetPossessed(true);
 
     const FVector BallLocal = GetShotBallLocal6N(ShotAttemptIndex6N);
     // 6O: update the obstacle layout before the player takes the next kick.
@@ -529,9 +542,20 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     const FVector PlayerLocal(BallLocal.X - 300.f, BallLocal.Y, 130.f);
     Trainee6B->SetActorLocationAndRotation(Field->PitchLocalToWorld(PlayerLocal),
         Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
-    PracticeBall6B->SetActorLocationAndRotation(Field->PitchLocalToWorld(BallLocal),
-        Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+    const FVector BallWorld = Field->PitchLocalToWorld(BallLocal);
+    const bool bBallTeleported = PracticeBall6B->SetActorLocationAndRotation(
+        BallWorld, Field->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+    // Restore the same physics/collision state used by the normal practice ball.
+    // StopBallKeepingPhysics also clears residual forces, linear and angular
+    // velocity, and resets the tracking used by the ball's prediction code.
+    PracticeBall6B->SetPossessed(false);
     PracticeBall6B->StopBallKeepingPhysics();
+    UE_LOG(LogTemp, Display,
+        TEXT("[Training6Z2] Ball reset attempt=%d teleported=%s target=%s actual=%s radius=%.1f"),
+        ShotAttemptIndex6N + 1,
+        bBallTeleported ? TEXT("yes") : TEXT("no"),
+        *BallWorld.ToString(), *PracticeBall6B->GetActorLocation().ToString(),
+        PracticeBall6B->GetBallRadiusCm());
     bShotReleased6M = false;
     bShotInFlight6M = false;
     bHavePreviousBall6M = false;
@@ -546,6 +570,11 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     KeeperNextPlanLogAt6Y = 0.f;
     if (bGoalkeeperShotLesson6T && IsValid(TrainingGoalkeeper6T))
     {
+        if (ASoccerAIController* KeeperController =
+            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController()))
+        {
+            KeeperController->ResetTrainingGoalkeeperSave6Z(TrainingGoalkeeper6T);
+        }
         TrainingGoalkeeper6T->ClearGoalkeeperAction();
         TrainingGoalkeeper6T->StopGoalkeeperActionMontage(0.05f);
     }
