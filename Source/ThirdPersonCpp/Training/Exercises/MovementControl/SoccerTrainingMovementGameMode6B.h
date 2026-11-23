@@ -9,13 +9,15 @@ class ASoccerField;
 class AThirdPersonCppCharacter;
 class USoccerPlayerProfile;
 class AStaticMeshActor;
+class UPrimitiveComponent;
+struct FHitResult;
 class ASoccerAICharacter;
 enum class ESoccerGoalkeeperAction : uint8;
 
 // 6P: keep the cause of each shot result separate from the goal counter.
 enum class ETrainingShotOutcome6P : uint8
 {
-    Goal, Wide, OverBar, Barrier, Unresolved, Saved
+    Goal, Wide, OverBar, Barrier, Unresolved, Saved, Post, Crossbar
 };
 
 /** Standalone first dribbling lesson: guide the ball through four checkpoints. */
@@ -197,6 +199,17 @@ private:
     TArray<bool> ShotBarrierContacts6P;
     // 6AE: explanatory evidence alongside each outcome (training only).
     TArray<FString> ShotEndDetails6AE;
+    // 6AF: a goalkeeper touch / frame impact is evidence, not yet a final result.
+    TArray<bool> ShotGoalkeeperTouches6AF;
+    TArray<bool> ShotGoalsAfterKeeperTouch6AF;
+    bool bKeeperTouchedThisShot6AF = false;
+    float KeeperTouchTime6AF = -1.f;
+    bool bPostTouchedThisShot6AF = false;
+    bool bCrossbarTouchedThisShot6AF = false;
+    bool bTrackFrameImpact6AF = false;
+    UFUNCTION()
+    void OnPracticeBallHit6AF(UPrimitiveComponent* HitComp, AActor* OtherActor,
+        UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
     FString ShotEndDetail6AE;
     bool bBarrierContactThisShot6P = false;
     bool bBetweenShotAttempts6N = false;

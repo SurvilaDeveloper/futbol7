@@ -54,6 +54,35 @@ static bool RestorePracticeBallGroundCollision6AB3(ASoccerBall* Ball)
     return bChanged;
 }
 
+void ASoccerTrainingMovementGameMode6B::OnPracticeBallHit6AF(
+    UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,
+    FVector NormalImpulse, const FHitResult& Hit)
+{
+    (void)HitComp;
+    (void)OtherActor;
+    (void)NormalImpulse;
+    (void)Hit;
+    if (!bTrackFrameImpact6AF || !bGoalkeeperShotLesson6T || !bShotInFlight6M ||
+        bBetweenShotAttempts6N || !IsValid(OtherComp)) return;
+    // The match's actual goal frame components are named in SoccerField.cpp.
+    // A proximity-only check is NOT proof that a shot touched the frame.
+    const FString ComponentName = OtherComp->GetName();
+    if (ComponentName.StartsWith(TEXT("Goal_Right_")))
+    {
+        if (ComponentName.Contains(TEXT("Crossbar")))
+            bCrossbarTouchedThisShot6AF = true;
+        else if (ComponentName.Contains(TEXT("Post")))
+            bPostTouchedThisShot6AF = true;
+        else
+            return;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AF] Frame contact attempt=%d component=%s post=%s crossbar=%s"),
+            ShotAttemptIndex6N + 1, *ComponentName,
+            bPostTouchedThisShot6AF ? TEXT("YES") : TEXT("NO"),
+            bCrossbarTouchedThisShot6AF ? TEXT("YES") : TEXT("NO"));
+    }
+}
+
 ASoccerTrainingMovementGameMode6B::ASoccerTrainingMovementGameMode6B()
 {
     PrimaryActorTick.bCanEverTick = true;
@@ -454,10 +483,13 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
         if (IsValid(KeeperController) && KeeperController->ConsumeTrainingGoalkeeperContact6Z())
         {
             bKeeperSaveTriggered6T = true;
-            ShotEndDetail6AE = TEXT("contacto animado del arquero confirmado");
-            UE_LOG(LogTemp, Display, TEXT("[Training6Z] SAVED: confirmed by match hand/body contact detector"));
-            ResolveShotAttempt6N(ETrainingShotOutcome6P::Saved);
-            return;
+            bKeeperTouchedThisShot6AF = true;
+            KeeperTouchTime6AF = GetWorld()->GetTimeSeconds();
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AF] Keeper contact attempt=%d; awaiting final trajectory, not yet a save"),
+                ShotAttemptIndex6N + 1);
+            // Do not resolve here. The ball might still cross the goal line.
+            // The match planner is left alone; only training scoring changes.
         }
     }
 
@@ -490,12 +522,31 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
             const ETrainingShotOutcome6P Outcome = !bInsidePosts ? ETrainingShotOutcome6P::Wide
                 : !bUnderCrossbar ? ETrainingShotOutcome6P::OverBar
                 : ETrainingShotOutcome6P::Goal;
-            ShotEndDetail6AE = Outcome == ETrainingShotOutcome6P::Goal
-                ? TEXT("cruce valido de la linea de gol")
-                : Outcome == ETrainingShotOutcome6P::Wide
+            // The crossing is authoritative: a touched shot that enters is a GOAL.
+            // A confirmed frame bounce can still produce a goal afterwards.
+            if (Outcome == ETrainingShotOutcome6P::Goal)
+            {
+                ShotEndDetail6AE = bKeeperTouchedThisShot6AF
+                    ? TEXT("gol despues de contacto del arquero")
+                    : (bPostTouchedThisShot6AF || bCrossbarTouchedThisShot6AF)
+                        ? TEXT("gol despues de rebote en el marco")
+                        : TEXT("cruce valido de la linea de gol");
+            }
+            else if (bKeeperTouchedThisShot6AF)
+                ShotEndDetail6AE = TEXT("arquero desvio el remate fuera de la boca del arco");
+            else if (bCrossbarTouchedThisShot6AF || bPostTouchedThisShot6AF)
+                ShotEndDetail6AE = TEXT("rebote en el marco sin gol");
+            else
+                ShotEndDetail6AE = Outcome == ETrainingShotOutcome6P::Wide
                     ? TEXT("cruce de linea de fondo fuera de postes")
                     : TEXT("cruce sobre travesano o altura no valida");
-            ResolveShotAttempt6N(Outcome);
+            const ETrainingShotOutcome6P FinalOutcome6AF = Outcome == ETrainingShotOutcome6P::Goal
+                ? ETrainingShotOutcome6P::Goal
+                : bKeeperTouchedThisShot6AF ? ETrainingShotOutcome6P::Saved
+                : bCrossbarTouchedThisShot6AF ? ETrainingShotOutcome6P::Crossbar
+                : bPostTouchedThisShot6AF ? ETrainingShotOutcome6P::Post
+                : Outcome;
+            ResolveShotAttempt6N(FinalOutcome6AF);
             return;
         }
     }
@@ -509,13 +560,29 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
         if (FMath::Abs(PreviousBallLocal6M.Y) <= HalfWidth + BallRadius &&
             FMath::Abs(Current.Y) > HalfWidth + BallRadius)
         {
-            ShotEndDetail6AE = TEXT("salio por linea lateral");
-            ResolveShotAttempt6N(ETrainingShotOutcome6P::Wide);
+            ShotEndDetail6AE = bKeeperTouchedThisShot6AF
+                ? TEXT("desvio del arquero hacia linea lateral")
+                : bCrossbarTouchedThisShot6AF ? TEXT("rebote de travesano hacia linea lateral")
+                : bPostTouchedThisShot6AF ? TEXT("rebote de poste hacia linea lateral")
+                : TEXT("salio por linea lateral");
+            ResolveShotAttempt6N(bKeeperTouchedThisShot6AF ? ETrainingShotOutcome6P::Saved
+                : bCrossbarTouchedThisShot6AF ? ETrainingShotOutcome6P::Crossbar
+                : bPostTouchedThisShot6AF ? ETrainingShotOutcome6P::Post
+                : ETrainingShotOutcome6P::Wide);
             return;
         }
     }
     PreviousBallLocal6M = Current;
     bHavePreviousBall6M = true;
+    // A keeper who has securely caught the ball has made a save, provided the
+    // goal-line crossing check above has had priority. Do not wait 15 seconds.
+    if (bGoalkeeperShotLesson6T && bShotInFlight6M &&
+        IsValid(TrainingGoalkeeper6T) && TrainingGoalkeeper6T->IsAIPossessingBall())
+    {
+        ShotEndDetail6AE = TEXT("pelota controlada por el arquero");
+        ResolveShotAttempt6N(ETrainingShotOutcome6P::Saved);
+        return;
+    }
     // Allow time for the character to run up to the ball and play the kick.
     // After ball movement, a settled ball can terminate a missed attempt early.
     if (SinceRelease > 15.f ||
@@ -537,8 +604,19 @@ void ASoccerTrainingMovementGameMode6B::TickChargedShot6M(float DeltaSeconds)
             BallVelocity.Size(), *Current.ToCompactString(),
             IsValid(TrainingGoalkeeper6T) && TrainingGoalkeeper6T->IsAIPossessingBall()
                 ? TEXT("YES") : TEXT("NO"));
-        ResolveShotAttempt6N(bBarrierContactThisShot6P
-            ? ETrainingShotOutcome6P::Barrier : ETrainingShotOutcome6P::Unresolved);
+        const ETrainingShotOutcome6P FinalOutcome6AF = bKeeperTouchedThisShot6AF
+            ? ETrainingShotOutcome6P::Saved
+            : bCrossbarTouchedThisShot6AF ? ETrainingShotOutcome6P::Crossbar
+            : bPostTouchedThisShot6AF ? ETrainingShotOutcome6P::Post
+            : bBarrierContactThisShot6P ? ETrainingShotOutcome6P::Barrier
+            : ETrainingShotOutcome6P::Unresolved;
+        if (bKeeperTouchedThisShot6AF)
+            ShotEndDetail6AE = TEXT("contacto del arquero, sin gol tras seguimiento");
+        else if (bCrossbarTouchedThisShot6AF)
+            ShotEndDetail6AE = TEXT("rebote confirmado de travesano sin gol");
+        else if (bPostTouchedThisShot6AF)
+            ShotEndDetail6AE = TEXT("rebote confirmado de poste sin gol");
+        ResolveShotAttempt6N(FinalOutcome6AF);
     }
 }
 
@@ -681,6 +759,10 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     ShotCharge6M = 0.f;
     bBarrierContactThisShot6P = false;
     ShotEndDetail6AE.Empty();
+    bKeeperTouchedThisShot6AF = false;
+    KeeperTouchTime6AF = -1.f;
+    bPostTouchedThisShot6AF = false;
+    bCrossbarTouchedThisShot6AF = false;
     bKeeperSaveTriggered6T = false;
     bKeeperMontageStarted6X = false;
     bKeeperSelectorLogged6X = false;
@@ -907,6 +989,8 @@ FString ASoccerTrainingMovementGameMode6B::ShotOutcomeLabel6P(ETrainingShotOutco
     {
     case ETrainingShotOutcome6P::Goal: return TEXT("GOL");
     case ETrainingShotOutcome6P::Saved: return TEXT("ATAJADA");
+    case ETrainingShotOutcome6P::Post: return TEXT("POSTE SIN GOL");
+    case ETrainingShotOutcome6P::Crossbar: return TEXT("TRAVESANO SIN GOL");
     case ETrainingShotOutcome6P::Wide: return TEXT("DESVIADO");
     case ETrainingShotOutcome6P::OverBar: return TEXT("SOBRE EL TRAVESANO");
     case ETrainingShotOutcome6P::Barrier: return TEXT("BARRERA");
@@ -925,17 +1009,22 @@ FString ASoccerTrainingMovementGameMode6B::GetLastShotFeedback6P() const
     {
         Message += TEXT(" (toco la barrera)");
     }
+    if (ShotGoalsAfterKeeperTouch6AF.IsValidIndex(Index) && ShotGoalsAfterKeeperTouch6AF[Index])
+        Message += TEXT(" (toco el arquero y entro)");
     return Message;
 }
 
 FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
 {
     int32 Wide = 0, Over = 0, Blocked = 0, Saved = 0, Unresolved = 0, BarrierTouches = 0;
+    int32 Posts6AF = 0, Crossbars6AF = 0, GoalsWithKeeperTouch6AF = 0, KeeperTouches6AF = 0;
     for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
     {
         switch (ShotOutcomes6P[Index])
         {
         case ETrainingShotOutcome6P::Saved: ++Saved; break;
+        case ETrainingShotOutcome6P::Post: ++Posts6AF; break;
+        case ETrainingShotOutcome6P::Crossbar: ++Crossbars6AF; break;
         case ETrainingShotOutcome6P::Wide: ++Wide; break;
         case ETrainingShotOutcome6P::OverBar: ++Over; break;
         case ETrainingShotOutcome6P::Barrier: ++Blocked; break;
@@ -944,6 +1033,10 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
         }
         if (ShotBarrierContacts6P.IsValidIndex(Index) && ShotBarrierContacts6P[Index])
             ++BarrierTouches;
+        if (ShotGoalkeeperTouches6AF.IsValidIndex(Index) && ShotGoalkeeperTouches6AF[Index])
+            ++KeeperTouches6AF;
+        if (ShotGoalsAfterKeeperTouch6AF.IsValidIndex(Index) && ShotGoalsAfterKeeperTouch6AF[Index])
+            ++GoalsWithKeeperTouch6AF;
     }
 
     FString Report;
@@ -977,6 +1070,13 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
             Wide, Over, Saved, Blocked, Unresolved, BarrierTouches);
     }
 
+    if (bGoalkeeperShotLesson6T)
+    {
+        Report += FString::Printf(
+            TEXT("Goles tras toque del arquero: %d (incluidos en goles)\n"
+                 "Contactos del arquero: %d  |  Postes sin gol: %d  |  Travesanos sin gol: %d\n"),
+            GoalsWithKeeperTouch6AF, KeeperTouches6AF, Posts6AF, Crossbars6AF);
+    }
     Report += TEXT("\nDetalle por intento:\n");
     for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
     {
@@ -1016,6 +1116,18 @@ void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(ETrainingShotOutcom
     const FString Reason6AE = ShotEndDetail6AE.IsEmpty()
         ? TEXT("resultado detectado sin detalle adicional") : ShotEndDetail6AE;
     ShotEndDetails6AE.Add(Reason6AE);
+    ShotGoalkeeperTouches6AF.Add(bKeeperTouchedThisShot6AF);
+    ShotGoalsAfterKeeperTouch6AF.Add(bGoal && bKeeperTouchedThisShot6AF);
+    if (bGoalkeeperShotLesson6T)
+    {
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AF] Attempt=%d outcome=%s keeperTouch=%s goalAfterKeeperTouch=%s post=%s crossbar=%s reason=%s"),
+            ShotsCompleted6N + 1, *ShotOutcomeLabel6P(Outcome),
+            bKeeperTouchedThisShot6AF ? TEXT("YES") : TEXT("NO"),
+            bGoal && bKeeperTouchedThisShot6AF ? TEXT("YES") : TEXT("NO"),
+            bPostTouchedThisShot6AF ? TEXT("YES") : TEXT("NO"),
+            bCrossbarTouchedThisShot6AF ? TEXT("YES") : TEXT("NO"), *Reason6AE);
+    }
     if (bGoalkeeperShotLesson6T)
     {
         UE_LOG(LogTemp, Display, TEXT("[Training6AE] Attempt=%d reason=%s outcome=%s"),
@@ -1086,6 +1198,18 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     ShotCharges6P.Empty();
     ShotBarrierContacts6P.Empty();
     ShotEndDetails6AE.Empty();
+    ShotGoalkeeperTouches6AF.Empty();
+    ShotGoalsAfterKeeperTouch6AF.Empty();
+    bTrackFrameImpact6AF = bGoalkeeperShotLesson6T;
+    if (bTrackFrameImpact6AF && IsValid(PracticeBall6B))
+    {
+        if (UPrimitiveComponent* BallBody6AF = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent()))
+        {
+            BallBody6AF->OnComponentHit.RemoveDynamic(this, &ASoccerTrainingMovementGameMode6B::OnPracticeBallHit6AF);
+            BallBody6AF->SetNotifyRigidBodyCollision(true);
+            BallBody6AF->OnComponentHit.AddDynamic(this, &ASoccerTrainingMovementGameMode6B::OnPracticeBallHit6AF);
+        }
+    }
     ShotEndDetail6AE.Empty();
     bBarrierContactThisShot6P = false;
     bBetweenShotAttempts6N = false;
