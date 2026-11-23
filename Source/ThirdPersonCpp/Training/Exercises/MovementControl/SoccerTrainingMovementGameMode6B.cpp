@@ -909,9 +909,39 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
         if (ShotBarrierContacts6P.IsValidIndex(Index) && ShotBarrierContacts6P[Index])
             ++BarrierTouches;
     }
-    FString Report = FString::Printf(
-        TEXT("Desviados: %d  |  Sobre travesaño: %d\nAtajadas: %d  |  Barrera: %d  |  Sin resolución: %d  |  Contactos barrera: %d\n"),
-        Wide, Over, Saved, Blocked, Unresolved, BarrierTouches);
+
+    FString Report;
+    if (bGoalkeeperShotLesson6T)
+    {
+        // 6AD: use only confirmed goal-line crossings and confirmed animated
+        // contacts. Do not infer a save from a ball that stopped or a missed
+        // goal-line crossing; those outcomes stay unresolved.
+        const int32 OnTarget6AD = GoalsScored6N + Saved;
+        const float Accuracy6AD = 100.f * static_cast<float>(OnTarget6AD) /
+            FMath::Max(1, ShotOutcomes6P.Num());
+        const float Conversion6AD = 100.f * static_cast<float>(GoalsScored6N) /
+            FMath::Max(1, OnTarget6AD);
+        const float KeeperSavePct6AD = 100.f * static_cast<float>(Saved) /
+            FMath::Max(1, OnTarget6AD);
+        Report = FString::Printf(
+            TEXT("\nREMATES CONTRA ARQUERO\n"
+                 "Al arco: %d / %d (%.0f%%)  |  Goles: %d\n"
+                 "Atajadas confirmadas: %d  |  Efectividad ante el arquero: %.0f%%\n"
+                 "Porcentaje de atajadas del arquero: %.0f%%\n"
+                 "Desviados: %d  |  Sobre el travesaño: %d\n"
+                 "Barrera: %d  |  Sin resolución: %d\n"),
+            OnTarget6AD, ShotOutcomes6P.Num(), Accuracy6AD, GoalsScored6N,
+            Saved, Conversion6AD, KeeperSavePct6AD, Wide, Over, Blocked, Unresolved);
+    }
+    else
+    {
+        // Preserve the original report for the charged-shot lesson.
+        Report = FString::Printf(
+            TEXT("Desviados: %d  |  Sobre travesaño: %d\nAtajadas: %d  |  Barrera: %d  |  Sin resolución: %d  |  Contactos barrera: %d\n"),
+            Wide, Over, Saved, Blocked, Unresolved, BarrierTouches);
+    }
+
+    Report += TEXT("\nDetalle por intento:\n");
     for (int32 Index = 0; Index < ShotOutcomes6P.Num(); ++Index)
     {
         if (Index % 2 == 0 && Index > 0) Report += TEXT("\n");
@@ -919,6 +949,10 @@ FString ASoccerTrainingMovementGameMode6B::GetShotResultsReport6P() const
         const float Charge = ShotCharges6P.IsValidIndex(Index) ? ShotCharges6P[Index] * 100.f : 0.f;
         Report += FString::Printf(TEXT("%02d: %s (%.0f%%)"),
             Index + 1, *ShotOutcomeLabel6P(ShotOutcomes6P[Index]), Charge);
+    }
+    if (bGoalkeeperShotLesson6T && Unresolved > 0)
+    {
+        Report += TEXT("\n\nNota: los intentos sin resolución no se cuentan como goles ni como atajadas.");
     }
     return Report;
 }
@@ -933,11 +967,26 @@ void ASoccerTrainingMovementGameMode6B::ResolveShotAttempt6N(ETrainingShotOutcom
     ShotBarrierContacts6P.Add(bBarrierContactThisShot6P);
     ++ShotsCompleted6N;
     if (bGoal) ++GoalsScored6N;
+    if (bGoalkeeperShotLesson6T)
+    {
+        const bool bConfirmedOnTarget6AD =
+            Outcome == ETrainingShotOutcome6P::Goal || Outcome == ETrainingShotOutcome6P::Saved;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AD] Attempt=%d/10 outcome=%s onTargetConfirmed=%s savedByAnimatedContact=%s"),
+            ShotsCompleted6N, *ShotOutcomeLabel6P(Outcome),
+            bConfirmedOnTarget6AD ? TEXT("YES") : TEXT("NO"),
+            Outcome == ETrainingShotOutcome6P::Saved ? TEXT("YES") : TEXT("NO"));
+    }
     UE_LOG(LogTemp, Display, TEXT("[Training6P] Attempt %d/10: %s, charge %.0f%%, barrier contact %s"),
         ShotsCompleted6N, *ShotOutcomeLabel6P(Outcome), ShotCharge6M * 100.f,
         bBarrierContactThisShot6P ? TEXT("YES") : TEXT("NO"));
     if (ShotsCompleted6N >= 10)
     {
+        if (bGoalkeeperShotLesson6T)
+        {
+            UE_LOG(LogTemp, Display, TEXT("[Training6AD] Final report:\n%s"),
+                *GetShotResultsReport6P());
+        }
         ClearPracticeBarriers6O();
         bComplete6B = true;
         if (IsValid(Trainee6B)) Trainee6B->ReleaseBallForMatchRestart(false);
