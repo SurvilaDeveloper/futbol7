@@ -21,6 +21,7 @@
 #include "Engine/EngineTypes.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/Controller.h"
+#include "AIController.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "DrawDebugHelpers.h"
 #include "UObject/ConstructorHelpers.h"
@@ -99,10 +100,12 @@ void ASoccerTrainingMovementGameMode6B::StartPlay()
     const FString Lesson = UGameplayStatics::ParseOption(OptionsString, TEXT("TrainingLesson"));
     bAutoPassLesson6J = Lesson.Equals(TEXT("AutoPass"), ESearchCase::IgnoreCase);
     bZoneFinishLesson6AH = Lesson.Equals(TEXT("ZoneFinish"), ESearchCase::IgnoreCase);
+    bAvoidTackleLesson6AK = Lesson.Equals(TEXT("AvoidTackle"), ESearchCase::IgnoreCase);
+    bWinTackleLesson6AK = Lesson.Equals(TEXT("WinTackle"), ESearchCase::IgnoreCase);
     bGoalkeeperShotLesson6T = bZoneFinishLesson6AH || Lesson.Equals(TEXT("GoalkeeperShot"), ESearchCase::IgnoreCase);
     bChargedShotLesson6M = bGoalkeeperShotLesson6T || Lesson.Equals(TEXT("ChargedShot"), ESearchCase::IgnoreCase);
     UE_LOG(LogTemp, Display, TEXT("[Training6J] Lesson: %s"),
-        bZoneFinishLesson6AH ? TEXT("ZoneFinish") : bGoalkeeperShotLesson6T ? TEXT("GoalkeeperShot") : bChargedShotLesson6M ? TEXT("ChargedShot") : bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
+        bAvoidTackleLesson6AK ? TEXT("AvoidTackle") : bWinTackleLesson6AK ? TEXT("WinTackle") : bZoneFinishLesson6AH ? TEXT("ZoneFinish") : bGoalkeeperShotLesson6T ? TEXT("GoalkeeperShot") : bChargedShotLesson6M ? TEXT("ChargedShot") : bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
     // 6L: ASoccerField can live in a shared, Always Loaded streaming level.
     // Never create the temporary cube when the real field is present.
     if (FindSharedField6L())
@@ -149,6 +152,7 @@ void ASoccerTrainingMovementGameMode6B::StartPlay()
         }
     }
     if (bGoalkeeperShotLesson6T) FindTrainingGoalkeeper6T();
+    if (IsTackleLesson6AK()) EnsureTackleOpponent6AK();
     UE_LOG(LogTemp, Display, TEXT("[Training6B] Movement lesson started; map owns lighting."));
 }
 
@@ -171,6 +175,9 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     }
     if (!IsExerciseRunning6H() || !IsValid(PracticeBall6B) || !IsValid(Trainee6B)) return;
     ElapsedTime6B += DeltaSeconds;
+    // 6AK: scenario preparation only. Tackle AI and scoring arrive in 6AL/6AM.
+    // Avoid running the four-checkpoint lesson or the shooting flow here.
+    if (IsTackleLesson6AK()) return;
     // 6AJ: a zone is reached when the BALL (including its physical radius)
     // enters the target, not when the player crosses the marker.
     if (bZoneFinishLesson6AH && !bBetweenShotAttempts6N && !bShotReleased6M &&
@@ -1623,6 +1630,11 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     bHadControl6B = false;
     ClearPracticeBarriers6O();
     if (bChargedShotLesson6M) PrepareShotAttempt6N();
+    if (IsTackleLesson6AK())
+    {
+        EnsureTackleOpponent6AK();
+        PositionTackleScenario6AK();
+    }
     UE_LOG(LogTemp, Display, TEXT("[Training6H] Exercise started, timer reset."));
 }
 
@@ -1697,6 +1709,71 @@ FString ASoccerTrainingMovementGameMode6B::GetBallDiagnostics6E() const
         BallVelocity.Size2D(), ForwardDistance, *ControlValue);
 }
 
+void ASoccerTrainingMovementGameMode6B::EnsureTackleOpponent6AK()
+{
+    if (!IsTackleLesson6AK() || IsValid(TackleOpponent6AK) || !GetWorld()) return;
+    if (!TackleOpponentClass6AK)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Training6AK] No TackleOpponentClass6AK. Select a field-player Blueprint in BP_SoccerTrainingMovementGameMode."));
+        return;
+    }
+    const ASoccerField* Field = FindSharedField6L();
+    if (!Field) return;
+    const FVector StartLocal(-0.06f * SoccerFieldDimensions::HalfPitchLengthCm,
+        bAvoidTackleLesson6AK ? 0.f : 220.f, 120.f);
+    FActorSpawnParameters Params;
+    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+    TackleOpponent6AK = GetWorld()->SpawnActor<ASoccerAICharacter>(
+        TackleOpponentClass6AK.Get(), Field->PitchLocalToWorld(StartLocal),
+        Field->GetActorRotation(), Params);
+    if (IsValid(TackleOpponent6AK))
+    {
+        // A match controller expects SoccerMatchManager. Do not run that AI here.
+        if (AController* AI = TackleOpponent6AK->GetController())
+        {
+            if (AAIController* AIC = Cast<AAIController>(AI)) AIC->StopMovement();
+            AI->SetActorTickEnabled(false);
+        }
+        TackleOpponent6AK->SetAIChasingBall(false);
+        UE_LOG(LogTemp, Display, TEXT("[Training6AK] Opponent spawned: %s class=%s"),
+            *GetNameSafe(TackleOpponent6AK), *GetNameSafe(TackleOpponentClass6AK.Get()));
+    }
+}
+
+void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
+{
+    if (!IsTackleLesson6AK()) return;
+    ASoccerField* Field = FindSharedField6L();
+    if (!Field || !IsValid(Trainee6B) || !IsValid(PracticeBall6B)) return;
+    const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
+    const FVector PlayerLocal(-0.30f * HalfLength, 0.f, 130.f);
+    const FVector RivalLocal(-0.06f * HalfLength,
+        bAvoidTackleLesson6AK ? 0.f : 220.f, 130.f);
+    const FVector BallLocal = bAvoidTackleLesson6AK
+        ? PlayerLocal + FVector(125.f, 0.f, -60.f)
+        : RivalLocal + FVector(115.f, 0.f, -60.f);
+    Trainee6B->SetActorLocation(Field->PitchLocalToWorld(PlayerLocal), false,
+        nullptr, ETeleportType::TeleportPhysics);
+    if (IsValid(TackleOpponent6AK))
+        TackleOpponent6AK->SetActorLocation(Field->PitchLocalToWorld(RivalLocal), false,
+            nullptr, ETeleportType::TeleportPhysics);
+    UPrimitiveComponent* BallBody = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent());
+    if (BallBody)
+    {
+        BallBody->SetSimulatePhysics(false);
+        BallBody->SetPhysicsLinearVelocity(FVector::ZeroVector);
+        BallBody->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+    }
+    PracticeBall6B->SetActorLocation(Field->PitchLocalToWorld(BallLocal), false,
+        nullptr, ETeleportType::TeleportPhysics);
+    RestorePracticeBallGroundCollision6AB3(PracticeBall6B);
+    if (BallBody) BallBody->SetSimulatePhysics(true);
+    UE_LOG(LogTemp, Display, TEXT("[Training6AK] Scenario=%s player=%s rival=%s ball=%s"),
+        bAvoidTackleLesson6AK ? TEXT("AvoidTackle") : TEXT("WinTackle"),
+        *Trainee6B->GetActorLocation().ToString(),
+        *GetNameSafe(TackleOpponent6AK), *PracticeBall6B->GetActorLocation().ToString());
+}
+
 ASoccerField* ASoccerTrainingMovementGameMode6B::FindSharedField6L() const
 {
     UWorld* World = GetWorld();
@@ -1742,6 +1819,15 @@ FVector ASoccerTrainingMovementGameMode6B::GetCurrentCheckpoint6B() const
 
 FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
 {
+    if (IsTackleLesson6AK())
+    {
+        if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
+        return IsValid(TackleOpponent6AK)
+            ? (bAvoidTackleLesson6AK
+                ? TEXT("6AK: escenario de esquivar tackles listo. La IA defensiva se integra en 6AL.")
+                : TEXT("6AK: escenario de recuperar pelota listo. La conducción rival se integra en 6AM."))
+            : TEXT("6AK: configura Tackle Opponent Class en el GameMode Blueprint.");
+    }
     if (bChargedShotLesson6M)
     {
         if (bZoneFinishLesson6AH)
@@ -1795,7 +1881,7 @@ void ASoccerTrainingMovementGameMode6B::DrawCheckpoint6B() const
 {
     UWorld* World = GetWorld();
     if (!World) return;
-    if (bChargedShotLesson6M) return; // The real goal is the shooting target.
+    if (bChargedShotLesson6M || IsTackleLesson6AK()) return; // No checkpoints for tackle setup.
     const FVector Center = GetCurrentCheckpoint6B();
     const FColor Yellow = FColor::Yellow;
     DrawDebugCircle(World, Center, CheckpointRadius6B, 48, Yellow, false, 0.f, 0, 5.f,
@@ -1839,7 +1925,9 @@ void ASoccerTrainingMovementGameMode6B::EnsurePlayerStart6B()
             World->SpawnActor<APlayerStart>(Field->PitchLocalToWorld(SpawnLocal), Field->GetActorRotation());
             return;
         }
-        const FVector LocalStart(-0.78f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f);
+        const FVector LocalStart = IsTackleLesson6AK()
+            ? FVector(-0.30f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f)
+            : FVector(-0.78f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f);
         World->SpawnActor<APlayerStart>(Field->PitchLocalToWorld(LocalStart), Field->GetActorRotation());
         return;
     }
@@ -1867,7 +1955,9 @@ void ASoccerTrainingMovementGameMode6B::EnsureBall6B()
     FRotator BallRotation = FRotator::ZeroRotator;
     if (ASoccerField* Field = FindSharedField6L())
     {
-        const FVector LocalBall = bZoneFinishLesson6AH ? FVector(260.f, 0.f, 70.f)
+        const FVector LocalBall = IsTackleLesson6AK()
+            ? FVector(-0.18f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 70.f)
+            : bZoneFinishLesson6AH ? FVector(260.f, 0.f, 70.f)
             : bChargedShotLesson6M ? GetShotBallLocal6N(0)
             : FVector(-0.63f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 70.f);
         BallPosition = Field->PitchLocalToWorld(LocalBall);

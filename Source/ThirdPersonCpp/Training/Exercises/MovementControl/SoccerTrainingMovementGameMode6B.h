@@ -37,6 +37,9 @@ public:
     bool IsChargedShotLesson6M() const { return bChargedShotLesson6M; }
     bool IsGoalkeeperShotLesson6T() const { return bGoalkeeperShotLesson6T; }
     bool IsZoneFinishLesson6AH() const { return bZoneFinishLesson6AH; }
+    bool IsAvoidTackleLesson6AK() const { return bAvoidTackleLesson6AK; }
+    bool IsWinTackleLesson6AK() const { return bWinTackleLesson6AK; }
+    bool IsTackleLesson6AK() const { return bAvoidTackleLesson6AK || bWinTackleLesson6AK; }
     bool IsBallInsideShotZone6AH() const;
     bool CanStartZoneShot6AH() const;
     void ReportInvalidZoneShot6AH();
@@ -108,6 +111,15 @@ private:
     bool bChargedShotLesson6M = false;
     bool bGoalkeeperShotLesson6T = false;
     bool bZoneFinishLesson6AH = false;
+    bool bAvoidTackleLesson6AK = false;
+    bool bWinTackleLesson6AK = false;
+    // 6AK only: spawn a training opponent from an existing footballer BP.
+    // Do not enable the regular match AI in the standalone training world.
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AK")
+    TSubclassOf<ASoccerAICharacter> TackleOpponentClass6AK;
+    UPROPERTY(Transient) ASoccerAICharacter* TackleOpponent6AK = nullptr;
+    void EnsureTackleOpponent6AK();
+    void PositionTackleScenario6AK();
     // 6AI only: a goalkeeper can rush out BEFORE a zone shot is released.
     // Do not enable in the legacy 6AG goalkeeper-shot exercise.
     bool bKeeperInterceptionThisAttempt6AI = false;

@@ -124,7 +124,7 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
     const bool bShot = Mode && Mode->IsChargedShotLesson6M();
-    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("ENTRENAMIENTO | CONDUCCIÓN Y DEFINICIÓN") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("ENTRENAMIENTO | REMATES CONTRA ARQUERO") : bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
+    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsAvoidTackleLesson6AK() ? TEXT("ENTRENAMIENTO | ESQUIVAR TACKLES") : Mode && Mode->IsWinTackleLesson6AK() ? TEXT("ENTRENAMIENTO | RECUPERAR CON TACKLE") : Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("ENTRENAMIENTO | CONDUCCIÓN Y DEFINICIÓN") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("ENTRENAMIENTO | REMATES CONTRA ARQUERO") : bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
         ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
     if (Body6H)
@@ -133,13 +133,19 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         BodyFont6P.Size = 19;
         Body6H->SetFont(BodyFont6P);
     }
-    if (Body6H) Body6H->SetText(FText::FromString((Mode && Mode->IsZoneFinishLesson6AH())
+    if (Body6H) Body6H->SetText(FText::FromString((Mode && Mode->IsTackleLesson6AK())
+        ? TEXT("Etapa 6AK: preparacion del escenario defensivo. El humano y un rival aparecen en la cancha compartida.\n\n"
+               "ESQUIVAR: practica acercarte con la pelota y preparar el salto.\n"
+               "RECUPERAR: observa la posicion del rival para una futura entrada deslizante.\n\n"
+               "En esta etapa el bot todavia NO ejecuta tackles ni conduccion automatica. "
+               "Estos comportamientos y la evaluacion de diez intentos se incorporaran en 6AL-6AN. ")
+        : (Mode && Mode->IsZoneFinishLesson6AH())
         ? TEXT("Diez jugadas de conducción y definición. Empezás en el centro de la cancha, con la pelota unos metros adelante.\n\n"
                "Con clic izquierdo podés buscar la pelota y hacer autopases. También podés conducirla con I, J, K y L. "
                "Llevá la pelota hasta el círculo amarillo de cada intento: cuando quede COMPLETAMENTE dentro se pondrá verde.\n\n"
                "Podés apuntar y mantener el botón derecho para cargar fuerza desde cualquier lugar, incluso mientras la pelota se mueve. "
                "Al golpear, la pelota debe SALIR desde dentro del círculo: un remate desde fuera no vale, aunque entre al arco. "
-               "Si pateás desde fuera, repetís el mismo intento.\n\n"
+               "Si pateás desde fuera, la jugada continúa pero el remate no cuenta como válido.\n\n"
                "El arquero puede salir a interceptar la pelota si queda suelta cerca del arco. "
                "Las diez zonas cambian de lugar y al terminar verás las estadísticas.")
         : (Mode && Mode->IsGoalkeeperShotLesson6T())

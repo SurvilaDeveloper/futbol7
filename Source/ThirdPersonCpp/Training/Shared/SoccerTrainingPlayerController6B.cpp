@@ -221,7 +221,7 @@ void ASoccerTrainingPlayerController6B::RestartTraining6B()
             const bool bShot = TrainingMode && TrainingMode->IsChargedShotLesson6M();
             UGameplayStatics::OpenLevel(this,
                 FName(*(Folder + TEXT("/") + ShortName)), true,
-                (TrainingMode && TrainingMode->IsZoneFinishLesson6AH()) ? TEXT("TrainingLesson=ZoneFinish") : (TrainingMode && TrainingMode->IsGoalkeeperShotLesson6T()) ? TEXT("TrainingLesson=GoalkeeperShot") : bShot ? TEXT("TrainingLesson=ChargedShot") : bAutoPass ? TEXT("TrainingLesson=AutoPass") : TEXT(""));
+                (TrainingMode && TrainingMode->IsAvoidTackleLesson6AK()) ? TEXT("TrainingLesson=AvoidTackle") : (TrainingMode && TrainingMode->IsWinTackleLesson6AK()) ? TEXT("TrainingLesson=WinTackle") : (TrainingMode && TrainingMode->IsZoneFinishLesson6AH()) ? TEXT("TrainingLesson=ZoneFinish") : (TrainingMode && TrainingMode->IsGoalkeeperShotLesson6T()) ? TEXT("TrainingLesson=GoalkeeperShot") : bShot ? TEXT("TrainingLesson=ChargedShot") : bAutoPass ? TEXT("TrainingLesson=AutoPass") : TEXT(""));
         }
     }
 }

@@ -37,6 +37,8 @@ private:
     UFUNCTION() void OpenChargedShot6M();
     UFUNCTION() void OpenGoalkeeperShots6T();
     UFUNCTION() void OpenZoneFinish6AH();
+    UFUNCTION() void OpenAvoidTackle6AK();
+    UFUNCTION() void OpenWinTackle6AK();
     UFUNCTION() void Back6B();
 
     UPROPERTY(Transient) UButton* MovementButton6B = nullptr;
@@ -44,6 +46,8 @@ private:
     UPROPERTY(Transient) UButton* ChargedShotButton6M = nullptr;
     UPROPERTY(Transient) UButton* GoalkeeperShotButton6T = nullptr;
     UPROPERTY(Transient) UButton* ZoneFinishButton6AH = nullptr;
+    UPROPERTY(Transient) UButton* AvoidTackleButton6AK = nullptr;
+    UPROPERTY(Transient) UButton* WinTackleButton6AK = nullptr;
     UPROPERTY(Transient) UButton* BackButton6B = nullptr;
     double LastAnalogTime6B = -1.0;
 };
