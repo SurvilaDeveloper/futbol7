@@ -16,6 +16,8 @@
 #include "Engine/World.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimInstance.h"
 #include "Engine/EngineTypes.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/Controller.h"
@@ -528,6 +530,63 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
         return;
     }
 
+    // 6AC: finish the PREVIOUS goalkeeper save before touching the practice
+    // ball. Finishing a montage/contact test after a ball teleport can change
+    // the ball's possession/collision state again. This is training-only;
+    // regular match controllers and their Tick are unchanged.
+    if (bGoalkeeperShotLesson6T && IsValid(TrainingGoalkeeper6T))
+    {
+        if (ASoccerAIController* KeeperController =
+            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController()))
+        {
+            KeeperController->EndTrainingGoalkeeperPlanner6AB(TrainingGoalkeeper6T);
+            KeeperController->ResetTrainingGoalkeeperSave6Z(TrainingGoalkeeper6T);
+            KeeperController->StopMovement();
+        }
+        // 6AC.1: a successful catch may leave logical possession active. The
+        // regular match controller releases this during its normal AI cycle,
+        // but the training controller deliberately has its Tick disabled.
+        const bool bHadPossession6AC1 = TrainingGoalkeeper6T->IsAIPossessingBall();
+        if (bHadPossession6AC1)
+        {
+            TrainingGoalkeeper6T->ReleaseAIBall(false);
+        }
+
+        // Stop the authored save montage while the action enum still identifies
+        // it. A timed action can already have cleared the enum although its
+        // montage remains in the animation slot, leaving the keeper sliding in
+        // a catch pose instead of returning to locomotion.
+        const bool bWasActionActive6AC1 = TrainingGoalkeeper6T->IsGoalkeeperActionActive();
+        TrainingGoalkeeper6T->StopGoalkeeperActionMontage(0.10f);
+        if (USkeletalMeshComponent* KeeperMesh6AC1 = TrainingGoalkeeper6T->GetMesh())
+        {
+            if (UAnimInstance* KeeperAnim6AC1 = KeeperMesh6AC1->GetAnimInstance())
+            {
+                // Training reset only: clear a leftover action-slot montage
+                // even if the timed goalkeeper action has already ended.
+                if (UAnimMontage* LeftoverMontage6AC1 = KeeperAnim6AC1->GetCurrentActiveMontage())
+                {
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[Training6AC1] Stopping leftover keeper montage=%s attempt=%d"),
+                        *GetNameSafe(LeftoverMontage6AC1), ShotAttemptIndex6N + 1);
+                    KeeperAnim6AC1->Montage_Stop(0.10f);
+                }
+            }
+        }
+        TrainingGoalkeeper6T->ClearScriptedLocomotionVelocity();
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AC1] Reset keeper attempt=%d possessionBefore=%s actionBefore=%s possessionAfter=%s"),
+            ShotAttemptIndex6N + 1,
+            bHadPossession6AC1 ? TEXT("YES") : TEXT("NO"),
+            bWasActionActive6AC1 ? TEXT("YES") : TEXT("NO"),
+            TrainingGoalkeeper6T->IsAIPossessingBall() ? TEXT("YES") : TEXT("NO"));
+        bHasIssuedKeeperTarget6AA2 = false;
+        LastKeeperMoveRequestAt6AA2 = -100.f;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AC] Previous goalkeeper action cleared before ball reset; attempt=%d"),
+            ShotAttemptIndex6N + 1);
+    }
+
     // Cancel delayed kick/approach actions before repositioning, to avoid a
     // previous attempt striking a freshly reset ball.
     Trainee6B->ReleaseBallForMatchRestart(false);
@@ -592,31 +651,38 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
     bKeeperHasPendingPlan6Y = false;
     KeeperPlannedDelay6Y = 0.f;
     KeeperNextPlanLogAt6Y = 0.f;
+    // 6AC: arm the NEXT shot only after the ball's final collision state
+    // has been restored. Do not clear a montage or finish a previous save here.
     if (bGoalkeeperShotLesson6T && IsValid(TrainingGoalkeeper6T))
     {
         if (ASoccerAIController* KeeperController =
             Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController()))
         {
-            KeeperController->EndTrainingGoalkeeperPlanner6AB(TrainingGoalkeeper6T);
-            KeeperController->ResetTrainingGoalkeeperSave6Z(TrainingGoalkeeper6T);
-            if (ASoccerField* TrainingField = FindSharedField6L())
-            {
-                const FVector GoalCenter = TrainingField->GetGoalCenterWorldLocation(+1.f);
-                const FVector Outfield = TrainingField->GetPitchLengthWorldDirection() * -1.f;
-                KeeperController->BeginTrainingGoalkeeperPlanner6AB(
-                    TrainingGoalkeeper6T, GoalCenter, Outfield);
-            }
+            const FVector GoalCenter = Field->GetGoalCenterWorldLocation(+1.f);
+            const FVector Outfield = Field->GetPitchLengthWorldDirection() * -1.f;
+            KeeperController->BeginTrainingGoalkeeperPlanner6AB(
+                TrainingGoalkeeper6T, GoalCenter, Outfield);
         }
-        TrainingGoalkeeper6T->ClearGoalkeeperAction();
-        TrainingGoalkeeper6T->StopGoalkeeperActionMontage(0.05f);
-        // 6AA.2: clear residual scripted velocity and the previous path so
-        // the keeper can accept a fresh movement order for the next shot.
-        TrainingGoalkeeper6T->ClearScriptedLocomotionVelocity();
-        if (ASoccerAIController* MovementController =
-            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController()))
-            MovementController->StopMovement();
-        bHasIssuedKeeperTarget6AA2 = false;
-        LastKeeperMoveRequestAt6AA2 = -100.f;
+        // Preserve 6AB.3's proven collision restoration. The first 1.25 s
+        // and the entire pre-kick waiting period remain monitored.
+        if (RestorePracticeBallGroundCollision6AB3(PracticeBall6B))
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Training6AC] Practice ball collision restored after planner initialization; attempt=%d"),
+                ShotAttemptIndex6N + 1);
+        }
+    }
+    if (bGoalkeeperShotLesson6T)
+    {
+        UPrimitiveComponent* ReadyBody6AC = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent());
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AC] Ready attempt=%d collision=%d actorCollision=%s physics=%s keeperAction=%s"),
+            ShotAttemptIndex6N + 1,
+            ReadyBody6AC ? static_cast<int32>(ReadyBody6AC->GetCollisionEnabled()) : -1,
+            PracticeBall6B->GetActorEnableCollision() ? TEXT("YES") : TEXT("NO"),
+            ReadyBody6AC && ReadyBody6AC->IsSimulatingPhysics() ? TEXT("YES") : TEXT("NO"),
+            IsValid(TrainingGoalkeeper6T) && TrainingGoalkeeper6T->IsGoalkeeperActionActive()
+                ? TEXT("ACTIVE") : TEXT("CLEARED"));
     }
     UE_LOG(LogTemp, Display, TEXT("[Training6N] Ready: attempt %d/10"), ShotAttemptIndex6N + 1);
 }
