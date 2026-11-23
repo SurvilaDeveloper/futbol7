@@ -1727,6 +1727,14 @@ void ASoccerAIController::UpdateAIMovementForMove(
 	);
 }
 
+void ASoccerAIController::MoveTrainingGoalkeeperTo6AA(const FVector& WorldTarget)
+{
+    if (WorldTarget.ContainsNaN() || !GetPawn()) return;
+    MoveToLocationWithAIMovement(
+        ESoccerAIOrder::MaintainTeamShape, WorldTarget,
+        FMath::Max(1.f, GoalkeeperPositioningAcceptanceRadius), true);
+}
+
 void ASoccerAIController::MoveToLocationWithAIMovement(
 	ESoccerAIOrder CurrentOrder,
 	const FVector& MoveLocation,

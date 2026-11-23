@@ -105,6 +105,11 @@ private:
     TSoftObjectPtr<USoccerPlayerProfile> TrainingGoalkeeperProfile6Z3;
 
     UPROPERTY(Transient) ASoccerAICharacter* TrainingGoalkeeper6T = nullptr;
+    float LastPositionDebug6AA = -100.f;
+    // 6AA.2: avoid restarting path following every frame.
+    FVector LastIssuedKeeperTarget6AA2 = FVector::ZeroVector;
+    float LastKeeperMoveRequestAt6AA2 = -100.f;
+    bool bHasIssuedKeeperTarget6AA2 = false;
     // 6V: training-only goalkeeper positioning. These mirror the geometric
     // principles of SoccerMatchManager, not its runtime Blueprint overrides.
     // Tune them here if the match uses different effective values.

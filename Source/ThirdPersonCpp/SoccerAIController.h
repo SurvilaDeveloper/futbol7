@@ -230,6 +230,9 @@ public:
         float& OutStartDelay,
         bool& bOutEmergency) const;
 
+    // 6AA: match movement command exposed for a training goalkeeper only.
+    void MoveTrainingGoalkeeperTo6AA(const FVector& WorldTarget);
+
 	bool IsGoalkeeperActivelyClaimingBall() const;
 
 	/* Isolates one AI for the controlled aerial debug tester. */

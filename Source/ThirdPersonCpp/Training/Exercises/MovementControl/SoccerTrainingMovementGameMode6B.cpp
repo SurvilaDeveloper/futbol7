@@ -1,4 +1,5 @@
 #include "Training/Exercises/MovementControl/SoccerTrainingMovementGameMode6B.h"
+#include "SoccerGoalkeeperPositioningShared6AA.h"
 #include "Training/Exercises/MovementControl/SoccerTrainingMovementHUD6B.h"
 #include "Training/Shared/SoccerTrainingPlayerController6B.h"
 
@@ -20,6 +21,7 @@
 #include "DrawDebugHelpers.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
+#include "NavigationSystem.h"
 
 ASoccerTrainingMovementGameMode6B::ASoccerTrainingMovementGameMode6B()
 {
@@ -295,65 +297,80 @@ void ASoccerTrainingMovementGameMode6B::UpdateTrainingGoalkeeper6T(float DeltaSe
         return;
     }
 
-    // Training-only positioning using the same angle/depth concepts found in
-    // ASoccerMatchManager::GetGoalkeeperMoveLocation(). This does NOT invoke
-    // the match controller's full save planner.
-    const FVector Current = Field->WorldToPitchLocal(TrainingGoalkeeper6T->GetActorLocation());
-    const FVector Ball = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
-    const FVector Velocity = Field->GetActorRotation().UnrotateVector(PracticeBall6B->GetBallPhysicsVelocity());
-    const float GoalX = SoccerFieldDimensions::RightGoalLineX;
-    const float BallDepth = GoalX - Ball.X;
+    // 6AA: the exact same geometry implementation called by SoccerMatchManager.
+    const FVector GoalCenter = Field->GetGoalCenterWorldLocation(+1.f);
+    const FVector Inward = Field->GetActorRotation().RotateVector(FVector(-1.f, 0.f, 0.f));
+    const FVector Lateral = Field->GetActorRotation().RotateVector(FVector(0.f, 1.f, 0.f));
+    FSoccerGoalkeeperPositioningConfig6AA Config;
+    Config.MaximumDepth = KeeperMaxDepth6V;
+    Config.FullDepthDistance = KeeperFullDepthDistance6V;
+    Config.LateralRange = KeeperLateralRange6V;
+    Config.BallFollowAlpha = KeeperFarFollowAlpha6V;
+    Config.PostSafetyMargin = KeeperPostMargin6V;
+    Config.FullCoverageAngle = KeeperFullCoverageAngle6V;
+    Config.ResponseExponent = KeeperAngleResponseExponent6V;
+    Config.NearFollowDepth = KeeperNearFollowDepth6V;
+    Config.FarFollowDepth = KeeperFarFollowDepth6V;
+    const FVector Desired = FSoccerGoalkeeperPositioningShared6AA::Calculate(
+        GoalCenter, Inward, Lateral, KeeperHomeDepth6V,
+        TrainingGoalkeeper6T->GetActorLocation().Z, PracticeBall6B,
+        Config, true);
 
-    // Moving into the field means decreasing X for the right-hand goalkeeper.
-    const float HomeDepth = FMath::Max(0.f, KeeperHomeDepth6V);
-    const float MaxDepth = FMath::Max(HomeDepth, KeeperMaxDepth6V);
-    float Depth = HomeDepth;
-    if (BallDepth > 1.f)
+    if (ASoccerAIController* KeeperController =
+        Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController()))
     {
-        const float DistanceFactor = FMath::Clamp(BallDepth / FMath::Max(1.f, KeeperFullDepthDistance6V), 0.f, 1.f);
-        const float AngleFactor = FMath::Clamp(BallDepth / FMath::Max(1.f, FVector2D(BallDepth, Ball.Y).Size()), 0.f, 1.f);
-        Depth = FMath::Lerp(HomeDepth, MaxDepth, DistanceFactor * AngleFactor);
-    }
-
-    const float PostMargin = FMath::Clamp(KeeperPostMargin6V, 0.f, SoccerFieldDimensions::GoalHalfWidthCm - 5.f);
-    const float LateralRange = FMath::Min(FMath::Max(0.f, KeeperLateralRange6V),
-        SoccerFieldDimensions::GoalHalfWidthCm - PostMargin);
-    const float AngleDegrees = FMath::RadiansToDegrees(FMath::Atan2(FMath::Abs(Ball.Y), FMath::Max(1.f, BallDepth)));
-    const float AngleResponse = FMath::Pow(
-        FMath::Clamp(AngleDegrees / FMath::Max(1.f, KeeperFullCoverageAngle6V), 0.f, 1.f),
-        FMath::Max(0.05f, KeeperAngleResponseExponent6V));
-    const float DistanceBlend = FMath::Clamp(
-        (BallDepth - KeeperNearFollowDepth6V) /
-        FMath::Max(1.f, KeeperFarFollowDepth6V - KeeperNearFollowDepth6V), 0.f, 1.f);
-    const float FollowAlpha = FMath::Lerp(1.f, FMath::Clamp(KeeperFarFollowAlpha6V, 0.f, 1.f), DistanceBlend);
-    float TargetY = FMath::Sign(Ball.Y) * LateralRange * AngleResponse * FollowAlpha;
-
-    // Once the shot is moving toward the goal, follow its predicted crossing
-    // at the goalkeeper's depth, without changing the ball trajectory.
-    if (bShotInFlight6M && Velocity.X > KeeperPredictionMinForwardSpeed6V)
-    {
-        const float KeeperPlaneX = GoalX - Depth;
-        const float TimeToPlane = (KeeperPlaneX - Ball.X) / Velocity.X;
-        if (TimeToPlane >= 0.f && TimeToPlane <= KeeperPredictionHorizon6V)
+        // 6AA.2: a MoveTo request every frame can continuously replace the
+        // previous path. Keep it alive until the target changes appreciably,
+        // the path goes idle, or a periodic refresh is due.
+        const float Now = GetWorld()->GetTimeSeconds();
+        const float ErrorCm = FVector::Dist2D(TrainingGoalkeeper6T->GetActorLocation(), Desired);
+        const bool bTargetChanged = !bHasIssuedKeeperTarget6AA2 ||
+            FVector::Dist2D(LastIssuedKeeperTarget6AA2, Desired) > 35.f;
+        const bool bMovementIdle = KeeperController->GetMoveStatus() == EPathFollowingStatus::Idle;
+        if (ErrorCm > 30.f &&
+            (bTargetChanged || (bMovementIdle && Now - LastKeeperMoveRequestAt6AA2 >= 0.35f) ||
+             Now - LastKeeperMoveRequestAt6AA2 >= 1.0f))
         {
-            const float PredictedY = Ball.Y + Velocity.Y * TimeToPlane;
-            TargetY = FMath::Lerp(TargetY, PredictedY, KeeperTrajectoryFollowAlpha6V);
+            // Retain the shared controller movement routine and match geometry.
+            KeeperController->MoveTrainingGoalkeeperTo6AA(Desired);
+            LastIssuedKeeperTarget6AA2 = Desired;
+            LastKeeperMoveRequestAt6AA2 = Now;
+            bHasIssuedKeeperTarget6AA2 = true;
         }
     }
-    TargetY = FMath::Clamp(TargetY, -LateralRange, LateralRange);
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[Training6AA] Keeper has no SoccerAIController; cannot issue match-style movement."));
+    }
+    if (GetWorld() && GetWorld()->GetTimeSeconds() - LastPositionDebug6AA >= 1.f)
+    {
+        LastPositionDebug6AA = GetWorld()->GetTimeSeconds();
+        ASoccerAIController* DebugController =
+            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController());
+        UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
+        FNavLocation NavKeeper, NavTarget;
+        const FVector NavExtent(120.f, 120.f, 250.f);
+        const bool bKeeperOnNav = NavSys && NavSys->ProjectPointToNavigation(
+            TrainingGoalkeeper6T->GetActorLocation(), NavKeeper, NavExtent);
+        const bool bTargetOnNav = NavSys && NavSys->ProjectPointToNavigation(
+            Desired, NavTarget, NavExtent);
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AA2] Keeper=%s actual=%s target=%s errorCm=%.1f moveStatus=%d controllerTick=%s navKeeper=%s navTarget=%s"),
+            *GetNameSafe(TrainingGoalkeeper6T),
+            *TrainingGoalkeeper6T->GetActorLocation().ToCompactString(),
+            *Desired.ToCompactString(),
+            FVector::Dist2D(TrainingGoalkeeper6T->GetActorLocation(), Desired),
+            DebugController ? static_cast<int32>(DebugController->GetMoveStatus()) : -1,
+            DebugController && DebugController->IsActorTickEnabled() ? TEXT("ON") : TEXT("OFF"),
+            bKeeperOnNav ? TEXT("YES") : TEXT("NO"),
+            bTargetOnNav ? TEXT("YES") : TEXT("NO"));
+    }
+    const FVector Face = PracticeBall6B->GetActorLocation() - TrainingGoalkeeper6T->GetActorLocation();
+    const FVector FlatFace(Face.X, Face.Y, 0.f);
+    if (!FlatFace.IsNearlyZero())
+        TrainingGoalkeeper6T->SetActorRotation(FlatFace.Rotation());
 
-    const FVector Desired(GoalX - Depth, TargetY, Current.Z);
-    const FVector NewLocal(
-        FMath::FInterpConstantTo(Current.X, Desired.X, DeltaSeconds, KeeperForwardSpeed6V),
-        FMath::FInterpConstantTo(Current.Y, Desired.Y, DeltaSeconds, KeeperLateralSpeed6V),
-        Current.Z);
-    const FVector WorldDelta = Field->GetActorRotation().RotateVector(NewLocal - Current);
-    // Face the incoming shot while maintaining the same field-relative axes.
-    const FVector FaceDirection = Field->GetActorRotation().RotateVector(FVector(-1.f, 0.f, 0.f));
-    TrainingGoalkeeper6T->SetActorRotation(FaceDirection.Rotation());
-    TrainingGoalkeeper6T->SetActorLocation(Field->PitchLocalToWorld(NewLocal), true);
-    TrainingGoalkeeper6T->SetScriptedLocomotionVelocity(
-        WorldDelta / DeltaSeconds, ESoccerAIMovementMode::Run, ESoccerAIMovementReason::NormalPlay);
 }
 
 void ASoccerTrainingMovementGameMode6B::RegisterChargedShotRelease6M(float ChargeFraction)
@@ -577,6 +594,14 @@ void ASoccerTrainingMovementGameMode6B::PrepareShotAttempt6N()
         }
         TrainingGoalkeeper6T->ClearGoalkeeperAction();
         TrainingGoalkeeper6T->StopGoalkeeperActionMontage(0.05f);
+        // 6AA.2: clear residual scripted velocity and the previous path so
+        // the keeper can accept a fresh movement order for the next shot.
+        TrainingGoalkeeper6T->ClearScriptedLocomotionVelocity();
+        if (ASoccerAIController* MovementController =
+            Cast<ASoccerAIController>(TrainingGoalkeeper6T->GetController()))
+            MovementController->StopMovement();
+        bHasIssuedKeeperTarget6AA2 = false;
+        LastKeeperMoveRequestAt6AA2 = -100.f;
     }
     UE_LOG(LogTemp, Display, TEXT("[Training6N] Ready: attempt %d/10"), ShotAttemptIndex6N + 1);
 }
