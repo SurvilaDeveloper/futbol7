@@ -1894,9 +1894,17 @@ void ASoccerTrainingMovementGameMode6B::TickWinTackle6AM(float DeltaSeconds)
     }
 
     const FVector AttackGoal = Field->GetGoalCenterWorldLocation(-1.f, 0.f);
+    // 6AM.7.2: compare approximate intercept times using the human's
+    // configured movement speed, not a fixed value tied to one profile.
+    const UCharacterMovementComponent* TrainingHumanMovement6AM72 =
+        Trainee6B->GetCharacterMovement();
+    const float HumanSprintSpeed6AM72 = TrainingHumanMovement6AM72
+        ? FMath::Max(960.f, TrainingHumanMovement6AM72->MaxWalkSpeed)
+        : 960.f;
     const int32 DribbleEvent = MatchStyleController->TickTrainingDribble6AM2(
         Rival, Ball, Field, AttackGoal, Trainee6B->GetActorLocation(),
-        WinTackleTouches6AM, WinTackleHumanTackleSuppressUntil6AM,
+        HumanSprintSpeed6AM72, WinTackleTouches6AM,
+        WinTackleHumanTackleSuppressUntil6AM,
         WinTackleLastTouchAt6AM, WinTackleLastMoveAt6AM);
     if (DribbleEvent == 1)
     {

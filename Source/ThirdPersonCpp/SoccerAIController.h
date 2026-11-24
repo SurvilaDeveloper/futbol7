@@ -218,6 +218,7 @@ public:
 		const ASoccerField* TrainingField,
 		const FVector& AttackGoal,
 		const FVector& HumanLocation,
+		float HumanSprintSpeed,
 		int32 CompletedTouches,
 		float SuppressCollectionUntil,
 		float& LastTouchAt,
@@ -1727,7 +1728,8 @@ private:
 	float InitialPossessionEscapeStartTime = 0.0f;
 
 	bool UpdateAIAutoPassFollow(
-		ASoccerAICharacter* SoccerCharacter
+		ASoccerAICharacter* SoccerCharacter,
+		bool bUseFilteredTrainingMove6AM7 = false
 	);
 
 	bool TryStartAIAutoPass(

@@ -250,6 +250,17 @@ public:
 		float MaxTravelTime
 	);
 
+	// 6AM.7.2: training-only *physical* dribble touch. Bypasses kick and
+	// turn montages (and their stop-motion lock), but retains the match's
+	// profile-adjusted target/speed, ball impulse and autopass follow state.
+	// Never invoked by the normal match tactical controller.
+	bool StartTrainingRunningAutoPass6AM72(
+		const FVector& TargetLocation,
+		float HorizontalSpeed,
+		float MinTravelTime,
+		float MaxTravelTime
+	);
+
 	bool IsAIAutoPassActive() const;
 
 	ASoccerBall* GetAIAutoPassBall() const;

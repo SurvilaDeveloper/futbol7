@@ -16228,7 +16228,8 @@ void ASoccerAIController::ClearInitialPossessionEscape()
 }
 
 bool ASoccerAIController::UpdateAIAutoPassFollow(
-	ASoccerAICharacter* SoccerCharacter
+	ASoccerAICharacter* SoccerCharacter,
+	bool bUseFilteredTrainingMove6AM7
 )
 {
 	if (!IsValid(SoccerCharacter))
@@ -16310,12 +16311,27 @@ bool ASoccerAIController::UpdateAIAutoPassFollow(
 
 	MoveLocation.Z = SoccerCharacter->GetActorLocation().Z;
 
-	MoveToLocationWithAIMovement(
-		ESoccerAIOrder::AttackRunIntoSpace,
-		MoveLocation,
-		AIAutoPassFollowAcceptanceRadius,
-		false
-	);
+	// 6AM.7: the full match controller normally filters attack movement
+	// requests to avoid continuously restarting navigation.  The training
+	// controller runs without its tactical Tick, so opt in to that SAME match
+	// filter for auto-pass pursuit only.  Match callers keep the original path.
+	if (bUseFilteredTrainingMove6AM7)
+	{
+		MoveToLocationFilteredForAttack(
+			MoveLocation,
+			AIAutoPassFollowAcceptanceRadius,
+			ESoccerAIOrder::AttackRunIntoSpace
+		);
+	}
+	else
+	{
+		MoveToLocationWithAIMovement(
+			ESoccerAIOrder::AttackRunIntoSpace,
+			MoveLocation,
+			AIAutoPassFollowAcceptanceRadius,
+			false
+		);
+	}
 
 	SetFocalPoint(
 		MoveLocation,
@@ -16555,6 +16571,7 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 	const ASoccerField* TrainingField,
 	const FVector& AttackGoal,
 	const FVector& HumanLocation,
+	float HumanSprintSpeed,
 	int32 CompletedTouches,
 	float SuppressCollectionUntil,
 	float& LastTouchAt,
@@ -16616,6 +16633,27 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 
 	if (TrainingDribbler->IsAIAutoPassActive())
 	{
+		// 6AM.7.1: a LONG auto-pass can still be playing an in-place kick
+		// montage after its foot impact. Do not order the bot to sprint during
+		// those remaining montage frames: its mesh appears to skate.
+		// Short touches keep the usual match follow timing.
+		const float AutoPassTravel6AM71 = FVector::Dist2D(
+			TrainingDribbler->GetAIAutoPassStartBallLocation(),
+			TrainingDribbler->GetAIAutoPassTargetLocation());
+		const bool bLongKickStillAnimating6AM71 =
+			AutoPassTravel6AM71 >= 720.f &&
+			(TrainingDribbler->IsAIKickMontageActive() ||
+			 TrainingDribbler->IsAIDribbleTurnAutoPassActive());
+		if (bLongKickStillAnimating6AM71)
+		{
+			// The dribble-turn montage owns its own scripted motion; do not
+			// interfere with it. The ordinary in-place strike needs no MoveTo.
+			if (TrainingDribbler->IsAIKickMontageActive())
+			{
+				StopMovement();
+			}
+			return 0;
+		}
 		if (!bCanCollect)
 		{
 			TrainingDribbler->ClearAIAutoPassState();
@@ -16623,9 +16661,14 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 			return 0;
 		}
 		const bool bHadPossession = TrainingDribbler->IsAIPossessingBall();
-		const bool bFollowRunning = UpdateAIAutoPassFollow(TrainingDribbler);
+		const bool bFollowRunning = UpdateAIAutoPassFollow(TrainingDribbler, true);
 		if (!bHadPossession && TrainingDribbler->IsAIPossessingBall())
 		{
+			// Preserve the run during the physical pickup, as the match does.
+			// The upcoming possession decision will choose the next movement.
+			UE_LOG(LogTemp, Display,
+				TEXT("[Training6AM7] CONTINUOUS RECOLLECT speed=%.1f"),
+				TrainingDribbler->GetVelocity().Size2D());
 			return 3;
 		}
 		if (bFollowRunning)
@@ -16651,7 +16694,12 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 		BallSpeed < 360.f)
 	{
 		TrainingDribbler->PossessAIBall(Ball);
-		StopMovement();
+		// 6AM.7: this StopMovement() interrupted the run even when the
+		// character still had useful forward momentum.  Keep navigation
+		// continuous until the next physical touch or a genuine interruption.
+		UE_LOG(LogTemp, Display,
+			TEXT("[Training6AM7] CONTINUOUS COLLECT speed=%.1f"),
+			TrainingDribbler->GetVelocity().Size2D());
 		return 1;
 	}
 
@@ -16709,8 +16757,104 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 				bLongTouchCandidate6AM4 && !bFinishAtHumanGoal6AM3
 					? LongTouchDistance6AM4 : AIAutoPassDistance,
 				FMath::Max(140.f, RemainingDistance - 90.f));
+			FVector TouchDirection6AM72 = UseDirection;
+			float TimeHuman6AM72 = -1.f;
+			float TimeRival6AM72 = -1.f;
+			float InterceptionAdvantage6AM72 = 0.f;
+			float LaneAngle6AM72 = 0.f;
+
+			// 6AM.7.2: for LONG touches only, evaluate nearby forward lanes.
+			// Favor a lane that the human is less likely to intercept first,
+			// but never force a perfect/safe option: tackling must remain possible.
+			// The short-touch and final-goal decisions stay unchanged.
+			if (bLongTouchCandidate6AM4 && !bFinishAtHumanGoal6AM3 &&
+				!UseDirection.IsNearlyZero())
+			{
+				const float HumanEstimateSpeed6AM72 = FMath::Max(800.f, HumanSprintSpeed);
+				const UCharacterMovementComponent* RivalMovement6AM72 =
+					TrainingDribbler->GetCharacterMovement();
+				const float RivalEstimateSpeed6AM72 = RivalMovement6AM72
+					? FMath::Max(800.f, RivalMovement6AM72->MaxWalkSpeed) : 960.f;
+				const float BallEstimateSpeed6AM72 = FMath::Max(
+					1150.f, FMath::Max(AIAutoPassHorizontalSpeed * 1.36f, 1550.f));
+				const FVector RivalLocation6AM72 = TrainingDribbler->GetActorLocation();
+				const FVector BallLocation6AM72 = Ball->GetActorLocation();
+				FVector RunDirection6AM72 = TrainingDribbler->GetVelocity();
+				RunDirection6AM72.Z = 0.f;
+				RunDirection6AM72 = RunDirection6AM72.GetSafeNormal();
+				const bool bIsRunning6AM72 =
+					TrainingDribbler->GetVelocity().Size2D() > 300.f;
+				const float LaneAngles6AM72[] = {0.f, -20.f, 20.f, -38.f, 38.f};
+				float BestLaneScore6AM72 = -TNumericLimits<float>::Max();
+				bool bFoundLane6AM72 = false;
+				for (const float TestAngle6AM72 : LaneAngles6AM72)
+				{
+					FVector CandidateDirection6AM72 =
+						UseDirection.RotateAngleAxis(TestAngle6AM72, FVector::UpVector);
+					CandidateDirection6AM72.Z = 0.f;
+					CandidateDirection6AM72 = CandidateDirection6AM72.GetSafeNormal();
+					const float ForwardDot6AM72 = FVector::DotProduct(
+						CandidateDirection6AM72, PreferredDirection);
+					// Avoid sideways/backward long kicks, or abrupt 90-degree
+					// running changes that could recreate mesh sliding.
+					if (ForwardDot6AM72 < 0.60f ||
+						(bIsRunning6AM72 && FVector::DotProduct(
+							CandidateDirection6AM72, RunDirection6AM72) < 0.42f))
+					{
+						continue;
+					}
+					FVector CandidateWorld6AM72 = RivalLocation6AM72 +
+						CandidateDirection6AM72 * TouchDistance;
+					FVector CandidatePitch6AM72 =
+						TrainingField->WorldToPitchLocal(CandidateWorld6AM72);
+					CandidatePitch6AM72.X = FMath::Clamp(CandidatePitch6AM72.X,
+						SoccerFieldDimensions::LeftGoalLineX + 130.f,
+						SoccerFieldDimensions::RightGoalLineX - 130.f);
+					CandidatePitch6AM72.Y = FMath::Clamp(CandidatePitch6AM72.Y,
+						SoccerFieldDimensions::SouthTouchLineY + 150.f,
+						SoccerFieldDimensions::NorthTouchLineY - 150.f);
+					CandidateWorld6AM72 =
+						TrainingField->PitchLocalToWorld(CandidatePitch6AM72);
+					const float ActualDistance6AM72 = FVector::Dist2D(
+						BallLocation6AM72, CandidateWorld6AM72);
+					if (ActualDistance6AM72 < FMath::Max(
+							720.f, AIAutoPassDistance + 200.f))
+					{
+						continue;
+					}
+					const float RivalArrival6AM72 = FVector::Dist2D(
+							RivalLocation6AM72, CandidateWorld6AM72) /
+						RivalEstimateSpeed6AM72;
+					const float HumanArrival6AM72 = FVector::Dist2D(
+							HumanLocation, CandidateWorld6AM72) / HumanEstimateSpeed6AM72;
+					// Also penalize a lane whose *moving ball* passes through
+					// a point the human can reach ahead of its arrival.
+					const FVector MidBall6AM72 = FMath::Lerp(
+							BallLocation6AM72, CandidateWorld6AM72, 0.55f);
+					const float HumanMidArrival6AM72 = FVector::Dist2D(
+							HumanLocation, MidBall6AM72) / HumanEstimateSpeed6AM72;
+					const float BallMidArrival6AM72 =
+						0.55f * ActualDistance6AM72 / BallEstimateSpeed6AM72;
+					const float RivalAdvantage6AM72 = HumanArrival6AM72 - RivalArrival6AM72;
+					const float LaneScore6AM72 =
+						2.0f * RivalAdvantage6AM72 +
+						0.65f * (HumanMidArrival6AM72 - BallMidArrival6AM72) +
+						0.50f * ForwardDot6AM72 -
+						0.15f * FMath::Abs(TestAngle6AM72) / 45.f;
+					if (!bFoundLane6AM72 || LaneScore6AM72 > BestLaneScore6AM72)
+					{
+						bFoundLane6AM72 = true;
+						BestLaneScore6AM72 = LaneScore6AM72;
+						TouchDirection6AM72 = CandidateDirection6AM72;
+						LaneAngle6AM72 = TestAngle6AM72;
+						TimeHuman6AM72 = HumanArrival6AM72;
+						TimeRival6AM72 = RivalArrival6AM72;
+						InterceptionAdvantage6AM72 = RivalAdvantage6AM72;
+					}
+				}
+			}
 			FVector Target = TrainingDribbler->GetActorLocation() +
-				UseDirection * TouchDistance;
+				TouchDirection6AM72 * TouchDistance;
 			FVector LocalTarget = TrainingField->WorldToPitchLocal(Target);
 			LocalTarget.X = FMath::Clamp(LocalTarget.X,
 				SoccerFieldDimensions::LeftGoalLineX + 130.f,
@@ -16747,17 +16891,36 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 						TEXT("[Training6AM3] FINAL GOAL TOUCH remaining=%.1f ballY=%.1f targetX=%.1f"),
 						RemainingDistance, BallPitch6AM3.Y, LocalTarget.X);
 				}
-				// Keep the normal match auto-pass animation, follow and collection;
-				// only the training touch distance and initial speed vary.
 				const float TouchSpeed6AM4 = bLongTouch6AM4
 					? FMath::Max(AIAutoPassHorizontalSpeed * 1.36f, 1550.f)
 					: AIAutoPassHorizontalSpeed;
-				TrainingDribbler->StartAIAutoPassToLocation(Target,
-					TouchSpeed6AM4, AIAutoPassMinTravelTime,
-					AIAutoPassMaxTravelTime);
-				MoveToLocationWithAIMovement(
-					ESoccerAIOrder::AttackRunIntoSpace,
-					Target, AIAutoPassFollowAcceptanceRadius, false);
+				if (bFinishAtHumanGoal6AM3)
+				{
+					// Preserve the physical, animated final goal touch.
+					StopMovement();
+					TrainingDribbler->StartAIAutoPassToLocation(Target,
+						TouchSpeed6AM4, AIAutoPassMinTravelTime,
+						AIAutoPassMaxTravelTime);
+				}
+				else
+				{
+					// 6AM.7.2: no kick/turn montage and no StopMovement.
+					// Keep the current run and let match auto-pass FOLLOW pick up
+					// the physical ball on the next training Tick.
+					if (!TrainingDribbler->StartTrainingRunningAutoPass6AM72(
+						Target, TouchSpeed6AM4, AIAutoPassMinTravelTime,
+						AIAutoPassMaxTravelTime))
+					{
+						return 0;
+					}
+				}
+				if (bLongTouch6AM4)
+				{
+					UE_LOG(LogTemp, Display,
+						TEXT("[Training6AM72] LONG LANE angle=%.0f humanETA=%.2f rivalETA=%.2f rivalAdv=%.2f target=%s"),
+						LaneAngle6AM72, TimeHuman6AM72, TimeRival6AM72,
+						InterceptionAdvantage6AM72, *Target.ToString());
+				}
 				UE_LOG(LogTemp, Display,
 					TEXT("[Training6AM4] %s DRIBBLE grid=%s safe=%s touch=%d speed=%.0f distance=%.0f humanDist=%.0f target=%s"),
 					bLongTouch6AM4 ? TEXT("LONG") : TEXT("SHORT"),
@@ -16769,6 +16932,16 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 				return 2;
 			}
 		}
+	}
+
+	// 6AM.7: once the ball is under logical control, do not enter the
+	// *free-ball* race to chase a point a few centimeters away, only to
+	// StopMovement() on the next frame.  That alternating stop/start was
+	// a source of visible sliding during the next dribble decision.
+	// A genuine free ball still uses the same pursuit fallback below.
+	if (TrainingDribbler->IsAIPossessingBall())
+	{
+		return 0;
 	}
 
 	// Ordinary free-ball pursuit is also shared with match tactical movement.

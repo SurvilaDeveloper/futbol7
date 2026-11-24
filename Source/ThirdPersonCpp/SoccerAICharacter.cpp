@@ -1828,6 +1828,32 @@ void ASoccerAICharacter::StartAIAutoPassToLocation(
 	);
 }
 
+// 6AM.7.2: one controlled training-only entry point to the same immediate
+// physical auto-pass used internally when a match kick montage is unavailable.
+// Crucially we do not stop navigation or start a generic kick animation here.
+bool ASoccerAICharacter::StartTrainingRunningAutoPass6AM72(
+	const FVector& TargetLocation,
+	float HorizontalSpeed,
+	float MinTravelTime,
+	float MaxTravelTime
+)
+{
+	if (!bAIIsPossessingBall || !IsValid(ControlledBall) || bAIAutoPassActive ||
+		bAIKickMontageActive || bAIDribbleTurnAutoPassActive ||
+		IsTackleActive() || IsTackleEvasionActive() || IsTackleFallReactionActive())
+	{
+		return false;
+	}
+
+	RequestAIMovementMode(
+		ESoccerAIMovementMode::FastRun,
+		ESoccerAIMovementReason::ChaseOwnAutoPass,
+		true);
+	ExecuteAIAutoPassImmediate(
+		TargetLocation, HorizontalSpeed, MinTravelTime, MaxTravelTime, false);
+	return bAIAutoPassActive;
+}
+
 bool ASoccerAICharacter::IsAIAutoPassActive() const
 {
 	return bAIAutoPassActive;
