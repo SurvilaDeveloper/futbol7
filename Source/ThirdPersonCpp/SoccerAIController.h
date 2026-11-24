@@ -181,6 +181,29 @@ class THIRDPERSONCPP_API ASoccerAIController : public AAIController
 public:
 	ASoccerAIController();
 
+	// 6AL.6.5: match-style lateral overtake with an explicit defended goal;
+	// the training GameMode still owns navigation and zone activation.
+	bool TryBuildTrainingPressureOvertakeLocation6AL65(
+		ASoccerAICharacter* Defender,
+		ASoccerCharacterBase* HumanCarrier,
+		ASoccerBall* Ball,
+		const FVector& DefenderOwnGoalWorld,
+		FVector& OutMoveLocation);
+
+	void ResetTrainingPressureOvertake6AL65();
+
+	// 6AL.6.5.1: read-only training diagnostics; preserve the private
+	// planner settings and its committed side selection.
+	bool IsTrainingPressureOvertakeEnabled6AL65() const
+	{
+		return bUseAIDefensivePressureOvertake;
+	}
+
+	int32 GetTrainingPressureOvertakeSideSign6AL65() const
+	{
+		return DefensivePressureOvertakeSideSign;
+	}
+
 	virtual void Tick(float DeltaTime) override;
 
 	void HandleGoalkeeperContactWindowBegin(
@@ -345,7 +368,8 @@ private:
 		ASoccerCharacterBase* Carrier,
 		ASoccerBall* SoccerBall,
 		bool bCarrierIsAutoPassing,
-		FVector& OutMoveLocation
+		FVector& OutMoveLocation,
+		const FVector* ExplicitOwnGoalWorld = nullptr
 	);
 
 	bool ProjectDefensivePressureLocationToNavigation(

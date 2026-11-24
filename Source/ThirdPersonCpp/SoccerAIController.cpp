@@ -22006,12 +22006,50 @@ bool ASoccerAIController::ShouldDirectlyInterceptAutoPass(
 		CarrierArrivalTime;
 }
 
+// 6AL.6.5: use the same side selection, forward lead, NavMesh projection
+// and side-commit state as the match, without activating match tactical Tick.
+// The only difference is that training supplies the defended goal explicitly.
+bool ASoccerAIController::TryBuildTrainingPressureOvertakeLocation6AL65(
+	ASoccerAICharacter* Defender,
+	ASoccerCharacterBase* HumanCarrier,
+	ASoccerBall* Ball,
+	const FVector& DefenderOwnGoalWorld,
+	FVector& OutMoveLocation)
+{
+	OutMoveLocation = FVector::ZeroVector;
+	if (
+		!bUseAIDefensivePressureOvertake ||
+		IsValid(MatchManager) ||
+		!IsValid(Defender) ||
+		!IsValid(HumanCarrier) ||
+		!IsValid(Ball) ||
+		GetPawn() != Defender ||
+		Defender->GetTeam() == HumanCarrier->GetTeam())
+	{
+		return false;
+	}
+
+	return BuildDefensivePressureOvertakeLocation(
+		Defender, HumanCarrier, Ball, false, OutMoveLocation,
+		&DefenderOwnGoalWorld);
+}
+
+void ASoccerAIController::ResetTrainingPressureOvertake6AL65()
+{
+	// Never clear a live match planner from the training API.
+	if (!IsValid(MatchManager))
+	{
+		ClearDefensivePressureOvertakeState();
+	}
+}
+
 bool ASoccerAIController::BuildDefensivePressureOvertakeLocation(
 	ASoccerAICharacter* PressingCharacter,
 	ASoccerCharacterBase* Carrier,
 	ASoccerBall* SoccerBall,
 	bool bCarrierIsAutoPassing,
-	FVector& OutMoveLocation
+	FVector& OutMoveLocation,
+	const FVector* ExplicitOwnGoalWorld
 )
 {
 	OutMoveLocation = FVector::ZeroVector;
@@ -22020,7 +22058,7 @@ bool ASoccerAIController::BuildDefensivePressureOvertakeLocation(
 		!IsValid(PressingCharacter) ||
 		!IsValid(Carrier) ||
 		!IsValid(SoccerBall) ||
-		!IsValid(MatchManager)
+		(ExplicitOwnGoalWorld == nullptr && !IsValid(MatchManager))
 		)
 	{
 		return false;
@@ -22135,10 +22173,10 @@ bool ASoccerAIController::BuildDefensivePressureOvertakeLocation(
 	const FVector PredictedCarrierLocation =
 		CarrierLocation + CarrierDirection * LeadDistance;
 
-	FVector OwnGoalLocation =
-		MatchManager->GetOwnGoalCenterLocation(
-			PressingCharacter->GetTeam()
-		);
+	FVector OwnGoalLocation = ExplicitOwnGoalWorld != nullptr
+		? *ExplicitOwnGoalWorld
+		: MatchManager->GetOwnGoalCenterLocation(
+			PressingCharacter->GetTeam());
 
 	OwnGoalLocation.Z = 0.0f;
 

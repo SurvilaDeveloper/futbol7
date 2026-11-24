@@ -183,6 +183,10 @@ private:
     float AvoidTackleMaxLeadSeconds6AL64 = 0.65f;
     UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL2", meta=(ClampMin="150.0", ClampMax="1500.0"))
     float AvoidDefenderClearanceSpeed6AL2 = 1850.f;
+    // 6AL.6.5: training-only state for the MATCH side-overtake planner.
+    // It prevents repeated logs and preserves stable flank selection.
+    bool bAvoidDefenderUsingOvertake6AL65 = false;
+    float AvoidDefenderLastOvertakeLogAt6AL65 = -100.f;
     float AvoidDefenderLastMoveAt6AL2 = -100.f;
     float AvoidDefenderLastTackleAt6AL2 = -100.f;
     float AvoidDefenderLastClearanceAt6AL2 = -100.f;

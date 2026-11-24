@@ -1739,6 +1739,8 @@ void ASoccerTrainingMovementGameMode6B::ResetAvoidTackle6AL()
     AvoidTackleLaunchedAt6AL = -1.f;
     AvoidTackleResetAt6AL = -1.f;
     AvoidDefenderLastMoveAt6AL2 = -100.f;
+    bAvoidDefenderUsingOvertake6AL65 = false;
+    AvoidDefenderLastOvertakeLogAt6AL65 = -100.f;
     AvoidDefenderLastTackleAt6AL2 = -100.f;
     AvoidDefenderLastClearanceAt6AL2 = -100.f;
     bAvoidDefenderWasTackling6AL2 = false;
@@ -2216,17 +2218,82 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
         return;
     }
 
-    // Training-driven NavMesh orders: regular match tactical Tick remains OFF.
+    // 6AL.6.5: the match AI does NOT chase straight into the carrier's back.
+    // When behind a moving carrier, reuse the match's flank-overtake planner,
+    // including its bias for the side that blocks the way to our own goal.
+    // This is navigation only: ball interception, slide prediction, and the
+    // real-contact steal/clearance above remain exactly as in 6AL.6.4.
+    // Only the defender of the current BALL zone gets these pursuit orders.
     if (!bTackling)
     {
-        if (Now - AvoidDefenderLastMoveAt6AL2 >= AvoidDefenderRepathSeconds6AL2)
+        const float ChaseRefreshSeconds = bAvoidDefenderUsingOvertake6AL65
+            ? FMath::Min(0.18f, AvoidDefenderRepathSeconds6AL2)
+            : AvoidDefenderRepathSeconds6AL2;
+        if (Now - AvoidDefenderLastMoveAt6AL2 >= ChaseRefreshSeconds)
         {
             if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
             {
-                const FVector Prediction = Ball + PracticeBall6B->GetBallPhysicsVelocity() * 0.18f;
-                // The previous 110cm acceptance radius could stop the bot
-                // outside actual ball-collection range, particularly after a tackle.
-                AI->MoveToLocation(Prediction, 40.f, true, true, true, true, nullptr, true);
+                bool bUseFlankOvertake = false;
+                FVector ChaseTarget = Ball + PracticeBall6B->GetBallPhysicsVelocity() * 0.18f;
+                float Acceptance = 40.f;
+                ASoccerAIController* MatchStyleController = Cast<ASoccerAIController>(AI);
+
+                // Do not use a carrier overtake for a truly loose ball; it
+                // must be recovered directly instead. Human click possession
+                // is the same logical ownership already used by 6AL.5.2.
+                const bool bHumanCarryingBall =
+                    (bHumanControl || Trainee6B->HasHumanLogicalBallControl()) &&
+                    HumanBallDistance < 225.f;
+                if (bHumanCarryingBall && MatchStyleController != nullptr)
+                {
+                    FVector OvertakeTarget;
+                    const FVector DefenderGoal = Field->PitchLocalToWorld(
+                        FVector(SoccerFieldDimensions::RightGoalLineX, 0.f, 100.f));
+                    if (MatchStyleController->TryBuildTrainingPressureOvertakeLocation6AL65(
+                        TackleOpponent6AK, Trainee6B, PracticeBall6B,
+                        DefenderGoal, OvertakeTarget))
+                    {
+                        // The match candidate may lead past the next boundary.
+                        // Training defenders never receive pursuit destinations
+                        // beyond their assigned quarter of the pitch.
+                        FVector LocalTarget = Field->WorldToPitchLocal(OvertakeTarget);
+                        const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
+                        const float QuarterLength = HalfLength * 0.5f;
+                        const float ZoneStart = -HalfLength + ActiveAvoidZone6AL6 * QuarterLength;
+                        const float ZoneEnd = ZoneStart + QuarterLength;
+                        const float EdgeMargin = FMath::Min(75.f, QuarterLength * 0.1f);
+                        LocalTarget.X = FMath::Clamp(
+                            LocalTarget.X, ZoneStart + EdgeMargin, ZoneEnd - EdgeMargin);
+                        const float SafeHalfWidth = SoccerFieldDimensions::HalfPitchWidthCm - 130.f;
+                        LocalTarget.Y = FMath::Clamp(LocalTarget.Y, -SafeHalfWidth, SafeHalfWidth);
+                        ChaseTarget = Field->PitchLocalToWorld(LocalTarget);
+                        ChaseTarget.Z = Defender.Z;
+                        Acceptance = 35.f;
+                        bUseFlankOvertake = true;
+
+                        if (!bAvoidDefenderUsingOvertake6AL65 ||
+                            Now - AvoidDefenderLastOvertakeLogAt6AL65 >= 2.0f)
+                        {
+                            AvoidDefenderLastOvertakeLogAt6AL65 = Now;
+                            UE_LOG(LogTemp, Display,
+                                TEXT("[Training6AL65] FLANK OVERTAKE zone=%d attempt=%d humanSpeed=%.1f targetLocal=(%.0f, %.0f) side=%d"),
+                                ActiveAvoidZone6AL6, AvoidTackleAttempt6AL,
+                                Trainee6B->GetVelocity().Size2D(),
+                                LocalTarget.X, LocalTarget.Y,
+                                MatchStyleController->GetTrainingPressureOvertakeSideSign6AL65());
+                        }
+                    }
+                }
+                if (!bUseFlankOvertake && bAvoidDefenderUsingOvertake6AL65)
+                {
+                    if (MatchStyleController != nullptr)
+                        MatchStyleController->ResetTrainingPressureOvertake6AL65();
+                    UE_LOG(LogTemp, Display,
+                        TEXT("[Training6AL65] DIRECT CHASE zone=%d attempt=%d"),
+                        ActiveAvoidZone6AL6, AvoidTackleAttempt6AL);
+                }
+                bAvoidDefenderUsingOvertake6AL65 = bUseFlankOvertake;
+                AI->MoveToLocation(ChaseTarget, Acceptance, true, true, true, true, nullptr, true);
                 TackleOpponent6AK->SetAIChasingBall(true);
                 TackleOpponent6AK->RequestAIMovementMode(
                     ESoccerAIMovementMode::FastRun,
@@ -2371,6 +2438,8 @@ void ASoccerTrainingMovementGameMode6B::SetActiveAvoidZone6AL6(int32 Zone)
         if (TackleOpponent6AK->IsTackleActive()) TackleOpponent6AK->CancelTackle();
         TackleOpponent6AK->ReleaseAIBall(false);
         TackleOpponent6AK->SetAIChasingBall(false);
+        if (ASoccerAIController* AI = Cast<ASoccerAIController>(TackleOpponent6AK->GetController()))
+            AI->ResetTrainingPressureOvertake6AL65();
         if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
             AI->StopMovement();
     }
@@ -2386,9 +2455,21 @@ void ASoccerTrainingMovementGameMode6B::SetActiveAvoidZone6AL6(int32 Zone)
     HighestAvoidZone6AL6 = FMath::Max(HighestAvoidZone6AL6, NextZone);
     TackleOpponent6AK = (NextZone > 0 && AvoidZoneDefenders6AL6.IsValidIndex(NextZone - 1))
         ? AvoidZoneDefenders6AL6[NextZone - 1] : nullptr;
+    if (IsValid(TackleOpponent6AK))
+    {
+        ASoccerAIController* DefenderAI =
+            Cast<ASoccerAIController>(TackleOpponent6AK->GetController());
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AL65] CONTROLLER zone=%d compatible=%s enabled=%s class=%s"),
+            NextZone, DefenderAI ? TEXT("YES") : TEXT("NO"),
+            DefenderAI && DefenderAI->IsTrainingPressureOvertakeEnabled6AL65() ? TEXT("YES") : TEXT("NO"),
+            *GetNameSafe(TackleOpponent6AK->GetController()));
+    }
 
     // Existing 6AL2-6AL5 state describes the CURRENT active defender only.
     AvoidDefenderLastMoveAt6AL2 = -100.f;
+    bAvoidDefenderUsingOvertake6AL65 = false;
+    AvoidDefenderLastOvertakeLogAt6AL65 = -100.f;
     AvoidDefenderLastTackleAt6AL2 = -100.f;
     AvoidDefenderLastClearanceAt6AL2 = -100.f;
     bAvoidDefenderWasTackling6AL2 = false;
@@ -2609,6 +2690,8 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
             Rival->CancelAIKickMontageBeforeImpact();
             if (Rival->IsTackleActive()) Rival->CancelTackle();
             Rival->ReleaseAIBall(false);
+            if (ASoccerAIController* AI = Cast<ASoccerAIController>(Rival->GetController()))
+                AI->ResetTrainingPressureOvertake6AL65();
             if (AAIController* AI = Cast<AAIController>(Rival->GetController())) AI->StopMovement();
             Rival->SetAIChasingBall(false);
             if (UCharacterMovementComponent* Move = Rival->GetCharacterMovement())
