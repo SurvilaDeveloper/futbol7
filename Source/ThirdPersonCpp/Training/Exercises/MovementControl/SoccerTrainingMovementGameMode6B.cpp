@@ -2858,9 +2858,21 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
         Trainee6B->ApplyTeamUniform();
     }
     const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
+    // 6AM.6: start near the halfway line, slightly toward the rival's (+X)
+    // goal. Alternate touchlines on EVERY round (1: -Y, 2: +Y, etc.) so
+    // the human must run in from the flank to intercept the ball carrier.
+    // Keep the 6AL AvoidTackle lesson's original starting point untouched.
+    const int32 RoundForPlacement6AM6 = FMath::Max(1, WinTackleAttempt6AM);
+    const float WinTackleSideSign6AM6 = (RoundForPlacement6AM6 % 2 == 0) ? 1.f : -1.f;
+    const float WinTackleSideInset6AM6 = FMath::Max(300.f,
+        SoccerFieldDimensions::HalfPitchWidthCm * 0.16f);
+    const FVector WinTacklePlayerLocal6AM6(
+        SoccerFieldDimensions::HalfwayLineX + HalfLength * 0.08f,
+        WinTackleSideSign6AM6 * (SoccerFieldDimensions::HalfPitchWidthCm - WinTackleSideInset6AM6),
+        130.f);
     const FVector PlayerLocal = bAvoidTackleLesson6AK
         ? FVector(SoccerFieldDimensions::LeftGoalLineX + FMath::Max(220.f, HalfLength * 0.06f), 0.f, 130.f)
-        : FVector(-0.22f * HalfLength, -350.f, 130.f);
+        : WinTacklePlayerLocal6AM6;
     // 6AM.3: full-field attack from the rival goal to the human goal.
     // The ball is 68 cm in front of the bot, towards -X.
     const float RivalDepth6AM3 = FMath::Max(220.f, HalfLength * 0.06f);
@@ -2914,6 +2926,10 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
         TackleOpponent6AK->CancelAIKickMontageBeforeImpact();
         TackleOpponent6AK->ClearAIAutoPassState();
         TackleOpponent6AK->ReleaseAIBall(false);
+        // 6AM.5: reset the in-place evasive jump before teleporting the
+        // rival, restoring its friction, movement input and run speed.
+        if (TackleOpponent6AK->IsTackleEvasionActive())
+            TackleOpponent6AK->CancelTackleEvasion();
         if (TackleOpponent6AK->IsTackleActive()) TackleOpponent6AK->CancelTackle();
         if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
             AI->StopMovement();
@@ -2936,6 +2952,30 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
         nullptr, ETeleportType::TeleportPhysics);
     RestorePracticeBallGroundCollision6AB3(PracticeBall6B);
     if (BallBody) BallBody->SetSimulatePhysics(true);
+    if (bWinTackleLesson6AK)
+    {
+        // 6AM.6: face the REAL training ball after both actors have been
+        // relocated. Only rotate yaw to preserve the player's camera pitch.
+        // The third-person spring arm follows Controller ControlRotation, so
+        // rotating the pawn alone would leave the camera pointing elsewhere.
+        const FVector ToBall = PracticeBall6B->GetActorLocation() - Trainee6B->GetActorLocation();
+        const FVector FlatToBall(ToBall.X, ToBall.Y, 0.f);
+        if (!FlatToBall.IsNearlyZero())
+        {
+            const float FacingYaw = FlatToBall.Rotation().Yaw;
+            Trainee6B->SetActorRotation(FRotator(0.f, FacingYaw, 0.f));
+            if (AController* HumanController6AM6 = Trainee6B->GetController())
+            {
+                FRotator CameraRotation6AM6 = HumanController6AM6->GetControlRotation();
+                CameraRotation6AM6.Yaw = FacingYaw;
+                HumanController6AM6->SetControlRotation(CameraRotation6AM6);
+            }
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AM6] HUMAN START round=%d side=%s localX=%.1f localY=%.1f faceBallYaw=%.1f"),
+                RoundForPlacement6AM6, WinTackleSideSign6AM6 < 0.f ? TEXT("-Y") : TEXT("+Y"),
+                PlayerLocal.X, PlayerLocal.Y, FacingYaw);
+        }
+    }
     if (bAvoidTackleLesson6AK)
     {
         UE_LOG(LogTemp, Display, TEXT("[Training6AL6] SCENARIO attempt=%d player=%s penaltyBall=%s defenders=%d"),

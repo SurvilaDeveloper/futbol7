@@ -16569,6 +16569,30 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 
 	const float Now = GetWorld()->GetTimeSeconds();
 	const bool bCanCollect = Now >= SuppressCollectionUntil;
+
+	// 6AM.5: in a match the controller's Tick checks tackle evasion BEFORE
+	// tactical movement. Training deliberately disables that Tick to prevent
+	// match tactics / ReturnToHomePosition from overriding the exercise.
+	// Reuse the *same* threat prediction and running-jump decision here,
+	// without enabling the rest of the match controller.
+	// During the jump CharacterBase owns inertia; do not issue any MoveTo,
+	// auto-pass follow or kick orders that could cancel its physical motion.
+	if (TrainingDribbler->IsTackleEvasionActive())
+	{
+		return 0;
+	}
+	if (TrainingDribbler->IsTackleFallReactionActive())
+	{
+		return 0;
+	}
+	if (TryStartAITackleEvasion(TrainingDribbler))
+	{
+		UE_LOG(LogTemp, Display,
+			TEXT("[Training6AM5] RIVAL TACKLE EVADE jump=YES runnerSpeed=%.1f ballDistance=%.1f"),
+			TrainingDribbler->GetVelocity().Size2D(),
+			FVector::Dist2D(TrainingDribbler->GetActorLocation(), Ball->GetActorLocation()));
+		return 0;
+	}
 	if (TrainingDribbler->IsTackleActive())
 	{
 		StopMovement();
