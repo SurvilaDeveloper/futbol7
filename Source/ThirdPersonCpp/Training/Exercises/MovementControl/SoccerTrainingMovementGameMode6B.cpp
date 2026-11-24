@@ -1743,6 +1743,8 @@ void ASoccerTrainingMovementGameMode6B::ResetAvoidTackle6AL()
     bAvoidDefenderBallDislodgedThisTackle6AL3 = false;
     bAvoidDefenderClearing6AL2 = false;
     bAvoidDefenderKickImpactLogged6AL4 = false;
+    AvoidDefenderKickMisses6AL5 = 0;
+    AvoidDefenderLastKickApproachLog6AL51 = -100.f;
     bAvoidDefenderFoulSeen6AL2 = false;
     if (IsValid(TackleOpponent6AK))
     {
@@ -1840,6 +1842,19 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
     const float DefenderBallDistance = FVector::Dist2D(Defender, Ball);
     const float HumanBallDistance = FVector::Dist2D(Human, Ball);
     bool bHumanControl = Trainee6B->IsPossessingBall();
+    // 6AL.5.2: the match represents field possession logically. If the rival
+    // already owns this ball, the human cannot keep a simultaneous claim.
+    // ReleaseBallForAISteal returns the human to Manual: a NEW left-click is
+    // required to chase/claim the ball again.
+    if (TackleOpponent6AK->IsAIPossessingBall() &&
+        (bHumanControl || Trainee6B->HasHumanLogicalBallControl()))
+    {
+        Trainee6B->ReleaseBallForAISteal();
+        bHumanControl = false;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AL52] HUMAN CLAIM RELEASED: rival already possesses ball attempt=%d"),
+            AvoidTackleAttempt6AL);
+    }
     bAvoidTackleJumpSeen6AL |= Trainee6B->IsTackleEvasionActive();
     bAvoidTackleFallSeen6AL |= Trainee6B->IsTackleFallReactionActive();
 
@@ -1865,7 +1880,8 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
     const bool bHumanInOpposingArea =
         SoccerFieldDimensions::IsLocationInsidePenaltyArea2D(LocalHuman, +1.f) &&
         SoccerFieldDimensions::IsLocationInsidePenaltyArea2D(LocalBall, +1.f) &&
-        (bHumanControl || HumanBallDistance <= 180.f);
+        (bHumanControl || Trainee6B->HasHumanLogicalBallControl()) &&
+        !TackleOpponent6AK->IsAIPossessingBall();
     if (!bAvoidDefenderClearing6AL2 && bHumanInOpposingArea)
     {
         FinishAvoidTackleAttempt6AL2(TEXT("EXITO: LLEGO AL AREA CON PELOTA"), true);
@@ -1883,21 +1899,40 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
         {
             bAvoidDefenderKickImpactLogged6AL4 = true;
             UE_LOG(LogTemp, Display,
-                TEXT("[Training6AL4] FOOT IMPACT attempt=%d speed=%.1f"),
-                AvoidTackleAttempt6AL, PracticeBall6B->GetBallPhysicsVelocity().Size2D());
+                TEXT("[Training6AL5] FOOT IMPACT attempt=%d defenderDist=%.1f speed=%.1f"),
+                AvoidTackleAttempt6AL,
+                FVector::Dist2D(TackleOpponent6AK->GetActorLocation(), PracticeBall6B->GetActorLocation()),
+                PracticeBall6B->GetBallPhysicsVelocity().Size2D());
         }
         if (!TackleOpponent6AK->IsAIKickMontageActive() &&
-            Now - AvoidDefenderLastClearanceAt6AL2 > 1.0f &&
-            PracticeBall6B->GetBallPhysicsVelocity().Size2D() < 110.f)
+            Now - AvoidDefenderLastClearanceAt6AL2 > 1.0f)
         {
-            // A short clearance is NOT a success: resume the normal
-            // NavMesh approach, collect the loose ball and kick again.
-            bAvoidDefenderClearing6AL2 = false;
-            bAvoidDefenderKickImpactLogged6AL4 = false;
-            TackleOpponent6AK->SetAIChasingBall(true);
-            UE_LOG(LogTemp, Display,
-                TEXT("[Training6AL4] CLEARANCE SHORT attempt=%d; chase and kick again"),
-                AvoidTackleAttempt6AL);
+            const bool bActualImpact = bAvoidDefenderKickImpactLogged6AL4 ||
+                TackleOpponent6AK->HasAIKickMontageImpactedBall();
+            const float Speed = PracticeBall6B->GetBallPhysicsVelocity().Size2D();
+            // Open-play kicks can miss if the moving ball escapes the foot.
+            // Never credit a miss as a clearance or apply a remote impulse.
+            if (!bActualImpact || Speed < 110.f)
+            {
+                if (!bActualImpact)
+                {
+                    ++AvoidDefenderKickMisses6AL5;
+                    UE_LOG(LogTemp, Display,
+                        TEXT("[Training6AL5] FOOT MISS attempt=%d defenderDist=%.1f ballSpeed=%.1f"),
+                        AvoidTackleAttempt6AL,
+                        FVector::Dist2D(TackleOpponent6AK->GetActorLocation(), PracticeBall6B->GetActorLocation()),
+                        Speed);
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Display,
+                        TEXT("[Training6AL5] CLEARANCE SHORT attempt=%d; return to ball"),
+                        AvoidTackleAttempt6AL);
+                }
+                bAvoidDefenderClearing6AL2 = false;
+                bAvoidDefenderKickImpactLogged6AL4 = false;
+                TackleOpponent6AK->SetAIChasingBall(true);
+            }
         }
         return;
     }
@@ -1982,53 +2017,136 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
         bAvoidDefenderWasTackling6AL2 = false;
     }
 
-    // Possession must actually be gained, not merely a ball contact.
-    // With the regular match AI Tick disabled, collect a genuinely loose
-    // ball when it is within reach of the defender and no longer held by human.
-    if (!TackleOpponent6AK->IsAIPossessingBall() && !bHumanControl &&
-        DefenderBallDistance <= 135.f &&
-        PracticeBall6B->GetBallPhysicsVelocity().Size2D() <= 850.f &&
-        !bTackling)
-    {
-        TackleOpponent6AK->PossessAIBall(PracticeBall6B);
-        UE_LOG(LogTemp, Display, TEXT("[Training6AL3] RECOVERED attempt=%d ballDist=%.1f"),
-            AvoidTackleAttempt6AL, DefenderBallDistance);
-    }
-    if (TackleOpponent6AK->IsAIPossessingBall())
-    {
-        if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController())) AI->StopMovement();
-        const float Side = LocalBall.Y >= 0.f ? 1.f : -1.f;
-        const FVector OutLocal(FMath::Clamp(LocalBall.X,
+    // 6AL.5.1: keep the preferred approach from behind, but do not require
+    // a nearly perfect angle for a stationary ball. The real open-play
+    // montage already validates physical contact when the foot strikes.
+    // Previously the defender could arrive beside the ball and wait forever:
+    // MoveToLocation(standing point) + capsule avoidance prevented 6AL.5's
+    // front/lateral tests from ever becoming true.
+    const float Side = LocalBall.Y >= 0.f ? 1.f : -1.f;
+    const FVector OutLocal(
+        FMath::Clamp(LocalBall.X,
             -SoccerFieldDimensions::HalfPitchLengthCm + 150.f,
              SoccerFieldDimensions::HalfPitchLengthCm - 150.f),
-            Side * (SoccerFieldDimensions::HalfPitchWidthCm + 1100.f), LocalBall.Z);
-        if (bHumanControl || Trainee6B->HasHumanLogicalBallControl())
+        Side * (SoccerFieldDimensions::HalfPitchWidthCm + 2200.f), LocalBall.Z);
+    const FVector TargetWorld = Field->PitchLocalToWorld(OutLocal);
+    const FVector KickDirection = (TargetWorld - Ball).GetSafeNormal2D();
+    const FVector DesiredStandingPoint = Ball - KickDirection * 66.f;
+    const FVector RelativeBall = Ball - Defender;
+    const float FrontDot = FVector::DotProduct(RelativeBall.GetSafeNormal2D(), KickDirection);
+    const float SideOffset = FMath::Abs(FVector::CrossProduct(KickDirection, RelativeBall).Z);
+    const float BallSpeedForClearance = PracticeBall6B->GetBallPhysicsVelocity().Size2D();
+    // 6AL.5.2: a clean tackle touch is handled above using the real contact
+    // summary. Also handle the defender actually reaching a human-controlled
+    // ball with his feet without an active slide (normal match-style steal).
+    // A small, ground-level contact window prevents remote steals merely
+    // because the defender is within its much larger chase radius.
+    const bool bHumanClaimAtFoot = bHumanControl || Trainee6B->HasHumanLogicalBallControl();
+    const bool bDefenderFootReach = DefenderBallDistance <= 55.f &&
+        FMath::Abs(LocalBall.Z) <= 60.f && !bTackling &&
+        !TackleOpponent6AK->IsAIKickMontageActive();
+    if (bHumanClaimAtFoot && bDefenderFootReach)
+    {
+        Trainee6B->ReleaseBallForAISteal();
+        bHumanControl = false;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AL52] FOOT STEAL attempt=%d dist=%.1f human=%s logical=%s; new left-click required"),
+            AvoidTackleAttempt6AL, DefenderBallDistance,
+            Trainee6B->IsPossessingBall() ? TEXT("YES") : TEXT("NO"),
+            Trainee6B->HasHumanLogicalBallControl() ? TEXT("YES") : TEXT("NO"));
+    }
+    const bool bLooseBall = !bHumanControl && !Trainee6B->HasHumanLogicalBallControl();
+    // 85 cm is BELOW the normal 92 cm physical impact range, leaving margin
+    // for motion during montage playback. Do not demand perfect alignment:
+    // the montage's existing contact check decides whether the kick lands.
+    const bool bBallReadyForKick = bLooseBall && !bTackling &&
+        !TackleOpponent6AK->IsAIKickMontageActive() &&
+        DefenderBallDistance <= 85.f && BallSpeedForClearance < 450.f &&
+        Now - AvoidDefenderLastClearanceAt6AL2 > 0.75f;
+    if (bLooseBall && !bTackling && DefenderBallDistance < 220.f &&
+        Now - AvoidDefenderLastKickApproachLog6AL51 >= 1.5f)
+    {
+        AvoidDefenderLastKickApproachLog6AL51 = Now;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AL51] APPROACH attempt=%d dist=%.1f speed=%.1f front=%.2f lateral=%.1f ready=%s"),
+            AvoidTackleAttempt6AL, DefenderBallDistance, BallSpeedForClearance,
+            FrontDot, SideOffset, bBallReadyForKick ? TEXT("YES") : TEXT("NO"));
+    }
+
+    if (bBallReadyForKick)
+    {
+        if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
+            AI->StopMovement();
+        TackleOpponent6AK->SetAIChasingBall(false);
+        TackleOpponent6AK->SetActorRotation(KickDirection.Rotation());
+        // GameMode does not simulate the strike: possession and montage are
+        // owned by ASoccerAICharacter, exactly as in normal play.
+        // Final ownership handoff: never start a rival kick with a lingering
+        // human claim, even if it was reacquired between Tick samples.
+        if (Trainee6B->IsPossessingBall() || Trainee6B->HasHumanLogicalBallControl())
+        {
             Trainee6B->ReleaseBallForAISteal();
-        const FVector TargetWorld = Field->PitchLocalToWorld(OutLocal);
-        TackleOpponent6AK->SetActorRotation((TargetWorld - Defender).Rotation());
-        // A restart-style montage holds the ball until authored foot contact;
-        // unlike KickToTarget it never produces a magical delayed impulse.
-        // The class uses its existing configured strike/pass animations.
-        TackleOpponent6AK->ReleaseAIBall(false);
-        const bool bMontageStarted = TackleOpponent6AK->StartAIKickMontageForRestart(
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AL52] HUMAN CLAIM RELEASED AT KICK attempt=%d"),
+                AvoidTackleAttempt6AL);
+        }
+        if (!TackleOpponent6AK->IsAIPossessingBall())
+            TackleOpponent6AK->PossessAIBall(PracticeBall6B);
+        // The target is now >20m outside the touchline. The clearance needs
+        // sufficient horizontal velocity, independent of older BP defaults.
+        const float ClearanceSpeed6AL52 = FMath::Max(1850.f, AvoidDefenderClearanceSpeed6AL2);
+        const bool bStarted = TackleOpponent6AK->TryStartAIKickMontageForOpenPlay(
             PracticeBall6B, TargetWorld,
-            AvoidDefenderClearanceSpeed6AL2, 0.3f, 3.f, false);
-        if (bMontageStarted)
+            ClearanceSpeed6AL52, 0.3f, 3.f, false);
+        if (bStarted)
         {
             bAvoidDefenderClearing6AL2 = true;
             bAvoidDefenderKickImpactLogged6AL4 = false;
             AvoidDefenderLastClearanceAt6AL2 = Now;
-            AvoidTackleFeedback6AL = TEXT("El defensor recupero. Despeje animado hacia la banda...");
+            AvoidTackleFeedback6AL = TEXT("El defensor despeja hacia la banda...");
             UE_LOG(LogTemp, Display,
-                TEXT("[Training6AL4] CLEARANCE MONTAGE START attempt=%d ballDist=%.1f"),
-                AvoidTackleAttempt6AL, DefenderBallDistance);
+                TEXT("[Training6AL52] OPEN PLAY KICK START attempt=%d dist=%.1f targetOutside=%.1f kickSpeed=%.1f humanClaim=%s"),
+                AvoidTackleAttempt6AL, DefenderBallDistance,
+                FMath::Abs(OutLocal.Y) - SoccerFieldDimensions::HalfPitchWidthCm,
+                ClearanceSpeed6AL52,
+                Trainee6B->HasHumanLogicalBallControl() ? TEXT("YES") : TEXT("NO"));
         }
         else
         {
-            // Do not fake a kick if the field-player montage is missing.
+            // Failure cannot turn into an instantaneous fake kick.
+            TackleOpponent6AK->ReleaseAIBall(false);
+            // Prevent one warning every Tick if the character is still recovering
+            // from a tackle or temporarily cannot play its kick montage.
+            AvoidDefenderLastClearanceAt6AL2 = Now;
             UE_LOG(LogTemp, Warning,
-                TEXT("[Training6AL4] CLEARANCE MONTAGE FAILED attempt=%d; check AI Kick Animations montages on BP_SoccerAIFieldPlayer"),
+                TEXT("[Training6AL51] OPEN PLAY MONTAGE FAILED attempt=%d; check kick montages / animation state"),
                 AvoidTackleAttempt6AL);
+        }
+        return;
+    }
+    // A loose ball near the defender is NOT sufficient for kicking: approach
+    // from the inside of the field, with the target in front of the player's foot.
+    // Do not re-tackle an unpossessed ball while arranging a clearance.
+    if (!bHumanControl && !Trainee6B->HasHumanLogicalBallControl())
+    {
+        if (TackleOpponent6AK->IsAIPossessingBall())
+            TackleOpponent6AK->ReleaseAIBall(false);
+        if (Now - AvoidDefenderLastMoveAt6AL2 >= AvoidDefenderRepathSeconds6AL2)
+        {
+            if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
+            {
+                // Far away: approach from behind the ball. Close up: move
+                // toward the ball itself so capsule/path acceptance cannot
+                // park the defender 90-140 cm away from an unreachable offset.
+                const FVector ApproachTarget = DefenderBallDistance > 170.f
+                    ? DesiredStandingPoint : Ball;
+                AI->MoveToLocation(ApproachTarget, 12.f, true, true, true, true, nullptr, true);
+                TackleOpponent6AK->SetAIChasingBall(true);
+                TackleOpponent6AK->RequestAIMovementMode(
+                    ESoccerAIMovementMode::Run,
+                    ESoccerAIMovementReason::PressBallCarrier, true);
+                AvoidDefenderLastMoveAt6AL2 = Now;
+            }
         }
         return;
     }

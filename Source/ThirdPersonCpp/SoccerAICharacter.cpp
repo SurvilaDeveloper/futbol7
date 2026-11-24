@@ -1671,6 +1671,35 @@ bool ASoccerAICharacter::StartAIKickMontageForRestart(
 	);
 }
 
+bool ASoccerAICharacter::TryStartAIKickMontageForOpenPlay(
+	ASoccerBall* BallToKick,
+	const FVector& TargetLocation,
+	float HorizontalSpeed,
+	float MinTravelTime,
+	float MaxTravelTime,
+	bool bUseAirTarget
+)
+{
+	if (!IsValid(BallToKick) || !bAIIsPossessingBall ||
+		ControlledBall != BallToKick || bAIKickMontageActive)
+	{
+		return false;
+	}
+
+	float SpeedToUse = HorizontalSpeed;
+	UAnimMontage* KickMontage = SelectAIKickMontageForTarget(
+		TargetLocation, SpeedToUse);
+	if (!KickMontage)
+	{
+		return false;
+	}
+	// Reuse the match's normal montage, ball-release, impact timer, and
+	// physical-contact validation. No restart ball freeze and no fallback kick.
+	return StartAIKickMontage(
+		KickMontage, TargetLocation, SpeedToUse,
+		MinTravelTime, MaxTravelTime, bUseAirTarget, false);
+}
+
 bool ASoccerAICharacter::IsAIKickMontageActive() const
 {
 	return bAIKickMontageActive;

@@ -212,6 +212,20 @@ public:
 		bool bUseAirTarget
 	);
 
+	// Training/gameplay callers can start the SAME open-play kick montage used
+	// by KickAIBallToTarget, but receive an explicit success flag and NEVER
+	// invoke its immediate-kick fallback if the montage cannot start.
+	// Requires normal AI possession of BallToKick. Physical proximity at the
+	// authored foot-impact time is enforced by the existing kick machinery.
+	bool TryStartAIKickMontageForOpenPlay(
+		ASoccerBall* BallToKick,
+		const FVector& TargetLocation,
+		float HorizontalSpeed,
+		float MinTravelTime,
+		float MaxTravelTime,
+		bool bUseAirTarget = false
+	);
+
 	// True while an AI pass/shot/restart montage is still active.
 	bool IsAIKickMontageActive() const;
 

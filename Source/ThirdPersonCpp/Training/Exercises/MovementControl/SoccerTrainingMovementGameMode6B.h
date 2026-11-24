@@ -147,7 +147,7 @@ private:
     UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL2", meta=(ClampMin="0.5", ClampMax="6.0"))
     float AvoidDefenderTackleCooldown6AL2 = 1.7f;
     UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL2", meta=(ClampMin="150.0", ClampMax="1500.0"))
-    float AvoidDefenderClearanceSpeed6AL2 = 1050.f;
+    float AvoidDefenderClearanceSpeed6AL2 = 1850.f;
     float AvoidDefenderLastMoveAt6AL2 = -100.f;
     float AvoidDefenderLastTackleAt6AL2 = -100.f;
     float AvoidDefenderLastClearanceAt6AL2 = -100.f;
@@ -159,6 +159,10 @@ private:
     // a short clearance returns the defender to a genuine second possession.
     bool bAvoidDefenderClearing6AL2 = false;
     bool bAvoidDefenderKickImpactLogged6AL4 = false;
+    // 6AL.5: an attempted kick is distinguished from a real foot contact.
+    int32 AvoidDefenderKickMisses6AL5 = 0;
+    // 6AL.5.1: throttle navigation/alignment diagnostics near a loose ball.
+    float AvoidDefenderLastKickApproachLog6AL51 = -100.f;
 
     bool bAvoidDefenderFoulSeen6AL2 = false;
     int32 AvoidDefenderTackles6AL2 = 0;
