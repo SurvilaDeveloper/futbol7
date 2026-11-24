@@ -134,11 +134,15 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         Body6H->SetFont(BodyFont6P);
     }
     if (Body6H) Body6H->SetText(FText::FromString((Mode && Mode->IsTackleLesson6AK())
-        ? TEXT("Etapa 6AK: preparacion del escenario defensivo. El humano y un rival aparecen en la cancha compartida.\n\n"
-               "ESQUIVAR: practica acercarte con la pelota y preparar el salto.\n"
-               "RECUPERAR: observa la posicion del rival para una futura entrada deslizante.\n\n"
-               "En esta etapa el bot todavia NO ejecuta tackles ni conduccion automatica. "
-               "Estos comportamientos y la evaluacion de diez intentos se incorporaran en 6AL-6AN. ")
+        ? (Mode && Mode->IsAvoidTackleLesson6AK()
+            ? TEXT("ESQUIVAR TACKLES — 6AL.2\n\n"
+                   "Avanza con la pelota hasta el area rival. El defensor parte cerca de su arco, "
+                   "corre a interceptarte y se tira hacia la pelota. Podes saltar o cambiar de direccion.\n\n"
+                   "El intento NO termina cuando el tackle acaba. Solo termina al llegar con pelota al area rival, "
+                   "si el defensor recupera y despeja fuera, ante una falta o si la pelota sale. "
+                   "Diez intentos. Los saltos se registran por separado.")
+            : TEXT("RECUPERAR CON TACKLE: escenario preparado (6AK). "
+                   "La conduccion automatica del rival llega en 6AM."))
         : (Mode && Mode->IsZoneFinishLesson6AH())
         ? TEXT("Diez jugadas de conducción y definición. Empezás en el centro de la cancha, con la pelota unos metros adelante.\n\n"
                "Con clic izquierdo podés buscar la pelota y hacer autopases. También podés conducirla con I, J, K y L. "
@@ -199,7 +203,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
     const bool bShot = Mode && Mode->IsChargedShotLesson6M();
-    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("RESULTADOS | DEFINICIÓN POR ZONAS") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("RESULTADOS CONTRA ARQUERO") : bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
+    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsAvoidTackleLesson6AK() ? TEXT("RESULTADOS | ESQUIVAR TACKLES") : Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("RESULTADOS | DEFINICIÓN POR ZONAS") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("RESULTADOS CONTRA ARQUERO") : bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
         ? TEXT("AUTOPASES COMPLETADOS") : TEXT("RECORRIDO COMPLETADO")));
     if (Mode)
     {
@@ -208,9 +212,11 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
             // The ten-shot report needs a smaller font to remain visible
             // inside the existing 6H results panel.
             FSlateFontInfo BodyFont6P = Body6H->Font;
-            BodyFont6P.Size = bShot ? 17 : 19;
+            BodyFont6P.Size = (bShot || (Mode && Mode->IsAvoidTackleLesson6AK())) ? 17 : 19;
             Body6H->SetFont(BodyFont6P);
-            const FString Summary6H = bShot
+            const FString Summary6H = (Mode && Mode->IsAvoidTackleLesson6AK())
+                ? Mode->GetAvoidTackleReport6AL2()
+                : bShot
                 ? FString::Printf(TEXT("Remates realizados: %d / %d\nGoles: %d\nFallos: %d\nEfectividad: %.0f%%\n\nTiempo total: %.1f segundos"),
                     Mode->GetShotsCompleted6N(), Mode->GetShotAttemptsTotal6N(),
                     Mode->GetGoalsScored6N(), Mode->GetShotsCompleted6N() - Mode->GetGoalsScored6N(),
@@ -225,7 +231,9 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         }
         if (Feedback6H)
         {
-            const FString Result = bShot ? TEXT("Revisa la causa de cada resultado. Sin resolucion significa que no se observo el cruce ni un contacto con barrera.")
+            const FString Result = (Mode && Mode->IsAvoidTackleLesson6AK())
+                ? TEXT("Se evaluaron diez duelos: ingreso al area con pelota, recuperacion y despeje, falta o pelota fuera.")
+                : bShot ? TEXT("Revisa la causa de cada resultado. Sin resolucion significa que no se observo el cruce ni un contacto con barrera.")
                 : !Mode->IsTimeEvaluationEnabled6H()
                 ? TEXT("Evaluación pendiente: todavía no definimos el tiempo de aprobación.")
                 : Mode->GetElapsedTime6B() <= Mode->GetApprovalTime6H()

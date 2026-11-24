@@ -27,6 +27,9 @@ class THIRDPERSONCPP_API ASoccerCharacterBase : public ACharacter
 	GENERATED_BODY()
 
 	friend class ASoccerMatchManager;
+	// 6AL.1: allow the standalone training GameMode to set opposing teams.
+	// No match logic, tackle physics or rules are changed.
+	friend class ASoccerTrainingMovementGameMode6B;
 
 public:
 	ASoccerCharacterBase();

@@ -54,6 +54,7 @@ public:
     int32 GetShotAttemptsTotal6N() const { return 10; }
     FString GetLastShotFeedback6P() const;
     FString GetShotResultsReport6P() const;
+    FString GetAvoidTackleReport6AL2() const;
     bool IsBetweenShotAttempts6N() const { return bBetweenShotAttempts6N; }
     void RegisterChargedShotRelease6M(float ChargeFraction);
     // Called only after an autopass click while the player possesses the ball.
@@ -120,6 +121,56 @@ private:
     UPROPERTY(Transient) ASoccerAICharacter* TackleOpponent6AK = nullptr;
     void EnsureTackleOpponent6AK();
     void PositionTackleScenario6AK();
+    // 6AL: training-only use of the exact shared tackle and running-jump actions.
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL", meta=(ClampMin="200.0", ClampMax="900.0"))
+    float AvoidTackleTriggerDistance6AL = 440.f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL", meta=(ClampMin="0.0", ClampMax="600.0"))
+    float AvoidTackleMinimumRunnerSpeed6AL = 100.f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL", meta=(ClampMin="1.0", ClampMax="20.0"))
+    float AvoidTackleResolveSeconds6AL = 4.5f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL", meta=(ClampMin="0.5", ClampMax="10.0"))
+    float AvoidTackleResetDelay6AL = 2.f;
+    int32 AvoidTackleAttempt6AL = 0;
+    int32 AvoidTackleSuccesses6AL = 0;
+    bool bAvoidTackleLaunched6AL = false;
+    bool bAvoidTackleJumpSeen6AL = false;
+    bool bAvoidTackleFallSeen6AL = false;
+    bool bAvoidTackleWaitingReset6AL = false;
+    float AvoidTackleLaunchedAt6AL = -1.f;
+    float AvoidTackleResetAt6AL = -1.f;
+    FString AvoidTackleFeedback6AL;
+    // 6AL.2: keep an open defensive duel until a real on-field outcome.
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL2", meta=(ClampMin="0.1", ClampMax="2.0"))
+    float AvoidDefenderRepathSeconds6AL2 = 0.35f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL2", meta=(ClampMin="100.0", ClampMax="700.0"))
+    float AvoidDefenderTackleBallDistance6AL2 = 330.f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL2", meta=(ClampMin="0.5", ClampMax="6.0"))
+    float AvoidDefenderTackleCooldown6AL2 = 1.7f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL2", meta=(ClampMin="150.0", ClampMax="1500.0"))
+    float AvoidDefenderClearanceSpeed6AL2 = 1050.f;
+    float AvoidDefenderLastMoveAt6AL2 = -100.f;
+    float AvoidDefenderLastTackleAt6AL2 = -100.f;
+    float AvoidDefenderLastClearanceAt6AL2 = -100.f;
+    bool bAvoidDefenderWasTackling6AL2 = false;
+    // 6AL.3: avoid repeated release attempts during the same tackle.
+    bool bAvoidDefenderBallDislodgedThisTackle6AL3 = false;
+
+    // 6AL.4: only an authored montage can initiate training clearance;
+    // a short clearance returns the defender to a genuine second possession.
+    bool bAvoidDefenderClearing6AL2 = false;
+    bool bAvoidDefenderKickImpactLogged6AL4 = false;
+
+    bool bAvoidDefenderFoulSeen6AL2 = false;
+    int32 AvoidDefenderTackles6AL2 = 0;
+    int32 AvoidDefenderJumps6AL2 = 0;
+    int32 AvoidDefenderFouls6AL2 = 0;
+    int32 AvoidDefenderRecoveries6AL2 = 0;
+    int32 AvoidDefenderOuts6AL2 = 0;
+    int32 AvoidDefenderAttemptsFinished6AL2 = 0;
+    TArray<FString> AvoidDefenderAttemptResults6AL2;
+    void FinishAvoidTackleAttempt6AL2(const FString& Outcome, bool bHumanSuccess);
+    void TickAvoidTackle6AL(float DeltaSeconds);
+    void ResetAvoidTackle6AL();
     // 6AI only: a goalkeeper can rush out BEFORE a zone shot is released.
     // Do not enable in the legacy 6AG goalkeeper-shot exercise.
     bool bKeeperInterceptionThisAttempt6AI = false;

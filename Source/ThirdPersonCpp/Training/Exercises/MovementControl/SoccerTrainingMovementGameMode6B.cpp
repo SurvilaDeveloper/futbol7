@@ -175,9 +175,13 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     }
     if (!IsExerciseRunning6H() || !IsValid(PracticeBall6B) || !IsValid(Trainee6B)) return;
     ElapsedTime6B += DeltaSeconds;
-    // 6AK: scenario preparation only. Tackle AI and scoring arrive in 6AL/6AM.
-    // Avoid running the four-checkpoint lesson or the shooting flow here.
-    if (IsTackleLesson6AK()) return;
+    // 6AL owns only the evasion exercise; WinTackle remains the 6AK scenario.
+    if (bAvoidTackleLesson6AK)
+    {
+        TickAvoidTackle6AL(DeltaSeconds);
+        return;
+    }
+    if (bWinTackleLesson6AK) return;
     // 6AJ: a zone is reached when the BALL (including its physical radius)
     // enters the target, not when the player crosses the marker.
     if (bZoneFinishLesson6AH && !bBetweenShotAttempts6N && !bShotReleased6M &&
@@ -1634,6 +1638,20 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     {
         EnsureTackleOpponent6AK();
         PositionTackleScenario6AK();
+        if (bAvoidTackleLesson6AK)
+        {
+            AvoidTackleAttempt6AL = 1;
+            AvoidTackleSuccesses6AL = 0;
+            AvoidDefenderTackles6AL2 = 0;
+            AvoidDefenderJumps6AL2 = 0;
+            AvoidDefenderFouls6AL2 = 0;
+            AvoidDefenderRecoveries6AL2 = 0;
+            AvoidDefenderOuts6AL2 = 0;
+            AvoidDefenderAttemptsFinished6AL2 = 0;
+            AvoidDefenderAttemptResults6AL2.Empty();
+            AvoidTackleFeedback6AL = TEXT("Conduce hacia el defensor y salta cuando se arroje al piso.");
+            ResetAvoidTackle6AL();
+        }
     }
     UE_LOG(LogTemp, Display, TEXT("[Training6H] Exercise started, timer reset."));
 }
@@ -1709,6 +1727,356 @@ FString ASoccerTrainingMovementGameMode6B::GetBallDiagnostics6E() const
         BallVelocity.Size2D(), ForwardDistance, *ControlValue);
 }
 
+void ASoccerTrainingMovementGameMode6B::ResetAvoidTackle6AL()
+{
+    if (!bAvoidTackleLesson6AK) return;
+    bAvoidTackleLaunched6AL = false;
+    bAvoidTackleJumpSeen6AL = false;
+    bAvoidTackleFallSeen6AL = false;
+    bAvoidTackleWaitingReset6AL = false;
+    AvoidTackleLaunchedAt6AL = -1.f;
+    AvoidTackleResetAt6AL = -1.f;
+    AvoidDefenderLastMoveAt6AL2 = -100.f;
+    AvoidDefenderLastTackleAt6AL2 = -100.f;
+    AvoidDefenderLastClearanceAt6AL2 = -100.f;
+    bAvoidDefenderWasTackling6AL2 = false;
+    bAvoidDefenderBallDislodgedThisTackle6AL3 = false;
+    bAvoidDefenderClearing6AL2 = false;
+    bAvoidDefenderKickImpactLogged6AL4 = false;
+    bAvoidDefenderFoulSeen6AL2 = false;
+    if (IsValid(TackleOpponent6AK))
+    {
+        // Cancel the previous attempt's pending animated foot impact FIRST.
+        // Otherwise its timer can propel the newly positioned ball.
+        TackleOpponent6AK->CancelAIKickMontageBeforeImpact();
+        TackleOpponent6AK->ReleaseAIBall(false);
+        if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
+            AI->StopMovement();
+        TackleOpponent6AK->SetAIChasingBall(false);
+    }
+    if (IsValid(Trainee6B))
+    {
+        // 6AL.4: clear BOTH logical and physical human possession before
+        // teleporting the ball; this must happen on every attempt reset.
+        Trainee6B->ReleaseBallForAISteal();
+        if (IsValid(PracticeBall6B)) PracticeBall6B->SetPossessed(false);
+        UE_LOG(LogTemp, Display, TEXT("[Training6AL4] RESET POSSESSION attempt=%d human=%s logical=%s"),
+            AvoidTackleAttempt6AL,
+            Trainee6B->IsPossessingBall() ? TEXT("YES") : TEXT("NO"),
+            Trainee6B->HasHumanLogicalBallControl() ? TEXT("YES") : TEXT("NO"));
+        if (Trainee6B->IsTackleEvasionActive()) Trainee6B->CancelTackleEvasion();
+        if (Trainee6B->IsTackleActive()) Trainee6B->CancelTackle();
+        if (UCharacterMovementComponent* Move = Trainee6B->GetCharacterMovement())
+            Move->StopMovementImmediately();
+    }
+    PositionTackleScenario6AK();
+    UE_LOG(LogTemp, Display, TEXT("[Training6AL] READY attempt=%d"), AvoidTackleAttempt6AL);
+}
+
+FString ASoccerTrainingMovementGameMode6B::GetAvoidTackleReport6AL2() const
+{
+    FString Report = FString::Printf(
+        TEXT("Duelos: %d / 10\nLlegadas con pelota al area: %d\nTackles del defensor: %d\nSaltos registrados: %d\nFaltas del defensor: %d\nRecuperaciones + despeje: %d\nPelota fuera: %d\n\n"),
+        AvoidDefenderAttemptsFinished6AL2, AvoidTackleSuccesses6AL,
+        AvoidDefenderTackles6AL2, AvoidDefenderJumps6AL2,
+        AvoidDefenderFouls6AL2, AvoidDefenderRecoveries6AL2, AvoidDefenderOuts6AL2);
+    for (int32 i = 0; i < AvoidDefenderAttemptResults6AL2.Num(); ++i)
+        Report += FString::Printf(TEXT("%02d. %s\n"), i + 1, *AvoidDefenderAttemptResults6AL2[i]);
+    return Report;
+}
+
+void ASoccerTrainingMovementGameMode6B::FinishAvoidTackleAttempt6AL2(
+    const FString& Outcome, bool bHumanSuccess)
+{
+    if (bAvoidTackleWaitingReset6AL || bComplete6B || !GetWorld()) return;
+    if (AAIController* AI = IsValid(TackleOpponent6AK)
+        ? Cast<AAIController>(TackleOpponent6AK->GetController()) : nullptr)
+        AI->StopMovement();
+    if (bHumanSuccess) ++AvoidTackleSuccesses6AL;
+    AvoidDefenderJumps6AL2 += bAvoidTackleJumpSeen6AL ? 1 : 0;
+    ++AvoidDefenderAttemptsFinished6AL2;
+    AvoidDefenderAttemptResults6AL2.Add(Outcome);
+    AvoidTackleFeedback6AL = Outcome;
+    UE_LOG(LogTemp, Display,
+        TEXT("[Training6AL2] END attempt=%d outcome=%s jumped=%s fell=%s successes=%d"),
+        AvoidTackleAttempt6AL, *Outcome,
+        bAvoidTackleJumpSeen6AL ? TEXT("YES") : TEXT("NO"),
+        bAvoidTackleFallSeen6AL ? TEXT("YES") : TEXT("NO"), AvoidTackleSuccesses6AL);
+    bAvoidTackleWaitingReset6AL = true;
+    AvoidTackleResetAt6AL = GetWorld()->GetTimeSeconds() + AvoidTackleResetDelay6AL;
+    if (AvoidDefenderAttemptsFinished6AL2 >= 10)
+    {
+        bComplete6B = true;
+        UE_LOG(LogTemp, Display, TEXT("[Training6AL2] FINAL\n%s"), *GetAvoidTackleReport6AL2());
+        if (ASoccerTrainingPlayerController6B* PC =
+            Cast<ASoccerTrainingPlayerController6B>(GetWorld()->GetFirstPlayerController()))
+            PC->ShowExerciseResults6H();
+    }
+}
+
+void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
+{
+    (void)DeltaSeconds;
+    if (!bAvoidTackleLesson6AK || !IsValid(TackleOpponent6AK) ||
+        !IsValid(Trainee6B) || !IsValid(PracticeBall6B) || !GetWorld()) return;
+    const float Now = GetWorld()->GetTimeSeconds();
+    if (bAvoidTackleWaitingReset6AL)
+    {
+        if (Now >= AvoidTackleResetAt6AL && !bComplete6B)
+        {
+            ++AvoidTackleAttempt6AL;
+            ResetAvoidTackle6AL();
+        }
+        return;
+    }
+    ASoccerField* Field = FindSharedField6L();
+    if (!Field) return;
+
+    const FVector Human = Trainee6B->GetActorLocation();
+    const FVector Defender = TackleOpponent6AK->GetActorLocation();
+    const FVector Ball = PracticeBall6B->GetActorLocation();
+    const FVector LocalBall = Field->WorldToPitchLocal(Ball);
+    const FVector LocalHuman = Field->WorldToPitchLocal(Human);
+    const float DefenderBallDistance = FVector::Dist2D(Defender, Ball);
+    const float HumanBallDistance = FVector::Dist2D(Human, Ball);
+    bool bHumanControl = Trainee6B->IsPossessingBall();
+    bAvoidTackleJumpSeen6AL |= Trainee6B->IsTackleEvasionActive();
+    bAvoidTackleFallSeen6AL |= Trainee6B->IsTackleFallReactionActive();
+
+    // Four ONLY terminal events: area reached WITH the ball; rival recovers
+    // then clears out; a foul; or an independent ball out. No 4.5-second timer.
+    const bool bBallOut = FMath::Abs(LocalBall.X) > SoccerFieldDimensions::HalfPitchLengthCm + 10.f ||
+        FMath::Abs(LocalBall.Y) > SoccerFieldDimensions::HalfPitchWidthCm + 10.f;
+    if (bBallOut)
+    {
+        if (bAvoidDefenderClearing6AL2)
+        {
+            ++AvoidDefenderRecoveries6AL2;
+            FinishAvoidTackleAttempt6AL2(TEXT("DEFENSOR RECUPERO Y DESPEJO FUERA"), false);
+        }
+        else
+        {
+            ++AvoidDefenderOuts6AL2;
+            FinishAvoidTackleAttempt6AL2(TEXT("PELOTA FUERA DEL CAMPO"), false);
+        }
+        return;
+    }
+
+    const bool bHumanInOpposingArea =
+        SoccerFieldDimensions::IsLocationInsidePenaltyArea2D(LocalHuman, +1.f) &&
+        SoccerFieldDimensions::IsLocationInsidePenaltyArea2D(LocalBall, +1.f) &&
+        (bHumanControl || HumanBallDistance <= 180.f);
+    if (!bAvoidDefenderClearing6AL2 && bHumanInOpposingArea)
+    {
+        FinishAvoidTackleAttempt6AL2(TEXT("EXITO: LLEGO AL AREA CON PELOTA"), true);
+        return;
+    }
+
+    // Once the defender has recovered possession, immediately clear sideways.
+    // Do not mark the attempt finished until the ball REALLY leaves the pitch.
+    if (bAvoidDefenderClearing6AL2)
+    {
+        // 6AL.4: the montage owns the foot impact. NEVER kick a distant
+        // or stopped ball from GameMode as a "retry".
+        if (TackleOpponent6AK->HasAIKickMontageImpactedBall() &&
+            !bAvoidDefenderKickImpactLogged6AL4)
+        {
+            bAvoidDefenderKickImpactLogged6AL4 = true;
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AL4] FOOT IMPACT attempt=%d speed=%.1f"),
+                AvoidTackleAttempt6AL, PracticeBall6B->GetBallPhysicsVelocity().Size2D());
+        }
+        if (!TackleOpponent6AK->IsAIKickMontageActive() &&
+            Now - AvoidDefenderLastClearanceAt6AL2 > 1.0f &&
+            PracticeBall6B->GetBallPhysicsVelocity().Size2D() < 110.f)
+        {
+            // A short clearance is NOT a success: resume the normal
+            // NavMesh approach, collect the loose ball and kick again.
+            bAvoidDefenderClearing6AL2 = false;
+            bAvoidDefenderKickImpactLogged6AL4 = false;
+            TackleOpponent6AK->SetAIChasingBall(true);
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AL4] CLEARANCE SHORT attempt=%d; chase and kick again"),
+                AvoidTackleAttempt6AL);
+        }
+        return;
+    }
+
+    const bool bTackling = TackleOpponent6AK->IsTackleActive();
+    // 6AL.3: a *real, applied* foot-to-ball tackle touch must release
+    // the human's logical possession. Otherwise the ball may move physically
+    // while the human keeps controlling it and the defender can never steal it.
+    // Read the active contact summary; never dislodge on proximity or animation.
+    if (bTackling && !bAvoidDefenderBallDislodgedThisTackle6AL3)
+    {
+        const FSoccerTackleContactSummary ActiveContact =
+            TackleOpponent6AK->GetTackleContactSummary();
+        if (ActiveContact.bBallContactOccurred && ActiveContact.bBallContactApplied)
+        {
+            bAvoidDefenderBallDislodgedThisTackle6AL3 = true;
+            if (bHumanControl || Trainee6B->HasHumanLogicalBallControl())
+            {
+                Trainee6B->ReleaseBallForAISteal();
+                bHumanControl = false;
+                UE_LOG(LogTemp, Display,
+                    TEXT("[Training6AL3] BALL DISLODGED attempt=%d defenderDist=%.1f ballSpeed=%.1f"),
+                    AvoidTackleAttempt6AL, DefenderBallDistance,
+                    PracticeBall6B->GetBallPhysicsVelocity().Size2D());
+            }
+            else
+            {
+                UE_LOG(LogTemp, Display,
+                    TEXT("[Training6AL3] BALL CONTACT attempt=%d humanAlreadyLoose=YES"),
+                    AvoidTackleAttempt6AL);
+            }
+        }
+    }
+    if (bAvoidDefenderWasTackling6AL2 && !bTackling)
+    {
+        const FSoccerTackleContactSummary Contact = TackleOpponent6AK->GetTackleContactSummary();
+        // Match-derived foul conditions, restricted to the *training* GameMode.
+        // No SoccerMatchManager exists here to adjudicate stoppages.
+        if (Contact.bOpponentContactOccurred)
+        {
+            const bool bValidBall = Contact.bBallContactOccurred && Contact.bBallContactApplied;
+            const float Lead = Contact.OpponentContactNormalizedTime - Contact.BallContactNormalizedTime;
+            const bool bBallFirst = bValidBall && Lead > 0.035f;
+            const bool bSimultaneous = bValidBall && FMath::Abs(Lead) <= 0.035f;
+            const bool bCleanBallFirst = bBallFirst &&
+                !Contact.bOpponentContactFromBehind && Contact.OpponentContactHeightCm < 30.f &&
+                Contact.OpponentContactRelativeSpeedCmPerSec <= 720.f;
+            // Mirrors the match's default order/speed/height foul tests; it
+            // deliberately does not instantiate or tick SoccerMatchManager.
+            const bool bFoul = !bValidBall ||
+                (bSimultaneous && (Contact.bOpponentContactFromBehind ||
+                    Contact.OpponentContactRelativeSpeedCmPerSec >= 420.f ||
+                    Contact.OpponentContactHeightCm >= 30.f)) ||
+                (bBallFirst && !bCleanBallFirst) ||
+                (!bBallFirst && !bSimultaneous);
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AL2] TACKLE CONTACT ball=%s applied=%s opponent=%s cleanFirst=%s speed=%.1f height=%.1f foul=%s"),
+                Contact.bBallContactOccurred ? TEXT("YES") : TEXT("NO"),
+                Contact.bBallContactApplied ? TEXT("YES") : TEXT("NO"),
+                Contact.bOpponentContactOccurred ? TEXT("YES") : TEXT("NO"),
+                bCleanBallFirst ? TEXT("YES") : TEXT("NO"),
+                Contact.OpponentContactRelativeSpeedCmPerSec,
+                Contact.OpponentContactHeightCm, bFoul ? TEXT("YES") : TEXT("NO"));
+            if (bFoul)
+            {
+                ++AvoidDefenderFouls6AL2;
+                FinishAvoidTackleAttempt6AL2(TEXT("FALTA DEL DEFENSOR"), false);
+                return;
+            }
+        }
+        // If the tackle ended between Tick samples, the saved contact summary
+        // still tells us whether a real ball response was applied.
+        if (Contact.bBallContactApplied && !bAvoidDefenderBallDislodgedThisTackle6AL3 &&
+            (bHumanControl || Trainee6B->HasHumanLogicalBallControl()))
+        {
+            Trainee6B->ReleaseBallForAISteal();
+            bHumanControl = false;
+            bAvoidDefenderBallDislodgedThisTackle6AL3 = true;
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AL3] BALL DISLODGED AT END attempt=%d"), AvoidTackleAttempt6AL);
+        }
+        bAvoidDefenderWasTackling6AL2 = false;
+    }
+
+    // Possession must actually be gained, not merely a ball contact.
+    // With the regular match AI Tick disabled, collect a genuinely loose
+    // ball when it is within reach of the defender and no longer held by human.
+    if (!TackleOpponent6AK->IsAIPossessingBall() && !bHumanControl &&
+        DefenderBallDistance <= 135.f &&
+        PracticeBall6B->GetBallPhysicsVelocity().Size2D() <= 850.f &&
+        !bTackling)
+    {
+        TackleOpponent6AK->PossessAIBall(PracticeBall6B);
+        UE_LOG(LogTemp, Display, TEXT("[Training6AL3] RECOVERED attempt=%d ballDist=%.1f"),
+            AvoidTackleAttempt6AL, DefenderBallDistance);
+    }
+    if (TackleOpponent6AK->IsAIPossessingBall())
+    {
+        if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController())) AI->StopMovement();
+        const float Side = LocalBall.Y >= 0.f ? 1.f : -1.f;
+        const FVector OutLocal(FMath::Clamp(LocalBall.X,
+            -SoccerFieldDimensions::HalfPitchLengthCm + 150.f,
+             SoccerFieldDimensions::HalfPitchLengthCm - 150.f),
+            Side * (SoccerFieldDimensions::HalfPitchWidthCm + 1100.f), LocalBall.Z);
+        if (bHumanControl || Trainee6B->HasHumanLogicalBallControl())
+            Trainee6B->ReleaseBallForAISteal();
+        const FVector TargetWorld = Field->PitchLocalToWorld(OutLocal);
+        TackleOpponent6AK->SetActorRotation((TargetWorld - Defender).Rotation());
+        // A restart-style montage holds the ball until authored foot contact;
+        // unlike KickToTarget it never produces a magical delayed impulse.
+        // The class uses its existing configured strike/pass animations.
+        TackleOpponent6AK->ReleaseAIBall(false);
+        const bool bMontageStarted = TackleOpponent6AK->StartAIKickMontageForRestart(
+            PracticeBall6B, TargetWorld,
+            AvoidDefenderClearanceSpeed6AL2, 0.3f, 3.f, false);
+        if (bMontageStarted)
+        {
+            bAvoidDefenderClearing6AL2 = true;
+            bAvoidDefenderKickImpactLogged6AL4 = false;
+            AvoidDefenderLastClearanceAt6AL2 = Now;
+            AvoidTackleFeedback6AL = TEXT("El defensor recupero. Despeje animado hacia la banda...");
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AL4] CLEARANCE MONTAGE START attempt=%d ballDist=%.1f"),
+                AvoidTackleAttempt6AL, DefenderBallDistance);
+        }
+        else
+        {
+            // Do not fake a kick if the field-player montage is missing.
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Training6AL4] CLEARANCE MONTAGE FAILED attempt=%d; check AI Kick Animations montages on BP_SoccerAIFieldPlayer"),
+                AvoidTackleAttempt6AL);
+        }
+        return;
+    }
+
+    // Training-driven NavMesh orders: regular match tactical Tick remains OFF.
+    if (!bTackling)
+    {
+        if (Now - AvoidDefenderLastMoveAt6AL2 >= AvoidDefenderRepathSeconds6AL2)
+        {
+            if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
+            {
+                const FVector Prediction = Ball + PracticeBall6B->GetBallPhysicsVelocity() * 0.18f;
+                // The previous 110cm acceptance radius could stop the bot
+                // outside actual ball-collection range, particularly after a tackle.
+                AI->MoveToLocation(Prediction, 40.f, true, true, true, true, nullptr, true);
+                TackleOpponent6AK->SetAIChasingBall(true);
+                TackleOpponent6AK->RequestAIMovementMode(
+                    ESoccerAIMovementMode::FastRun,
+                    ESoccerAIMovementReason::PressBallCarrier, true);
+                AvoidDefenderLastMoveAt6AL2 = Now;
+            }
+        }
+        // Tackle only in a plausible race to win the ball, not towards human body.
+        if (DefenderBallDistance <= AvoidDefenderTackleBallDistance6AL2 &&
+            FVector::Dist2D(Defender, Human) < 570.f &&
+            HumanBallDistance < 225.f &&
+            Now - AvoidDefenderLastTackleAt6AL2 >= AvoidDefenderTackleCooldown6AL2 &&
+            !Trainee6B->IsTackleFallReactionActive())
+        {
+            if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController())) AI->StopMovement();
+            TackleOpponent6AK->SetActorRotation((Ball - Defender).Rotation());
+            if (TackleOpponent6AK->TryStartTackleTowardLocation(Ball))
+            {
+                bAvoidDefenderBallDislodgedThisTackle6AL3 = false;
+                AvoidDefenderLastTackleAt6AL2 = Now;
+                bAvoidDefenderWasTackling6AL2 = true;
+                ++AvoidDefenderTackles6AL2;
+                AvoidTackleFeedback6AL = TEXT("El defensor se tiro hacia la pelota. Esquivalo y llega al area.");
+                UE_LOG(LogTemp, Display,
+                    TEXT("[Training6AL2] TACKLE START attempt=%d distanceBall=%.1f distanceHuman=%.1f"),
+                    AvoidTackleAttempt6AL, DefenderBallDistance, FVector::Dist2D(Defender, Human));
+            }
+        }
+    }
+    else
+        bAvoidDefenderWasTackling6AL2 = true;
+}
+
 void ASoccerTrainingMovementGameMode6B::EnsureTackleOpponent6AK()
 {
     if (!IsTackleLesson6AK() || IsValid(TackleOpponent6AK) || !GetWorld()) return;
@@ -1728,6 +2096,18 @@ void ASoccerTrainingMovementGameMode6B::EnsureTackleOpponent6AK()
         Field->GetActorRotation(), Params);
     if (IsValid(TackleOpponent6AK))
     {
+        // 6AL.1: the tackle sweep rejects contacts between teammates.
+        // A spawned BP may default to PlayerTeam even though it is the rival.
+        // Force the actual training opponent onto the opposite team.
+        if (TackleOpponent6AK->Team != ESoccerTeam::OpponentTeam)
+        {
+            TackleOpponent6AK->Team = ESoccerTeam::OpponentTeam;
+            TackleOpponent6AK->ApplyTeamUniform();
+        }
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AL1] OPPONENT SPAWN team=%d class=%s"),
+            static_cast<int32>(TackleOpponent6AK->GetTeam()),
+            *GetNameSafe(TackleOpponentClass6AK.Get()));
         // A match controller expects SoccerMatchManager. Do not run that AI here.
         if (AController* AI = TackleOpponent6AK->GetController())
         {
@@ -1745,9 +2125,29 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
     if (!IsTackleLesson6AK()) return;
     ASoccerField* Field = FindSharedField6L();
     if (!Field || !IsValid(Trainee6B) || !IsValid(PracticeBall6B)) return;
+    // 6AL.1: enforce distinct teams also when the scenario is reset.
+    // This does not affect other lessons or the match GameMode.
+    if (Trainee6B->Team != ESoccerTeam::PlayerTeam)
+    {
+        Trainee6B->Team = ESoccerTeam::PlayerTeam;
+        Trainee6B->ApplyTeamUniform();
+    }
+    if (IsValid(TackleOpponent6AK) && TackleOpponent6AK->Team != ESoccerTeam::OpponentTeam)
+    {
+        TackleOpponent6AK->Team = ESoccerTeam::OpponentTeam;
+        TackleOpponent6AK->ApplyTeamUniform();
+    }
+    UE_LOG(LogTemp, Display,
+        TEXT("[Training6AL1] TEAMS player=%d opponent=%d opposing=%s"),
+        static_cast<int32>(Trainee6B->GetTeam()),
+        IsValid(TackleOpponent6AK) ? static_cast<int32>(TackleOpponent6AK->GetTeam()) : -1,
+        IsValid(TackleOpponent6AK) && Trainee6B->GetTeam() != TackleOpponent6AK->GetTeam()
+            ? TEXT("YES") : TEXT("NO"));
     const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
-    const FVector PlayerLocal(-0.30f * HalfLength, 0.f, 130.f);
-    const FVector RivalLocal(-0.06f * HalfLength,
+    const FVector PlayerLocal(bAvoidTackleLesson6AK ? -0.34f * HalfLength : -0.30f * HalfLength, 0.f, 130.f);
+    const FVector RivalLocal(bAvoidTackleLesson6AK
+        ? SoccerFieldDimensions::RightGoalLineX - SoccerFieldDimensions::PenaltyAreaDepthCm - 230.f
+        : -0.06f * HalfLength,
         bAvoidTackleLesson6AK ? 0.f : 220.f, 130.f);
     const FVector BallLocal = bAvoidTackleLesson6AK
         ? PlayerLocal + FVector(125.f, 0.f, -60.f)
@@ -1755,8 +2155,16 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
     Trainee6B->SetActorLocation(Field->PitchLocalToWorld(PlayerLocal), false,
         nullptr, ETeleportType::TeleportPhysics);
     if (IsValid(TackleOpponent6AK))
-        TackleOpponent6AK->SetActorLocation(Field->PitchLocalToWorld(RivalLocal), false,
+    {
+        if (TackleOpponent6AK->IsTackleActive()) TackleOpponent6AK->CancelTackle();
+        if (UCharacterMovementComponent* Move6AL = TackleOpponent6AK->GetCharacterMovement())
+            Move6AL->StopMovementImmediately();
+        const FVector RivalWorld = Field->PitchLocalToWorld(RivalLocal);
+        TackleOpponent6AK->SetActorLocation(RivalWorld, false,
             nullptr, ETeleportType::TeleportPhysics);
+        if (bAvoidTackleLesson6AK)
+            TackleOpponent6AK->SetActorRotation((Field->PitchLocalToWorld(PlayerLocal) - RivalWorld).Rotation());
+    }
     UPrimitiveComponent* BallBody = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent());
     if (BallBody)
     {
@@ -1822,6 +2230,10 @@ FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
     if (IsTackleLesson6AK())
     {
         if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
+        if (bAvoidTackleLesson6AK)
+            return FString::Printf(TEXT("6AL.2 | Intento %d/10 | Area %d | Tackles %d | %s"),
+                FMath::Min(10, AvoidTackleAttempt6AL), AvoidTackleSuccesses6AL,
+                AvoidDefenderTackles6AL2, *AvoidTackleFeedback6AL);
         return IsValid(TackleOpponent6AK)
             ? (bAvoidTackleLesson6AK
                 ? TEXT("6AK: escenario de esquivar tackles listo. La IA defensiva se integra en 6AL.")
