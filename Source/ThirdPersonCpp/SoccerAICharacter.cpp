@@ -3329,6 +3329,12 @@ void ASoccerAICharacter::RequestAIMovementMode(
 	UpdateAIMovementSpeed();
 }
 
+void ASoccerAICharacter::SetTrainingRunSpeedMultiplier6AL63(float Multiplier)
+{
+	TrainingRunSpeedMultiplier6AL63 = FMath::Clamp(Multiplier, 1.0f, 1.5f);
+	UpdateAIMovementSpeed();
+}
+
 void ASoccerAICharacter::UpdateAIMovementModeForOrder(
 	ESoccerAIOrder CurrentOrder,
 	const FVector& DesiredMoveLocation,
@@ -3757,8 +3763,11 @@ void ASoccerAICharacter::ApplyPlayerProfilePhysicalTuning()
 	if (UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement())
 	{
 		ProfileCharacterMovement->bRequestedMoveUseAcceleration = true;
+		const bool bRunning = CurrentAIMovementMode == ESoccerAIMovementMode::Run ||
+			CurrentAIMovementMode == ESoccerAIMovementMode::FastRun;
 		ProfileCharacterMovement->MaxWalkSpeed =
-			GetAIBaseSpeedForMode(CurrentAIMovementMode);
+			GetAIBaseSpeedForMode(CurrentAIMovementMode) *
+			(bRunning ? TrainingRunSpeedMultiplier6AL63 : 1.0f);
 	}
 
 	if (HasPlayerProfile())
@@ -3893,8 +3902,15 @@ void ASoccerAICharacter::UpdateAIMovementSpeed()
 			GetEnergyAdjustedAIFastRunSpeed();
 	}
 
-	GetCharacterMovement()->MaxWalkSpeed =
-		NewMaxWalkSpeed;
+	// Keep the training-only advantage when stamina or AI movement mode
+	// recalculates speed each tick. Walk/Jog, tackling and kick physics
+	// retain their usual values.
+	if (CurrentAIMovementMode == ESoccerAIMovementMode::Run ||
+		CurrentAIMovementMode == ESoccerAIMovementMode::FastRun)
+	{
+		NewMaxWalkSpeed *= TrainingRunSpeedMultiplier6AL63;
+	}
+	GetCharacterMovement()->MaxWalkSpeed = NewMaxWalkSpeed;
 }
 
 void ASoccerAICharacter::UpdateAIPlayerEnergy(float DeltaTime)

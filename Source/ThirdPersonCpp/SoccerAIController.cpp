@@ -4,6 +4,7 @@
 
 #include "SoccerAICharacter.h"
 #include "SoccerBall.h"
+#include "SoccerTacklePredictionShared.h"
 #include "SoccerCharacterBase.h"
 #include "SoccerDebugManager.h"
 #include "SoccerField.h"
@@ -22888,9 +22889,9 @@ bool ASoccerAIController::TryStartContestedAITackle(
 	FVector CarrierVelocity = Carrier->GetVelocity();
 	CarrierVelocity.Z = 0.0f;
 
-	FVector TargetLocation =
-		BallLocation + CarrierVelocity * LeadTime;
-	TargetLocation.Z = BallLocation.Z;
+	const FVector TargetLocation =
+		SoccerTacklePredictionShared::PredictCarriedBallLocation(
+			BallLocation, CarrierVelocity, LeadTime);
 
 	FVector ToTarget = TargetLocation - CharacterLocation;
 	ToTarget.Z = 0.0f;
@@ -23055,8 +23056,9 @@ bool ASoccerAIController::TryStartContestedAITackle(
 		AIContestedTackleEstimatedAverageSlideSpeed
 	);
 	const float EstimatedArrivalTime =
-		FMath::Max(0.0f, AIContestedTackleEstimatedLaunchDelay) +
-		TargetDistance / EstimatedSlideSpeed;
+		SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
+			CharacterLocation, TargetLocation,
+			EstimatedSlideSpeed, AIContestedTackleEstimatedLaunchDelay);
 
 	LastContestedAITackleAttemptTime = CurrentTime;
 

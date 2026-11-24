@@ -6,6 +6,7 @@
 #include "SoccerBall.h"
 #include "SoccerAICharacter.h"
 #include "SoccerAIController.h"
+#include "SoccerTacklePredictionShared.h"
 #include "SoccerTeamTypes.h"
 #include "SoccerField.h"
 #include "SoccerFieldDimensions.h"
@@ -17,6 +18,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Engine/EngineTypes.h"
 #include "GameFramework/PlayerStart.h"
@@ -1649,7 +1651,7 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
             AvoidDefenderOuts6AL2 = 0;
             AvoidDefenderAttemptsFinished6AL2 = 0;
             AvoidDefenderAttemptResults6AL2.Empty();
-            AvoidTackleFeedback6AL = TEXT("Conduce hacia el defensor y salta cuando se arroje al piso.");
+            AvoidTackleFeedback6AL = TEXT("Zona 0: busca la pelota. Las zonas 1, 2 y 3 tienen un defensor cada una.");
             ResetAvoidTackle6AL();
         }
     }
@@ -1746,16 +1748,25 @@ void ASoccerTrainingMovementGameMode6B::ResetAvoidTackle6AL()
     AvoidDefenderKickMisses6AL5 = 0;
     AvoidDefenderLastKickApproachLog6AL51 = -100.f;
     bAvoidDefenderFoulSeen6AL2 = false;
-    if (IsValid(TackleOpponent6AK))
+    // Cancel every defender's pending foot impact before the ball is moved.
+    // The active pointer is only an alias, so it cannot clean up all three.
+    for (ASoccerAICharacter* Rival6AL6 : AvoidZoneDefenders6AL6)
     {
-        // Cancel the previous attempt's pending animated foot impact FIRST.
-        // Otherwise its timer can propel the newly positioned ball.
-        TackleOpponent6AK->CancelAIKickMontageBeforeImpact();
-        TackleOpponent6AK->ReleaseAIBall(false);
-        if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
+        if (!IsValid(Rival6AL6)) continue;
+        Rival6AL6->CancelAIKickMontageBeforeImpact();
+        if (Rival6AL6->IsTackleActive()) Rival6AL6->CancelTackle();
+        Rival6AL6->ReleaseAIBall(false);
+        if (AAIController* AI = Cast<AAIController>(Rival6AL6->GetController()))
             AI->StopMovement();
-        TackleOpponent6AK->SetAIChasingBall(false);
+        Rival6AL6->SetAIChasingBall(false);
     }
+    ActiveAvoidZone6AL6 = -1;
+    HighestAvoidZone6AL6 = 0;
+    TackleOpponent6AK = nullptr; // Zone 0 has no active defender.
+    LastInactiveDefenderHomeAt6AL6 = -100.f;
+    LastZoneLinesAt6AL6 = -100.f;
+    AvoidCoverLastTarget6AL62.Init(FVector::ZeroVector, 3);
+    AvoidCoverLastOrderAt6AL62.Init(-100.f, 3);
     if (IsValid(Trainee6B))
     {
         // 6AL.4: clear BOTH logical and physical human possession before
@@ -1778,7 +1789,7 @@ void ASoccerTrainingMovementGameMode6B::ResetAvoidTackle6AL()
 FString ASoccerTrainingMovementGameMode6B::GetAvoidTackleReport6AL2() const
 {
     FString Report = FString::Printf(
-        TEXT("Duelos: %d / 10\nLlegadas con pelota al area: %d\nTackles del defensor: %d\nSaltos registrados: %d\nFaltas del defensor: %d\nRecuperaciones + despeje: %d\nPelota fuera: %d\n\n"),
+        TEXT("Duelos: %d / 10\nLlegadas al arco rival con pelota: %d\nTackles del defensor: %d\nSaltos registrados: %d\nFaltas del defensor: %d\nRecuperaciones + despeje: %d\nPelota fuera: %d\n\n"),
         AvoidDefenderAttemptsFinished6AL2, AvoidTackleSuccesses6AL,
         AvoidDefenderTackles6AL2, AvoidDefenderJumps6AL2,
         AvoidDefenderFouls6AL2, AvoidDefenderRecoveries6AL2, AvoidDefenderOuts6AL2);
@@ -1791,13 +1802,18 @@ void ASoccerTrainingMovementGameMode6B::FinishAvoidTackleAttempt6AL2(
     const FString& Outcome, bool bHumanSuccess)
 {
     if (bAvoidTackleWaitingReset6AL || bComplete6B || !GetWorld()) return;
-    if (AAIController* AI = IsValid(TackleOpponent6AK)
-        ? Cast<AAIController>(TackleOpponent6AK->GetController()) : nullptr)
-        AI->StopMovement();
+    for (ASoccerAICharacter* Rival6AL6 : AvoidZoneDefenders6AL6)
+        if (IsValid(Rival6AL6))
+        {
+            if (AAIController* AI = Cast<AAIController>(Rival6AL6->GetController()))
+                AI->StopMovement();
+            Rival6AL6->SetAIChasingBall(false);
+        }
     if (bHumanSuccess) ++AvoidTackleSuccesses6AL;
     AvoidDefenderJumps6AL2 += bAvoidTackleJumpSeen6AL ? 1 : 0;
     ++AvoidDefenderAttemptsFinished6AL2;
-    AvoidDefenderAttemptResults6AL2.Add(Outcome);
+    AvoidDefenderAttemptResults6AL2.Add(FString::Printf(
+        TEXT("%s | zona maxima %d"), *Outcome, HighestAvoidZone6AL6));
     AvoidTackleFeedback6AL = Outcome;
     UE_LOG(LogTemp, Display,
         TEXT("[Training6AL2] END attempt=%d outcome=%s jumped=%s fell=%s successes=%d"),
@@ -1819,7 +1835,7 @@ void ASoccerTrainingMovementGameMode6B::FinishAvoidTackleAttempt6AL2(
 void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
 {
     (void)DeltaSeconds;
-    if (!bAvoidTackleLesson6AK || !IsValid(TackleOpponent6AK) ||
+    if (!bAvoidTackleLesson6AK ||
         !IsValid(Trainee6B) || !IsValid(PracticeBall6B) || !GetWorld()) return;
     const float Now = GetWorld()->GetTimeSeconds();
     if (bAvoidTackleWaitingReset6AL)
@@ -1833,6 +1849,29 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
     }
     ASoccerField* Field = FindSharedField6L();
     if (!Field) return;
+
+    // 6AL.6: use the BALL (not the player) for zone ownership. Zone 0
+    // is a free start; each later zone has exactly one active pursuer.
+    // Do not cancel a foot montage already launched for a legal clearance
+    // when the kicked ball momentarily crosses a zone boundary.
+    DrawAvoidZones6AL6(Now);
+    if (!bAvoidDefenderClearing6AL2)
+        SetActiveAvoidZone6AL6(GetBallZone6AL6(PracticeBall6B->GetActorLocation()));
+    UpdateInactiveAvoidDefenders6AL6(Now);
+
+    if (!IsValid(TackleOpponent6AK))
+    {
+        bAvoidTackleJumpSeen6AL |= Trainee6B->IsTackleEvasionActive();
+        bAvoidTackleFallSeen6AL |= Trainee6B->IsTackleFallReactionActive();
+        const FVector LocalBall6AL6 = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
+        if (FMath::Abs(LocalBall6AL6.X) > SoccerFieldDimensions::HalfPitchLengthCm + 10.f ||
+            FMath::Abs(LocalBall6AL6.Y) > SoccerFieldDimensions::HalfPitchWidthCm + 10.f)
+        {
+            ++AvoidDefenderOuts6AL2;
+            FinishAvoidTackleAttempt6AL2(TEXT("PELOTA FUERA DEL CAMPO"), false);
+        }
+        return; // No opponent may press or tackle while the ball is in zone 0.
+    }
 
     const FVector Human = Trainee6B->GetActorLocation();
     const FVector Defender = TackleOpponent6AK->GetActorLocation();
@@ -1858,11 +1897,48 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
     bAvoidTackleJumpSeen6AL |= Trainee6B->IsTackleEvasionActive();
     bAvoidTackleFallSeen6AL |= Trainee6B->IsTackleFallReactionActive();
 
-    // Four ONLY terminal events: area reached WITH the ball; rival recovers
-    // then clears out; a foul; or an independent ball out. No 4.5-second timer.
+    // 6AL.6.3: the objective is INSIDE the rival (right) goal, not the
+    // penalty area. The whole ball and human capsule must cross the goal
+    // line inside the posts, while the human still owns the ball.
+    // The goal mouth is a special case of "outside pitch": do not finish
+    // as PELOTA FUERA as soon as the ball crosses the line. Allow the human
+    // to follow it into the net. The net depth and posts are from the field.
+    const float GoalLineX = SoccerFieldDimensions::RightGoalLineX;
+    const float GoalDepth = SoccerFieldDimensions::GoalDepthCm;
+    const float BallRadius = PracticeBall6B->GetBallRadiusCm();
+    const UCapsuleComponent* HumanCapsule = Trainee6B->GetCapsuleComponent();
+    const float HumanRadius = HumanCapsule ? HumanCapsule->GetScaledCapsuleRadius() : 42.f;
+    const bool bBallInRivalGoalMouth =
+        LocalBall.X >= GoalLineX &&
+        LocalBall.X <= GoalLineX + GoalDepth - BallRadius &&
+        FMath::Abs(LocalBall.Y) <= SoccerFieldDimensions::GoalHalfWidthCm - BallRadius &&
+        LocalBall.Z >= 0.f &&
+        LocalBall.Z <= SoccerFieldDimensions::GoalHeightCm - BallRadius;
+    const bool bBallFullyAcrossGoalLine =
+        bBallInRivalGoalMouth && LocalBall.X >= GoalLineX + BallRadius;
+    const bool bHumanInsideRivalGoal =
+        LocalHuman.X >= GoalLineX + HumanRadius &&
+        LocalHuman.X <= GoalLineX + GoalDepth - HumanRadius &&
+        FMath::Abs(LocalHuman.Y) <= SoccerFieldDimensions::GoalHalfWidthCm - HumanRadius;
+    const bool bHumanStillControlsBall =
+        bHumanControl || Trainee6B->HasHumanLogicalBallControl();
+    if (!bAvoidDefenderClearing6AL2 && bBallFullyAcrossGoalLine &&
+        bHumanInsideRivalGoal && bHumanStillControlsBall &&
+        !TackleOpponent6AK->IsAIPossessingBall())
+    {
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AL63] GOAL ARRIVAL attempt=%d humanX=%.1f ballX=%.1f ballY=%.1f"),
+            AvoidTackleAttempt6AL, LocalHuman.X, LocalBall.X, LocalBall.Y);
+        FinishAvoidTackleAttempt6AL2(TEXT("EXITO: HUMANO Y PELOTA DENTRO DEL ARCO RIVAL"), true);
+        return;
+    }
+
     const bool bBallOut = FMath::Abs(LocalBall.X) > SoccerFieldDimensions::HalfPitchLengthCm + 10.f ||
         FMath::Abs(LocalBall.Y) > SoccerFieldDimensions::HalfPitchWidthCm + 10.f;
-    if (bBallOut)
+    // Inside the rival goal the ball is not a conventional out-of-bounds
+    // until the human can also cross the line. A defender clearance still
+    // resolves normally when it goes outside the playing field.
+    if (bBallOut && (!bBallInRivalGoalMouth || bAvoidDefenderClearing6AL2))
     {
         if (bAvoidDefenderClearing6AL2)
         {
@@ -1874,17 +1950,6 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
             ++AvoidDefenderOuts6AL2;
             FinishAvoidTackleAttempt6AL2(TEXT("PELOTA FUERA DEL CAMPO"), false);
         }
-        return;
-    }
-
-    const bool bHumanInOpposingArea =
-        SoccerFieldDimensions::IsLocationInsidePenaltyArea2D(LocalHuman, +1.f) &&
-        SoccerFieldDimensions::IsLocationInsidePenaltyArea2D(LocalBall, +1.f) &&
-        (bHumanControl || Trainee6B->HasHumanLogicalBallControl()) &&
-        !TackleOpponent6AK->IsAIPossessingBall();
-    if (!bAvoidDefenderClearing6AL2 && bHumanInOpposingArea)
-    {
-        FinishAvoidTackleAttempt6AL2(TEXT("EXITO: LLEGO AL AREA CON PELOTA"), true);
         return;
     }
 
@@ -2176,18 +2241,63 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
             Now - AvoidDefenderLastTackleAt6AL2 >= AvoidDefenderTackleCooldown6AL2 &&
             !Trainee6B->IsTackleFallReactionActive())
         {
-            if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController())) AI->StopMovement();
-            TackleOpponent6AK->SetActorRotation((Ball - Defender).Rotation());
-            if (TackleOpponent6AK->TryStartTackleTowardLocation(Ball))
+            // 6AL.6.4: the previous tackle always aimed at Ball, its position
+            // NOW, even if the human was sprinting. During a 0.3-0.6s slide
+            // the ball can travel several metres and the tackle arrives late.
+            // Reuse the match's CONTESTED tackle predictor for a carried ball,
+            // but estimate lead time from the current defender-to-interception
+            // distance rather than blindly using a fixed value.
+            const FVector CarrierVelocity = Trainee6B->GetVelocity();
+            const float EstimatedSlideSpeed = FMath::Max(
+                350.f, AvoidTackleEstimatedSlideSpeed6AL64);
+            const float LaunchDelay = FMath::Max(0.f, AvoidTackleLaunchDelay6AL64);
+            const float MinLead = FMath::Max(0.02f, AvoidTackleMinLeadSeconds6AL64);
+            const float MaxLead = FMath::Max(MinLead, AvoidTackleMaxLeadSeconds6AL64);
+            float LeadSeconds = FMath::Clamp(
+                SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
+                    Defender, Ball, EstimatedSlideSpeed, LaunchDelay),
+                MinLead, MaxLead);
+
+            // Two estimates stabilize the lead for a ball moving toward or
+            // away from the tackler. No teleportation of the ball or player.
+            FVector PredictedBall = Ball;
+            for (int32 EstimateIndex = 0; EstimateIndex < 2; ++EstimateIndex)
             {
-                bAvoidDefenderBallDislodgedThisTackle6AL3 = false;
-                AvoidDefenderLastTackleAt6AL2 = Now;
-                bAvoidDefenderWasTackling6AL2 = true;
-                ++AvoidDefenderTackles6AL2;
-                AvoidTackleFeedback6AL = TEXT("El defensor se tiro hacia la pelota. Esquivalo y llega al area.");
-                UE_LOG(LogTemp, Display,
-                    TEXT("[Training6AL2] TACKLE START attempt=%d distanceBall=%.1f distanceHuman=%.1f"),
-                    AvoidTackleAttempt6AL, DefenderBallDistance, FVector::Dist2D(Defender, Human));
+                PredictedBall = SoccerTacklePredictionShared::PredictCarriedBallLocation(
+                    Ball, CarrierVelocity, LeadSeconds);
+                const float Arrival =
+                    SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
+                        Defender, PredictedBall, EstimatedSlideSpeed, LaunchDelay);
+                LeadSeconds = FMath::Clamp(
+                    FMath::Lerp(LeadSeconds, Arrival, 0.65f), MinLead, MaxLead);
+            }
+            PredictedBall = SoccerTacklePredictionShared::PredictCarriedBallLocation(
+                Ball, CarrierVelocity, LeadSeconds);
+
+            // An unreasonable prediction should not launch a blind tackle.
+            // Keep pursuing and reassess on a later Tick instead.
+            const float AimDistance = FVector::Dist2D(Defender, PredictedBall);
+            const float LeadDistance = FVector::Dist2D(Ball, PredictedBall);
+            const float MaximumViableSlideDistance =
+                EstimatedSlideSpeed * MaxLead + 90.f;
+            if (AimDistance <= MaximumViableSlideDistance)
+            {
+                if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
+                    AI->StopMovement();
+                TackleOpponent6AK->SetActorRotation((PredictedBall - Defender).Rotation());
+                if (TackleOpponent6AK->TryStartTackleTowardLocation(PredictedBall))
+                {
+                    bAvoidDefenderBallDislodgedThisTackle6AL3 = false;
+                    AvoidDefenderLastTackleAt6AL2 = Now;
+                    bAvoidDefenderWasTackling6AL2 = true;
+                    ++AvoidDefenderTackles6AL2;
+                    AvoidTackleFeedback6AL = TEXT("El defensor anticipo la trayectoria de la pelota. Esquivalo y entra al arco rival.");
+                    UE_LOG(LogTemp, Display,
+                        TEXT("[Training6AL64] PREDICTIVE TACKLE START attempt=%d ballDist=%.1f humanDist=%.1f carrierSpeed=%.1f lead=%.2fs leadDist=%.1f aimDist=%.1f"),
+                        AvoidTackleAttempt6AL, DefenderBallDistance,
+                        FVector::Dist2D(Defender, Human), CarrierVelocity.Size2D(),
+                        LeadSeconds, LeadDistance, AimDistance);
+                }
             }
         }
     }
@@ -2195,47 +2305,273 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
         bAvoidDefenderWasTackling6AL2 = true;
 }
 
-void ASoccerTrainingMovementGameMode6B::EnsureTackleOpponent6AK()
+// 6AL.6: coordinate frame always follows ASoccerField/SoccerFieldDimensions.
+// Zones increase from the player's own (left) goal towards the right goal.
+FVector ASoccerTrainingMovementGameMode6B::GetAvoidDefenderHomeLocal6AL6(int32 Zone) const
 {
-    if (!IsTackleLesson6AK() || IsValid(TackleOpponent6AK) || !GetWorld()) return;
-    if (!TackleOpponentClass6AK)
+    const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
+    const float HalfWidth = SoccerFieldDimensions::HalfPitchWidthCm;
+    const int32 SafeZone = FMath::Clamp(Zone, 1, 3);
+    const float ZoneLength = HalfLength * 0.5f;
+    return FVector(-HalfLength + (SafeZone + 0.5f) * ZoneLength,
+        (SafeZone == 2 ? -0.58f : 0.58f) * HalfWidth, 130.f);
+}
+
+// 6AL.6.2: a defender not currently chasing still covers the corridor
+// from the ball towards the rival (right) goal. Work exclusively in the
+// field-local pitch frame so rotations/stadium dimensions remain supported.
+FVector ASoccerTrainingMovementGameMode6B::GetAvoidDefenderCoverLocal6AL62(
+    int32 Zone, const FVector& BallWorld) const
+{
+    const FVector HomeLocal = GetAvoidDefenderHomeLocal6AL6(Zone);
+    const ASoccerField* Field = FindSharedField6L();
+    if (!Field) return HomeLocal;
+
+    const FVector BallLocal = Field->WorldToPitchLocal(BallWorld);
+    const float GoalX = SoccerFieldDimensions::RightGoalLineX;
+    // Extend the ball-goal line a little backwards for zones already passed.
+    // Limit that extension so a ball near the rival goal cannot drag the
+    // waiting defenders outside their own zones or off the touchline.
+    const float GoalDistanceX = FMath::Max(200.f, GoalX - BallLocal.X);
+    const float AlongLine = FMath::Clamp(
+        (HomeLocal.X - BallLocal.X) / GoalDistanceX, -0.45f, 1.f);
+    const float LineY = FMath::Lerp(BallLocal.Y, 0.f, AlongLine);
+
+    // Small, fixed asymmetry makes the three defenders look less robotic.
+    // The margin is never a reason to leave their assigned playing zone.
+    const float Side = (Zone == 2) ? -1.f : 1.f;
+    const float SideInset = FMath::Min(230.f, SoccerFieldDimensions::HalfPitchWidthCm * 0.12f);
+    const float SafeHalfWidth = SoccerFieldDimensions::HalfPitchWidthCm - SideInset;
+    const float DesiredY = FMath::Clamp(
+        LineY + Side * AvoidCoverLateralMargin6AL62,
+        -SafeHalfWidth, SafeHalfWidth);
+    return FVector(HomeLocal.X, DesiredY, HomeLocal.Z);
+}
+
+int32 ASoccerTrainingMovementGameMode6B::GetBallZone6AL6(const FVector& BallWorld) const
+{
+    const ASoccerField* Field = FindSharedField6L();
+    if (!Field) return 0;
+    const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
+    const float LocalX = Field->WorldToPitchLocal(BallWorld).X;
+    return FMath::Clamp(FMath::FloorToInt((LocalX + HalfLength) / (0.5f * HalfLength)), 0, 3);
+}
+
+void ASoccerTrainingMovementGameMode6B::SetActiveAvoidZone6AL6(int32 Zone)
+{
+    if (!bAvoidTackleLesson6AK) return;
+    const int32 NextZone = FMath::Clamp(Zone, 0, 3);
+    if (NextZone == ActiveAvoidZone6AL6) return;
+
+    // The previous defender disengages completely: no residual tackle,
+    // possession claim or pending foot impact can affect the new zone.
+    if (IsValid(TackleOpponent6AK))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[Training6AK] No TackleOpponentClass6AK. Select a field-player Blueprint in BP_SoccerTrainingMovementGameMode."));
+        TackleOpponent6AK->CancelAIKickMontageBeforeImpact();
+        if (TackleOpponent6AK->IsTackleActive()) TackleOpponent6AK->CancelTackle();
+        TackleOpponent6AK->ReleaseAIBall(false);
+        TackleOpponent6AK->SetAIChasingBall(false);
+        if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
+            AI->StopMovement();
+    }
+
+    // The former active defender must immediately receive a new cover
+    // destination on the next update, even if the ball scarcely moved.
+    if (ActiveAvoidZone6AL6 > 0 && AvoidCoverLastTarget6AL62.IsValidIndex(ActiveAvoidZone6AL6 - 1))
+    {
+        AvoidCoverLastTarget6AL62[ActiveAvoidZone6AL6 - 1] = FVector::ZeroVector;
+        AvoidCoverLastOrderAt6AL62[ActiveAvoidZone6AL6 - 1] = -100.f;
+    }
+    ActiveAvoidZone6AL6 = NextZone;
+    HighestAvoidZone6AL6 = FMath::Max(HighestAvoidZone6AL6, NextZone);
+    TackleOpponent6AK = (NextZone > 0 && AvoidZoneDefenders6AL6.IsValidIndex(NextZone - 1))
+        ? AvoidZoneDefenders6AL6[NextZone - 1] : nullptr;
+
+    // Existing 6AL2-6AL5 state describes the CURRENT active defender only.
+    AvoidDefenderLastMoveAt6AL2 = -100.f;
+    AvoidDefenderLastTackleAt6AL2 = -100.f;
+    AvoidDefenderLastClearanceAt6AL2 = -100.f;
+    bAvoidDefenderWasTackling6AL2 = false;
+    bAvoidDefenderBallDislodgedThisTackle6AL3 = false;
+    bAvoidDefenderClearing6AL2 = false;
+    bAvoidDefenderKickImpactLogged6AL4 = false;
+    AvoidDefenderKickMisses6AL5 = 0;
+    AvoidDefenderLastKickApproachLog6AL51 = -100.f;
+    LastInactiveDefenderHomeAt6AL6 = -100.f; // home orders immediately
+
+    if (IsValid(TackleOpponent6AK))
+    {
+        if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
+            AI->StopMovement(); // cancel an unfinished return-home request
+        TackleOpponent6AK->SetAIChasingBall(false);
+    }
+    AvoidTackleFeedback6AL = NextZone == 0
+        ? TEXT("Zona 0: busca la pelota y avanza; no hay defensor.")
+        : FString::Printf(TEXT("Zona %d: defensor %d activo. Esquiva el tackle y conserva la pelota."),
+            NextZone, NextZone);
+    UE_LOG(LogTemp, Display,
+        TEXT("[Training6AL6] ZONE CHANGE attempt=%d zone=%d active=%s ballDriven=YES"),
+        AvoidTackleAttempt6AL, NextZone, *GetNameSafe(TackleOpponent6AK));
+}
+
+void ASoccerTrainingMovementGameMode6B::UpdateInactiveAvoidDefenders6AL6(float Now)
+{
+    if (!bAvoidTackleLesson6AK || !IsValid(PracticeBall6B) ||
+        Now - LastInactiveDefenderHomeAt6AL6 < AvoidCoverUpdateSeconds6AL62)
+    {
         return;
     }
     const ASoccerField* Field = FindSharedField6L();
     if (!Field) return;
-    const FVector StartLocal(-0.06f * SoccerFieldDimensions::HalfPitchLengthCm,
-        bAvoidTackleLesson6AK ? 0.f : 220.f, 120.f);
-    FActorSpawnParameters Params;
-    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-    TackleOpponent6AK = GetWorld()->SpawnActor<ASoccerAICharacter>(
-        TackleOpponentClass6AK.Get(), Field->PitchLocalToWorld(StartLocal),
-        Field->GetActorRotation(), Params);
-    if (IsValid(TackleOpponent6AK))
+    LastInactiveDefenderHomeAt6AL6 = Now;
+    if (AvoidCoverLastTarget6AL62.Num() != 3)
     {
-        // 6AL.1: the tackle sweep rejects contacts between teammates.
-        // A spawned BP may default to PlayerTeam even though it is the rival.
-        // Force the actual training opponent onto the opposite team.
-        if (TackleOpponent6AK->Team != ESoccerTeam::OpponentTeam)
+        AvoidCoverLastTarget6AL62.Init(FVector::ZeroVector, 3);
+        AvoidCoverLastOrderAt6AL62.Init(-100.f, 3);
+    }
+
+    const FVector BallWorld = PracticeBall6B->GetActorLocation();
+    for (int32 i = 0; i < AvoidZoneDefenders6AL6.Num(); ++i)
+    {
+        ASoccerAICharacter* Rival = AvoidZoneDefenders6AL6[i];
+        if (!IsValid(Rival) || Rival == TackleOpponent6AK ||
+            Rival->IsTackleActive() || Rival->IsAIKickMontageActive())
         {
-            TackleOpponent6AK->Team = ESoccerTeam::OpponentTeam;
-            TackleOpponent6AK->ApplyTeamUniform();
+            continue;
         }
-        UE_LOG(LogTemp, Display,
-            TEXT("[Training6AL1] OPPONENT SPAWN team=%d class=%s"),
-            static_cast<int32>(TackleOpponent6AK->GetTeam()),
-            *GetNameSafe(TackleOpponentClass6AK.Get()));
-        // A match controller expects SoccerMatchManager. Do not run that AI here.
-        if (AController* AI = TackleOpponent6AK->GetController())
+        AAIController* AI = Cast<AAIController>(Rival->GetController());
+        if (!AI) continue;
+
+        const FVector CoverLocal = GetAvoidDefenderCoverLocal6AL62(i + 1, BallWorld);
+        const FVector CoverWorld = Field->PitchLocalToWorld(CoverLocal);
+        const float DistanceToCover = FVector::Dist2D(Rival->GetActorLocation(), CoverWorld);
+        const FVector PreviousTarget = AvoidCoverLastTarget6AL62[i];
+        const bool bNewTarget = PreviousTarget.IsNearlyZero() ||
+            FVector::Dist2D(PreviousTarget, CoverWorld) >= AvoidCoverRepathThreshold6AL62;
+        const bool bOldOrder = Now - AvoidCoverLastOrderAt6AL62[i] >= 3.0f;
+
+        if (DistanceToCover <= 85.f)
+        {
+            // Let the nav controller complete its last few centimetres.
+            // Only turn the idle player towards the ball, not while running.
+            if (Rival->GetVelocity().Size2D() < 40.f)
+            {
+                const FVector LookAt = BallWorld - Rival->GetActorLocation();
+                if (!LookAt.IsNearlyZero())
+                {
+                    const FRotator Facing(0.f, LookAt.Rotation().Yaw, 0.f);
+                    Rival->SetActorRotation(FMath::RInterpTo(
+                        Rival->GetActorRotation(), Facing, AvoidCoverUpdateSeconds6AL62, 2.5f));
+                }
+            }
+            continue;
+        }
+        // Do not restart MoveTo for tiny ball movements. Refresh an old
+        // command occasionally in case navmesh avoidance interrupted it.
+        if (!bNewTarget && !bOldOrder) continue;
+
+        Rival->SetAIChasingBall(false); // covering, NOT pursuing / tackling
+        AI->MoveToLocation(CoverWorld, 65.f, true, true, true, true, nullptr, true);
+        Rival->RequestAIMovementMode(
+            ESoccerAIMovementMode::Run,
+            ESoccerAIMovementReason::PressBallCarrier, true);
+        AvoidCoverLastTarget6AL62[i] = CoverWorld;
+        AvoidCoverLastOrderAt6AL62[i] = Now;
+        if (bNewTarget)
+        {
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AL62] COVER zone=%d ballZone=%d localX=%.0f targetY=%.0f distance=%.0f active=NO"),
+                i + 1, ActiveAvoidZone6AL6, CoverLocal.X, CoverLocal.Y,
+                DistanceToCover);
+        }
+    }
+}
+
+void ASoccerTrainingMovementGameMode6B::DrawAvoidZones6AL6(float Now)
+{
+    if (!bAvoidTackleLesson6AK || Now - LastZoneLinesAt6AL6 < 0.12f) return;
+    const ASoccerField* Field = FindSharedField6L();
+    if (!Field || !GetWorld()) return;
+    LastZoneLinesAt6AL6 = Now;
+    const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
+    const float HalfWidth = SoccerFieldDimensions::HalfPitchWidthCm;
+    const FColor LineColor(245, 211, 44);
+    for (int32 Boundary = 1; Boundary <= 3; ++Boundary)
+    {
+        const float X = -HalfLength + Boundary * HalfLength * 0.5f;
+        const FVector A = Field->PitchLocalToWorld(FVector(X, -HalfWidth + 12.f, 18.f));
+        const FVector B = Field->PitchLocalToWorld(FVector(X, HalfWidth - 12.f, 18.f));
+        DrawDebugLine(GetWorld(), A, B, LineColor, false, 0.18f, 0, 6.f);
+    }
+}
+
+void ASoccerTrainingMovementGameMode6B::EnsureTackleOpponent6AK()
+{
+    if (!IsTackleLesson6AK() || !GetWorld()) return;
+    if (!TackleOpponentClass6AK)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Training6AK] No TackleOpponentClass6AK. Select BP_SoccerAIFieldPlayer in the training GameMode Blueprint."));
+        return;
+    }
+    const ASoccerField* Field = FindSharedField6L();
+    if (!Field) return;
+
+    auto PrepareOpponent = [](ASoccerAICharacter* Rival)
+    {
+        if (!IsValid(Rival)) return;
+        if (Rival->Team != ESoccerTeam::OpponentTeam)
+        {
+            Rival->Team = ESoccerTeam::OpponentTeam;
+            Rival->ApplyTeamUniform();
+        }
+        // Keep the match tactical Tick disabled. The GameMode controls orders.
+        if (AController* AI = Rival->GetController())
         {
             if (AAIController* AIC = Cast<AAIController>(AI)) AIC->StopMovement();
             AI->SetActorTickEnabled(false);
         }
-        TackleOpponent6AK->SetAIChasingBall(false);
-        UE_LOG(LogTemp, Display, TEXT("[Training6AK] Opponent spawned: %s class=%s"),
-            *GetNameSafe(TackleOpponent6AK), *GetNameSafe(TackleOpponentClass6AK.Get()));
+        Rival->SetAIChasingBall(false);
+    };
+    FActorSpawnParameters Params;
+    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+    if (bAvoidTackleLesson6AK)
+    {
+        if (AvoidZoneDefenders6AL6.Num() != 3) AvoidZoneDefenders6AL6.SetNumZeroed(3);
+        for (int32 i = 0; i < 3; ++i)
+        {
+            if (IsValid(AvoidZoneDefenders6AL6[i])) continue;
+            ASoccerAICharacter* Rival = GetWorld()->SpawnActor<ASoccerAICharacter>(
+                TackleOpponentClass6AK.Get(),
+                Field->PitchLocalToWorld(GetAvoidDefenderHomeLocal6AL6(i + 1)),
+                Field->GetActorRotation(), Params);
+            AvoidZoneDefenders6AL6[i] = Rival;
+            PrepareOpponent(Rival);
+            if (IsValid(Rival))
+            {
+                Rival->SetTrainingRunSpeedMultiplier6AL63(1.125f);
+                UE_LOG(LogTemp, Display,
+                    TEXT("[Training6AL63] SPEED BOOST zone=%d multiplier=1.125 currentMaxSpeed=%.1f"),
+                    i + 1, Rival->GetCharacterMovement() ? Rival->GetCharacterMovement()->MaxWalkSpeed : 0.f);
+            }
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AL6] DEFENDER SPAWN zone=%d class=%s team=%d valid=%s"),
+                i + 1, *GetNameSafe(TackleOpponentClass6AK.Get()),
+                IsValid(Rival) ? static_cast<int32>(Rival->GetTeam()) : -1,
+                IsValid(Rival) ? TEXT("YES") : TEXT("NO"));
+        }
+        return; // Zone 0 intentionally has no active defender.
     }
+
+    // Preserve the separate 6AK/6AM 'Recuperar pelota' scenario unchanged.
+    if (IsValid(TackleOpponent6AK)) return;
+    const FVector StartLocal(-0.06f * SoccerFieldDimensions::HalfPitchLengthCm, 220.f, 120.f);
+    TackleOpponent6AK = GetWorld()->SpawnActor<ASoccerAICharacter>(
+        TackleOpponentClass6AK.Get(), Field->PitchLocalToWorld(StartLocal),
+        Field->GetActorRotation(), Params);
+    PrepareOpponent(TackleOpponent6AK);
+    UE_LOG(LogTemp, Display, TEXT("[Training6AK] Opponent spawned: %s class=%s"),
+        *GetNameSafe(TackleOpponent6AK), *GetNameSafe(TackleOpponentClass6AK.Get()));
 }
 
 void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
@@ -2243,45 +2579,52 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
     if (!IsTackleLesson6AK()) return;
     ASoccerField* Field = FindSharedField6L();
     if (!Field || !IsValid(Trainee6B) || !IsValid(PracticeBall6B)) return;
-    // 6AL.1: enforce distinct teams also when the scenario is reset.
-    // This does not affect other lessons or the match GameMode.
     if (Trainee6B->Team != ESoccerTeam::PlayerTeam)
     {
         Trainee6B->Team = ESoccerTeam::PlayerTeam;
         Trainee6B->ApplyTeamUniform();
     }
-    if (IsValid(TackleOpponent6AK) && TackleOpponent6AK->Team != ESoccerTeam::OpponentTeam)
-    {
-        TackleOpponent6AK->Team = ESoccerTeam::OpponentTeam;
-        TackleOpponent6AK->ApplyTeamUniform();
-    }
-    UE_LOG(LogTemp, Display,
-        TEXT("[Training6AL1] TEAMS player=%d opponent=%d opposing=%s"),
-        static_cast<int32>(Trainee6B->GetTeam()),
-        IsValid(TackleOpponent6AK) ? static_cast<int32>(TackleOpponent6AK->GetTeam()) : -1,
-        IsValid(TackleOpponent6AK) && Trainee6B->GetTeam() != TackleOpponent6AK->GetTeam()
-            ? TEXT("YES") : TEXT("NO"));
     const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
-    const FVector PlayerLocal(bAvoidTackleLesson6AK ? -0.34f * HalfLength : -0.30f * HalfLength, 0.f, 130.f);
-    const FVector RivalLocal(bAvoidTackleLesson6AK
-        ? SoccerFieldDimensions::RightGoalLineX - SoccerFieldDimensions::PenaltyAreaDepthCm - 230.f
-        : -0.06f * HalfLength,
-        bAvoidTackleLesson6AK ? 0.f : 220.f, 130.f);
+    const FVector PlayerLocal = bAvoidTackleLesson6AK
+        ? FVector(SoccerFieldDimensions::LeftGoalLineX + FMath::Max(220.f, HalfLength * 0.06f), 0.f, 130.f)
+        : FVector(-0.30f * HalfLength, 0.f, 130.f);
     const FVector BallLocal = bAvoidTackleLesson6AK
-        ? PlayerLocal + FVector(125.f, 0.f, -60.f)
-        : RivalLocal + FVector(115.f, 0.f, -60.f);
+        ? SoccerFieldDimensions::GetPenaltySpotLocalLocation(-1.f, 70.f)
+        : FVector(-0.06f * HalfLength + 115.f, 220.f, 70.f);
     Trainee6B->SetActorLocation(Field->PitchLocalToWorld(PlayerLocal), false,
         nullptr, ETeleportType::TeleportPhysics);
-    if (IsValid(TackleOpponent6AK))
+    if (bAvoidTackleLesson6AK)
+    {
+        // Exactly the three red players in the diagram; inactive players
+        // remain visible at home but have no tackle/press orders.
+        for (int32 i = 0; i < AvoidZoneDefenders6AL6.Num(); ++i)
+        {
+            ASoccerAICharacter* Rival = AvoidZoneDefenders6AL6[i];
+            if (!IsValid(Rival)) continue;
+            if (Rival->Team != ESoccerTeam::OpponentTeam)
+            {
+                Rival->Team = ESoccerTeam::OpponentTeam;
+                Rival->ApplyTeamUniform();
+            }
+            Rival->CancelAIKickMontageBeforeImpact();
+            if (Rival->IsTackleActive()) Rival->CancelTackle();
+            Rival->ReleaseAIBall(false);
+            if (AAIController* AI = Cast<AAIController>(Rival->GetController())) AI->StopMovement();
+            Rival->SetAIChasingBall(false);
+            if (UCharacterMovementComponent* Move = Rival->GetCharacterMovement())
+                Move->StopMovementImmediately();
+            const FVector Home = Field->PitchLocalToWorld(GetAvoidDefenderHomeLocal6AL6(i + 1));
+            Rival->SetActorLocation(Home, false, nullptr, ETeleportType::TeleportPhysics);
+            Rival->SetActorRotation((Field->PitchLocalToWorld(BallLocal) - Home).Rotation());
+        }
+    }
+    else if (IsValid(TackleOpponent6AK))
     {
         if (TackleOpponent6AK->IsTackleActive()) TackleOpponent6AK->CancelTackle();
-        if (UCharacterMovementComponent* Move6AL = TackleOpponent6AK->GetCharacterMovement())
-            Move6AL->StopMovementImmediately();
-        const FVector RivalWorld = Field->PitchLocalToWorld(RivalLocal);
-        TackleOpponent6AK->SetActorLocation(RivalWorld, false,
-            nullptr, ETeleportType::TeleportPhysics);
-        if (bAvoidTackleLesson6AK)
-            TackleOpponent6AK->SetActorRotation((Field->PitchLocalToWorld(PlayerLocal) - RivalWorld).Rotation());
+        if (UCharacterMovementComponent* Move = TackleOpponent6AK->GetCharacterMovement())
+            Move->StopMovementImmediately();
+        const FVector RivalWorld = Field->PitchLocalToWorld(FVector(-0.06f * HalfLength, 220.f, 130.f));
+        TackleOpponent6AK->SetActorLocation(RivalWorld, false, nullptr, ETeleportType::TeleportPhysics);
     }
     UPrimitiveComponent* BallBody = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent());
     if (BallBody)
@@ -2294,10 +2637,18 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
         nullptr, ETeleportType::TeleportPhysics);
     RestorePracticeBallGroundCollision6AB3(PracticeBall6B);
     if (BallBody) BallBody->SetSimulatePhysics(true);
-    UE_LOG(LogTemp, Display, TEXT("[Training6AK] Scenario=%s player=%s rival=%s ball=%s"),
-        bAvoidTackleLesson6AK ? TEXT("AvoidTackle") : TEXT("WinTackle"),
-        *Trainee6B->GetActorLocation().ToString(),
-        *GetNameSafe(TackleOpponent6AK), *PracticeBall6B->GetActorLocation().ToString());
+    if (bAvoidTackleLesson6AK)
+    {
+        UE_LOG(LogTemp, Display, TEXT("[Training6AL6] SCENARIO attempt=%d player=%s penaltyBall=%s defenders=%d"),
+            AvoidTackleAttempt6AL, *Trainee6B->GetActorLocation().ToString(),
+            *PracticeBall6B->GetActorLocation().ToString(), AvoidZoneDefenders6AL6.Num());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Display, TEXT("[Training6AK] Scenario=WinTackle player=%s rival=%s ball=%s"),
+            *Trainee6B->GetActorLocation().ToString(), *GetNameSafe(TackleOpponent6AK),
+            *PracticeBall6B->GetActorLocation().ToString());
+    }
 }
 
 ASoccerField* ASoccerTrainingMovementGameMode6B::FindSharedField6L() const
@@ -2349,9 +2700,9 @@ FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
     {
         if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
         if (bAvoidTackleLesson6AK)
-            return FString::Printf(TEXT("6AL.2 | Intento %d/10 | Area %d | Tackles %d | %s"),
-                FMath::Min(10, AvoidTackleAttempt6AL), AvoidTackleSuccesses6AL,
-                AvoidDefenderTackles6AL2, *AvoidTackleFeedback6AL);
+            return FString::Printf(TEXT("6AL.6.3 | Intento %d/10 | Zona pelota %d/3 | Arco %d | Tackles %d | %s"),
+                FMath::Min(10, AvoidTackleAttempt6AL), FMath::Max(0, ActiveAvoidZone6AL6),
+                AvoidTackleSuccesses6AL, AvoidDefenderTackles6AL2, *AvoidTackleFeedback6AL);
         return IsValid(TackleOpponent6AK)
             ? (bAvoidTackleLesson6AK
                 ? TEXT("6AK: escenario de esquivar tackles listo. La IA defensiva se integra en 6AL.")
@@ -2455,9 +2806,12 @@ void ASoccerTrainingMovementGameMode6B::EnsurePlayerStart6B()
             World->SpawnActor<APlayerStart>(Field->PitchLocalToWorld(SpawnLocal), Field->GetActorRotation());
             return;
         }
-        const FVector LocalStart = IsTackleLesson6AK()
-            ? FVector(-0.30f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f)
-            : FVector(-0.78f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f);
+        const FVector LocalStart = bAvoidTackleLesson6AK
+            ? FVector(SoccerFieldDimensions::LeftGoalLineX +
+                FMath::Max(220.f, SoccerFieldDimensions::HalfPitchLengthCm * 0.06f), 0.f, 130.f)
+            : bWinTackleLesson6AK
+                ? FVector(-0.30f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f)
+                : FVector(-0.78f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 130.f);
         World->SpawnActor<APlayerStart>(Field->PitchLocalToWorld(LocalStart), Field->GetActorRotation());
         return;
     }
@@ -2485,8 +2839,10 @@ void ASoccerTrainingMovementGameMode6B::EnsureBall6B()
     FRotator BallRotation = FRotator::ZeroRotator;
     if (ASoccerField* Field = FindSharedField6L())
     {
-        const FVector LocalBall = IsTackleLesson6AK()
-            ? FVector(-0.18f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 70.f)
+        const FVector LocalBall = bAvoidTackleLesson6AK
+            ? SoccerFieldDimensions::GetPenaltySpotLocalLocation(-1.f, 70.f)
+            : bWinTackleLesson6AK
+                ? FVector(-0.18f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 70.f)
             : bZoneFinishLesson6AH ? FVector(260.f, 0.f, 70.f)
             : bChargedShotLesson6M ? GetShotBallLocal6N(0)
             : FVector(-0.63f * SoccerFieldDimensions::HalfPitchLengthCm, 0.f, 70.f);

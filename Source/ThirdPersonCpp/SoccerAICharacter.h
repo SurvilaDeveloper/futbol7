@@ -305,6 +305,10 @@ public:
 		bool bForceUpdate = false
 	);
 
+	// 6AL.6.3: opt-in boost for the three AvoidTackle training defenders.
+	// 1.0 is the default everywhere else (including regular matches).
+	void SetTrainingRunSpeedMultiplier6AL63(float Multiplier);
+
 	//arquero
 	UFUNCTION(BlueprintPure, Category = "Soccer|Goalkeeper")
 		bool IsGoalkeeperActionActive() const;
@@ -410,6 +414,9 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Movement")
 		float FastRunSpeed = 800.0f;
+
+	// Runtime-only: applied AFTER profile/energy movement speed selection.
+	float TrainingRunSpeedMultiplier6AL63 = 1.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI")
 		AActor* HomePositionActor = nullptr;

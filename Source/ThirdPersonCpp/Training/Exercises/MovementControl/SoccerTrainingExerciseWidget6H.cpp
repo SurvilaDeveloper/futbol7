@@ -135,12 +135,16 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
     }
     if (Body6H) Body6H->SetText(FText::FromString((Mode && Mode->IsTackleLesson6AK())
         ? (Mode && Mode->IsAvoidTackleLesson6AK()
-            ? TEXT("ESQUIVAR TACKLES — 6AL.2\n\n"
-                   "Avanza con la pelota hasta el area rival. El defensor parte cerca de su arco, "
-                   "corre a interceptarte y se tira hacia la pelota. Podes saltar o cambiar de direccion.\n\n"
-                   "El intento NO termina cuando el tackle acaba. Solo termina al llegar con pelota al area rival, "
-                   "si el defensor recupera y despeja fuera, ante una falta o si la pelota sale. "
-                   "Diez intentos. Los saltos se registran por separado.")
+            ? TEXT("ESQUIVAR TACKLES — 6AL.6.3\n\n"
+                   "Empezás junto a tu arco y buscás la pelota en el punto penal. "
+                   "Atravesá cuatro zonas: la zona 0 es libre y las zonas 1, 2 y 3 tienen un defensor cada una. "
+                   "Solo te persigue el defensor de la zona donde está la pelota. "
+                   "Los otros dos se acomodan para interceptar la trayectoria hacia el arco rival.\n\n"
+                   "Los tres defensores corren un 12,5 % más rápido en este ejercicio. "
+                   "Podés saltar los tackles o cambiar de dirección. "
+                   "Para tener éxito, vos y la pelota deben cruzar la línea de gol e ingresar juntos al arco rival CON POSESIÓN. "
+                   "El intento también termina si un defensor recupera y despeja afuera, hay falta o la pelota sale del campo. "
+                   "Diez intentos; los saltos se registran por separado.")
             : TEXT("RECUPERAR CON TACKLE: escenario preparado (6AK). "
                    "La conduccion automatica del rival llega en 6AM."))
         : (Mode && Mode->IsZoneFinishLesson6AH())
@@ -232,7 +236,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         if (Feedback6H)
         {
             const FString Result = (Mode && Mode->IsAvoidTackleLesson6AK())
-                ? TEXT("Se evaluaron diez duelos: ingreso al area con pelota, recuperacion y despeje, falta o pelota fuera.")
+                ? TEXT("Se evaluaron diez recorridos: entrada al arco rival con la pelota, recuperación y despeje, falta o pelota fuera.")
                 : bShot ? TEXT("Revisa la causa de cada resultado. Sin resolucion significa que no se observo el cruce ni un contacto con barrera.")
                 : !Mode->IsTimeEvaluationEnabled6H()
                 ? TEXT("Evaluación pendiente: todavía no definimos el tiempo de aprobación.")

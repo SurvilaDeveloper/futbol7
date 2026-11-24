@@ -119,6 +119,30 @@ private:
     UPROPERTY(EditAnywhere, Category="Training|Tackle|6AK")
     TSubclassOf<ASoccerAICharacter> TackleOpponentClass6AK;
     UPROPERTY(Transient) ASoccerAICharacter* TackleOpponent6AK = nullptr;
+    // 6AL.6: three real field-player BPs, one in each of zones 1, 2 and 3.
+    // TackleOpponent6AK remains an alias ONLY to the currently active rival;
+    // the existing 6AL.5.2 tackle/steal/open-play-clearance logic is reused.
+    UPROPERTY(Transient) TArray<ASoccerAICharacter*> AvoidZoneDefenders6AL6;
+    int32 ActiveAvoidZone6AL6 = -1;
+    int32 HighestAvoidZone6AL6 = 0;
+    float LastInactiveDefenderHomeAt6AL6 = -100.f;
+    float LastZoneLinesAt6AL6 = -100.f;
+    // 6AL.6.2: coverage movements are independent of the one active tackler.
+    // X stays at each zone's defensive station; Y follows the ball-goal line.
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL6.2", meta=(ClampMin="0.0", ClampMax="350.0"))
+    float AvoidCoverLateralMargin6AL62 = 95.f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL6.2", meta=(ClampMin="40.0", ClampMax="300.0"))
+    float AvoidCoverRepathThreshold6AL62 = 120.f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL6.2", meta=(ClampMin="0.25", ClampMax="2.0"))
+    float AvoidCoverUpdateSeconds6AL62 = 0.65f;
+    TArray<FVector> AvoidCoverLastTarget6AL62;
+    TArray<float> AvoidCoverLastOrderAt6AL62;
+    FVector GetAvoidDefenderHomeLocal6AL6(int32 Zone) const;
+    FVector GetAvoidDefenderCoverLocal6AL62(int32 Zone, const FVector& BallWorld) const;
+    int32 GetBallZone6AL6(const FVector& BallWorld) const;
+    void SetActiveAvoidZone6AL6(int32 Zone);
+    void UpdateInactiveAvoidDefenders6AL6(float Now);
+    void DrawAvoidZones6AL6(float Now);
     void EnsureTackleOpponent6AK();
     void PositionTackleScenario6AK();
     // 6AL: training-only use of the exact shared tackle and running-jump actions.
@@ -146,6 +170,17 @@ private:
     float AvoidDefenderTackleBallDistance6AL2 = 330.f;
     UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL2", meta=(ClampMin="0.5", ClampMax="6.0"))
     float AvoidDefenderTackleCooldown6AL2 = 1.7f;
+    // 6AL.6.4: same carried-ball prediction used by match AI, with a lead
+    // time matched to this exercise's actual slide travel time. These only
+    // affect "Esquivar tackles", never player speeds or match parameters.
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL64 Prediction", meta=(ClampMin="350.0", ClampMax="1500.0"))
+    float AvoidTackleEstimatedSlideSpeed6AL64 = 650.f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL64 Prediction", meta=(ClampMin="0.0", ClampMax="0.25"))
+    float AvoidTackleLaunchDelay6AL64 = 0.03f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL64 Prediction", meta=(ClampMin="0.02", ClampMax="0.35"))
+    float AvoidTackleMinLeadSeconds6AL64 = 0.12f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL64 Prediction", meta=(ClampMin="0.15", ClampMax="1.0"))
+    float AvoidTackleMaxLeadSeconds6AL64 = 0.65f;
     UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL2", meta=(ClampMin="150.0", ClampMax="1500.0"))
     float AvoidDefenderClearanceSpeed6AL2 = 1850.f;
     float AvoidDefenderLastMoveAt6AL2 = -100.f;
