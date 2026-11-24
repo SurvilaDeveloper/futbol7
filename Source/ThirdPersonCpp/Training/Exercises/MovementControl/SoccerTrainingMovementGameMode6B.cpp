@@ -7,6 +7,7 @@
 #include "SoccerAICharacter.h"
 #include "SoccerAIController.h"
 #include "SoccerTacklePredictionShared.h"
+#include "SoccerTackleTypes.h"
 #include "SoccerTeamTypes.h"
 #include "SoccerField.h"
 #include "SoccerFieldDimensions.h"
@@ -1662,6 +1663,16 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
         {
             WinTackleAttempt6AM = 1;
             WinTackleTouches6AM = 0;
+            WinTackleAttemptsFinished6AM8 = 0;
+            WinTacklePoints6AM8 = 0;
+            WinTackleCleanRecoveries6AM8 = 0;
+            WinTackleCleanInterceptions6AM8 = 0;
+            WinTackleFouls6AM8 = 0;
+            WinTackleGoalsConceded6AM8 = 0;
+            WinTackleOuts6AM8 = 0;
+            WinTackleRecoveriesWithoutTackle6AM8 = 0;
+            WinTackleMisses6AM8 = 0;
+            WinTackleAttemptResults6AM8.Empty();
             ResetWinTackle6AM();
         }
     }
@@ -1739,9 +1750,9 @@ FString ASoccerTrainingMovementGameMode6B::GetBallDiagnostics6E() const
         BallVelocity.Size2D(), ForwardDistance, *ControlValue);
 }
 
-// 6AM: the first stage only validates that the opponent can RUN WITH the
-// real, freely simulated ball. Steal/foul scoring is intentionally deferred.
-// The normal SoccerMatchManager Tick remains OFF for this training opponent.
+// 6AM.8: score the human's real, completed tackle contacts independently
+// of the match referee (the training map has no SoccerMatchManager). The
+// normal SoccerMatchManager Tick remains OFF for this training opponent.
 void ASoccerTrainingMovementGameMode6B::ResetWinTackle6AM()
 {
     if (!bWinTackleLesson6AK || !GetWorld()) return;
@@ -1757,6 +1768,11 @@ void ASoccerTrainingMovementGameMode6B::ResetWinTackle6AM()
     WinTackleLastTouchAt6AM = -100.f;
     WinTackleTouches6AM = 0;
     WinTackleHumanTackleSuppressUntil6AM = -100.f;
+    bWinTackleWasTackling6AM8 = false;
+    bWinTackleHadLegalBallContact6AM8 = false;
+    WinTackleTacklesThisAttempt6AM8 = 0;
+    WinTackleLegalTouchesThisAttempt6AM8 = 0;
+    WinTackleRoundStartTime6AM8 = GetWorld()->GetTimeSeconds();
     // Allow the physical ball to settle from its spawn height before the first
     // foot contact, rather than kicking it in mid-air.
     WinTackleReadyAt6AM = GetWorld()->GetTimeSeconds() + 0.65f;
@@ -1769,19 +1785,134 @@ void ASoccerTrainingMovementGameMode6B::ResetWinTackle6AM()
         *GetNameSafe(TackleOpponent6AK->GetController()));
 }
 
-void ASoccerTrainingMovementGameMode6B::FinishWinTackleRound6AM(const TCHAR* Outcome)
+// Mirrors the foul-decision CONDITIONS and default thresholds of
+// ASoccerMatchManager::SubmitFoulIncident without spawning a match referee or
+// modifying its gameplay. If the match Blueprint overrides the thresholds,
+// this standalone exercise still uses these documented C++ defaults.
+bool ASoccerTrainingMovementGameMode6B::IsWinTackleFoul6AM8(
+    const FSoccerTackleContactSummary& Contact, int32 ContactOrder,
+    FString& OutReason) const
 {
-    if (bWinTackleWaitingReset6AM || !GetWorld()) return;
+    OutReason = TEXT("sin infraccion sancionable");
+    if (!Contact.bOpponentContactOccurred) return false;
+    const float Speed = FMath::Max(0.f, Contact.OpponentContactRelativeSpeedCmPerSec);
+    const bool bHigh = Contact.OpponentContactHeightCm >= 30.f;
+    const bool bCareless = Speed >= 420.f;
+    const bool bValidBall = Contact.bBallContactOccurred && Contact.bBallContactApplied;
+    const bool bCleanFirst =
+        ContactOrder == static_cast<int32>(ESoccerTackleContactOrder::BallFirst) &&
+        bValidBall &&
+        (Contact.OpponentContactNormalizedTime - Contact.BallContactNormalizedTime >= 0.035f);
+
+    if (ContactOrder == static_cast<int32>(ESoccerTackleContactOrder::OpponentOnly) ||
+        ContactOrder == static_cast<int32>(ESoccerTackleContactOrder::OpponentFirst))
+    {
+        OutReason = TEXT("rival primero / sin toque valido de pelota");
+        return true;
+    }
+    if (ContactOrder == static_cast<int32>(ESoccerTackleContactOrder::NearlySimultaneous) &&
+        (!bValidBall || Contact.bOpponentContactFromBehind || bCareless || bHigh))
+    {
+        OutReason = TEXT("contacto casi simultaneo con riesgo");
+        return true;
+    }
+    if (ContactOrder == static_cast<int32>(ESoccerTackleContactOrder::BallFirst) &&
+        (!bCleanFirst || Contact.bOpponentContactFromBehind || bHigh || Speed > 720.f))
+    {
+        OutReason = TEXT("pelota primero pero contacto posterior peligroso/tardio");
+        return true;
+    }
+    return false;
+}
+
+FString ASoccerTrainingMovementGameMode6B::GetWinTackleReport6AM8() const
+{
+    const int32 PossiblePoints = WinTackleMaxAttempts6AM8 * 3;
+    FString Report = FString::Printf(
+        TEXT("Intentos: %d / %d\nPuntuacion: %d / %d (%.0f%%)\n"
+             "Recuperaciones con tackle limpio: %d (3 pts)\n"
+             "Intercepciones limpias sin recuperacion: %d (1 pto)\n"
+             "Faltas: %d\nTackles fallidos: %d\n"
+             "Recuperaciones sin tackle: %d (0 pts)\n"
+             "Goles recibidos: %d | Pelota fuera: %d\n\n"
+             "DETALLE DE LOS DIEZ INTENTOS\n"),
+        WinTackleAttemptsFinished6AM8, WinTackleMaxAttempts6AM8,
+        WinTacklePoints6AM8, PossiblePoints,
+        100.f * WinTacklePoints6AM8 / FMath::Max(1, PossiblePoints),
+        WinTackleCleanRecoveries6AM8, WinTackleCleanInterceptions6AM8,
+        WinTackleFouls6AM8, WinTackleMisses6AM8,
+        WinTackleRecoveriesWithoutTackle6AM8,
+        WinTackleGoalsConceded6AM8, WinTackleOuts6AM8);
+    for (int32 i = 0; i < WinTackleAttemptResults6AM8.Num(); ++i)
+    {
+        Report += FString::Printf(TEXT("%02d. %s\n"),
+            i + 1, *WinTackleAttemptResults6AM8[i]);
+    }
+    Report += TEXT("\nSolo suma una recuperacion si hubo toque de pelota VALIDO con tackle "
+                   "y no hubo falta. Una intercepcion sin posesion vale 1 punto.");
+    return Report;
+}
+
+void ASoccerTrainingMovementGameMode6B::FinishWinTackleRound6AM(
+    const FString& Outcome, ETrainingWinTackleOutcome6AM8 OutcomeType)
+{
+    if (bWinTackleWaitingReset6AM || bComplete6B || !GetWorld()) return;
     bWinTackleWaitingReset6AM = true;
     WinTackleResetAt6AM = GetWorld()->GetTimeSeconds() + WinTackleResetDelay6AM;
     WinTackleFeedback6AM = Outcome;
+    int32 Points = 0;
+    switch (OutcomeType)
+    {
+    case ETrainingWinTackleOutcome6AM8::CleanRecovery:
+        ++WinTackleCleanRecoveries6AM8; Points = 3; break;
+    case ETrainingWinTackleOutcome6AM8::CleanInterception:
+        ++WinTackleCleanInterceptions6AM8; Points = 1; break;
+    case ETrainingWinTackleOutcome6AM8::Foul:
+        ++WinTackleFouls6AM8; break;
+    case ETrainingWinTackleOutcome6AM8::RecoveryWithoutTackle:
+        ++WinTackleRecoveriesWithoutTackle6AM8; break;
+    case ETrainingWinTackleOutcome6AM8::OpponentGoal:
+        ++WinTackleGoalsConceded6AM8; break;
+    case ETrainingWinTackleOutcome6AM8::BallOut:
+        ++WinTackleOuts6AM8; break;
+    }
+    if (WinTackleTacklesThisAttempt6AM8 > 0 &&
+        WinTackleLegalTouchesThisAttempt6AM8 == 0 &&
+        OutcomeType != ETrainingWinTackleOutcome6AM8::Foul)
+    {
+        ++WinTackleMisses6AM8;
+    }
+    WinTacklePoints6AM8 += Points;
+    ++WinTackleAttemptsFinished6AM8;
+    const float Seconds = FMath::Max(0.f,
+        GetWorld()->GetTimeSeconds() - WinTackleRoundStartTime6AM8);
+    WinTackleAttemptResults6AM8.Add(FString::Printf(
+        TEXT("%s | +%d pts | tackles %d | toques validos %d | %.1f s"),
+        *Outcome, Points, WinTackleTacklesThisAttempt6AM8,
+        WinTackleLegalTouchesThisAttempt6AM8, Seconds));
     if (IsValid(TackleOpponent6AK))
     {
-        if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController())) AI->StopMovement();
+        if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
+            AI->StopMovement();
         TackleOpponent6AK->SetAIChasingBall(false);
+        TackleOpponent6AK->ClearAIAutoPassState();
     }
-    UE_LOG(LogTemp, Display, TEXT("[Training6AM] ROUND END round=%d reason=%s touches=%d; restarting"),
-        WinTackleAttempt6AM, Outcome, WinTackleTouches6AM);
+    UE_LOG(LogTemp, Display,
+        TEXT("[Training6AM8] END round=%d/%d outcome=%s points=+%d total=%d tackles=%d legalTouches=%d"),
+        WinTackleAttempt6AM, WinTackleMaxAttempts6AM8, *Outcome, Points,
+        WinTacklePoints6AM8, WinTackleTacklesThisAttempt6AM8,
+        WinTackleLegalTouchesThisAttempt6AM8);
+    if (WinTackleAttemptsFinished6AM8 >= WinTackleMaxAttempts6AM8)
+    {
+        bComplete6B = true;
+        UE_LOG(LogTemp, Display, TEXT("[Training6AM8] FINAL\n%s"),
+            *GetWinTackleReport6AM8());
+        if (ASoccerTrainingPlayerController6B* PC =
+            Cast<ASoccerTrainingPlayerController6B>(GetWorld()->GetFirstPlayerController()))
+        {
+            PC->ShowExerciseResults6H();
+        }
+    }
 }
 
 void ASoccerTrainingMovementGameMode6B::TickWinTackle6AM(float DeltaSeconds)
@@ -1816,8 +1947,49 @@ void ASoccerTrainingMovementGameMode6B::TickWinTackle6AM(float DeltaSeconds)
         return;
     }
 
-    // React to real tackle/ball contact, not merely starting the montage.
+    // 6AM.8: count each REAL attempt, and evaluate contact chronology only
+    // when its tackle finishes: a ball-first slide can still hit the rival
+    // late and be penalized. The report must never award points from the
+    // mere start of a montage.
     const bool bTackling = Trainee6B->IsTackleActive();
+    if (bTackling && !bWinTackleWasTackling6AM8)
+    {
+        ++WinTackleTacklesThisAttempt6AM8;
+        UE_LOG(LogTemp, Display, TEXT("[Training6AM8] TACKLE START round=%d count=%d"),
+            WinTackleAttempt6AM, WinTackleTacklesThisAttempt6AM8);
+    }
+    if (!bTackling && bWinTackleWasTackling6AM8)
+    {
+        const FSoccerTackleContactSummary Contact = Trainee6B->GetTackleContactSummary();
+        const int32 ContactOrder = static_cast<int32>(Trainee6B->GetTackleContactOrder());
+        FString FoulReason;
+        const bool bFoul = IsWinTackleFoul6AM8(Contact, ContactOrder, FoulReason);
+        const bool bValidBall = Contact.bBallContactOccurred && Contact.bBallContactApplied;
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AM8] TACKLE END round=%d order=%d ball=%s applied=%s rival=%s behind=%s rel=%.0f height=%.0f foul=%s reason=%s"),
+            WinTackleAttempt6AM, ContactOrder,
+            Contact.bBallContactOccurred ? TEXT("YES") : TEXT("NO"),
+            Contact.bBallContactApplied ? TEXT("YES") : TEXT("NO"),
+            Contact.bOpponentContactOccurred ? TEXT("YES") : TEXT("NO"),
+            Contact.bOpponentContactFromBehind ? TEXT("YES") : TEXT("NO"),
+            Contact.OpponentContactRelativeSpeedCmPerSec,
+            Contact.OpponentContactHeightCm, bFoul ? TEXT("YES") : TEXT("NO"),
+            *FoulReason);
+        if (bFoul)
+        {
+            bWinTackleWasTackling6AM8 = false;
+            FinishWinTackleRound6AM(FString::Printf(TEXT("FALTA: %s"), *FoulReason),
+                ETrainingWinTackleOutcome6AM8::Foul);
+            return;
+        }
+        if (bValidBall)
+        {
+            bWinTackleHadLegalBallContact6AM8 = true;
+            ++WinTackleLegalTouchesThisAttempt6AM8;
+            WinTackleFeedback6AM = TEXT("Tackle limpio: ahora recupera la pelota para sumar 3 puntos.");
+        }
+    }
+    bWinTackleWasTackling6AM8 = bTackling;
     if (!bTackling) bWinTackleDislodgedThisTackle6AM = false;
     if (bTackling && !bWinTackleDislodgedThisTackle6AM)
     {
@@ -1843,7 +2015,15 @@ void ASoccerTrainingMovementGameMode6B::TickWinTackle6AM(float DeltaSeconds)
         Rival->CancelAIKickMontageBeforeImpact();
         Rival->ClearAIAutoPassState();
         if (Rival->IsAIPossessingBall()) Rival->ReleaseAIBall(false);
-        FinishWinTackleRound6AM(TEXT("HUMANO RECUPERO POSESION (evaluacion de tackle pendiente)"));
+        // Do not resolve until the tackle ends: a later opponent contact
+        // could make this recovery illegal under the match foul criteria.
+        if (bTackling) return;
+        if (bWinTackleHadLegalBallContact6AM8)
+            FinishWinTackleRound6AM(TEXT("RECUPERACION CON TACKLE LIMPIO"),
+                ETrainingWinTackleOutcome6AM8::CleanRecovery);
+        else
+            FinishWinTackleRound6AM(TEXT("RECUPERACION SIN TACKLE LIMPIO (NO PUNTUA)"),
+                ETrainingWinTackleOutcome6AM8::RecoveryWithoutTackle);
         return;
     }
 
@@ -1864,17 +2044,35 @@ void ASoccerTrainingMovementGameMode6B::TickWinTackle6AM(float DeltaSeconds)
         BallLocal.Z <= SoccerFieldDimensions::GoalHeightCm - BallRadius6AM3;
     if (bScoredInHumanGoal6AM3)
     {
+        // Let an active tackle finish before awarding the attempt. Contact
+        // later in the slide can turn a ball-first entry into a foul.
+        if (bTackling) return;
+        if (bWinTackleHadLegalBallContact6AM8) ++WinTackleGoalsConceded6AM8;
         UE_LOG(LogTemp, Display,
             TEXT("[Training6AM3] HUMAN GOAL REACHED round=%d ballLocal=%s rivalDist=%.1f"),
             WinTackleAttempt6AM, *BallLocal.ToCompactString(),
             FVector::Dist2D(Rival->GetActorLocation(), Ball->GetActorLocation()));
-        FinishWinTackleRound6AM(TEXT("RIVAL LLEGO AL ARCO DEL HUMANO"));
+        FinishWinTackleRound6AM(
+            bWinTackleHadLegalBallContact6AM8
+                ? TEXT("INTERCEPCION LIMPIA SIN RECUPERACION; RIVAL LLEGO AL ARCO")
+                : TEXT("RIVAL LLEGO AL ARCO DEL HUMANO"),
+            bWinTackleHadLegalBallContact6AM8
+                ? ETrainingWinTackleOutcome6AM8::CleanInterception
+                : ETrainingWinTackleOutcome6AM8::OpponentGoal);
         return;
     }
     if (FMath::Abs(BallLocal.Y) > HW + 50.f ||
         BallLocal.X < -HL - 50.f || BallLocal.X > HL + 50.f)
     {
-        FinishWinTackleRound6AM(TEXT("PELOTA FUERA DEL CAMPO"));
+        if (bTackling) return;
+        if (bWinTackleHadLegalBallContact6AM8) ++WinTackleOuts6AM8;
+        FinishWinTackleRound6AM(
+            bWinTackleHadLegalBallContact6AM8
+                ? TEXT("INTERCEPCION LIMPIA SIN RECUPERACION; PELOTA FUERA")
+                : TEXT("PELOTA FUERA DEL CAMPO"),
+            bWinTackleHadLegalBallContact6AM8
+                ? ETrainingWinTackleOutcome6AM8::CleanInterception
+                : ETrainingWinTackleOutcome6AM8::BallOut);
         return;
     }
 
@@ -1914,7 +2112,9 @@ void ASoccerTrainingMovementGameMode6B::TickWinTackle6AM(float DeltaSeconds)
     else if (DribbleEvent == 2)
     {
         ++WinTackleTouches6AM;
-        WinTackleFeedback6AM = TEXT("El rival conduce como en el partido. Calcula el momento del tackle.");
+        WinTackleFeedback6AM = bWinTackleHadLegalBallContact6AM8
+            ? TEXT("Tackle limpio: recupera la pelota para sumar 3 puntos.")
+            : TEXT("El rival conduce como en el partido. Calcula el momento del tackle.");
         UE_LOG(LogTemp, Display,
             TEXT("[Training6AM2] DRIBBLE TOUCH round=%d count=%d"),
             WinTackleAttempt6AM, WinTackleTouches6AM);
@@ -3053,9 +3253,14 @@ FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
             return FString::Printf(TEXT("6AL.6.3 | Intento %d/10 | Zona pelota %d/3 | Arco %d | Tackles %d | %s"),
                 FMath::Min(10, AvoidTackleAttempt6AL), FMath::Max(0, ActiveAvoidZone6AL6),
                 AvoidTackleSuccesses6AL, AvoidDefenderTackles6AL2, *AvoidTackleFeedback6AL);
+        if (bWinTackleLesson6AK && bComplete6B)
+            return FString::Printf(TEXT("6AM.8 | 10/10 intentos | %d/30 puntos | Consulta los resultados"),
+                WinTacklePoints6AM8);
         return IsValid(TackleOpponent6AK)
-            ? FString::Printf(TEXT("6AM.3 | Práctica %d | Toques del rival %d | %s"),
-                WinTackleAttempt6AM, WinTackleTouches6AM, *WinTackleFeedback6AM)
+            ? FString::Printf(TEXT("6AM.8 | Intento %d/10 | %d/30 pts | Tackles %d | Toques rival %d | %s"),
+                FMath::Min(WinTackleMaxAttempts6AM8, WinTackleAttempt6AM),
+                WinTacklePoints6AM8, WinTackleTacklesThisAttempt6AM8,
+                WinTackleTouches6AM, *WinTackleFeedback6AM)
             : TEXT("6AM: configura Tackle Opponent Class = BP_SoccerAIFieldPlayer en el GameMode Blueprint.");
     }
     if (bChargedShotLesson6M)

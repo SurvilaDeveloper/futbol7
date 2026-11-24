@@ -145,15 +145,18 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
                    "Para tener éxito, vos y la pelota deben cruzar la línea de gol e ingresar juntos al arco rival CON POSESIÓN. "
                    "El intento también termina si un defensor recupera y despeja afuera, hay falta o la pelota sale del campo. "
                    "Diez intentos; los saltos se registran por separado.")
-            : TEXT("RECUPERAR CON TACKLE — 6AM.3\n\n"
-                   "El rival empieza cerca de su propio arco y debe atravesar toda la cancha "
-                   "conduciendo la pelota hasta tu arco, usando los autopases y la conducción "
-                   "del partido. Tu posición inicial sigue siendo la misma.\n\n"
-                   "Acercate desde un costado y practicá el tackle para quitar la pelota "
-                   "sin cometer falta. El intento continúa al entrar al área: solo termina "
-                   "si la pelota cruza la línea de gol entre los postes, la recuperás "
-                   "o sale de la cancha. La evaluación de falta y tackle limpio llegará "
-                   "en una etapa posterior."))
+            : TEXT("RECUPERAR CON TACKLE — 6AM.8\n\n"
+                   "Diez intentos. El rival comienza cerca de su arco y conduce hasta el tuyo "
+                   "con autopases cortos y largos, sin detenerse para patear. Puede saltar para "
+                   "esquivar tus tackles. Aparecés cerca de mitad de cancha, alternando de lateral.\n\n"
+                   "Objetivo: recuperá realmente la pelota mediante un tackle LIMPIO. "
+                   "Si la tocás sin falta y después obtenés la posesión: 3 puntos. "
+                   "Si la desviás limpiamente pero no la recuperás: 1 punto. "
+                   "Si cometés falta, no tocás la pelota o la recogés sin un tackle "
+                   "limpio: 0 puntos.\n\n"
+                   "Cada intento termina al recuperar la posesión, cometer falta, "
+                   "recibir gol o salir la pelota. Al décimo intento verás "
+                   "la puntuación y el detalle de cada jugada."))
         : (Mode && Mode->IsZoneFinishLesson6AH())
         ? TEXT("Diez jugadas de conducción y definición. Empezás en el centro de la cancha, con la pelota unos metros adelante.\n\n"
                "Con clic izquierdo podés buscar la pelota y hacer autopases. También podés conducirla con I, J, K y L. "
@@ -214,7 +217,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
     const bool bShot = Mode && Mode->IsChargedShotLesson6M();
-    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsAvoidTackleLesson6AK() ? TEXT("RESULTADOS | ESQUIVAR TACKLES") : Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("RESULTADOS | DEFINICIÓN POR ZONAS") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("RESULTADOS CONTRA ARQUERO") : bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
+    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsAvoidTackleLesson6AK() ? TEXT("RESULTADOS | ESQUIVAR TACKLES") : Mode && Mode->IsWinTackleLesson6AK() ? TEXT("RESULTADOS | RECUPERAR CON TACKLE") : Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("RESULTADOS | DEFINICIÓN POR ZONAS") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("RESULTADOS CONTRA ARQUERO") : bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
         ? TEXT("AUTOPASES COMPLETADOS") : TEXT("RECORRIDO COMPLETADO")));
     if (Mode)
     {
@@ -223,10 +226,12 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
             // The ten-shot report needs a smaller font to remain visible
             // inside the existing 6H results panel.
             FSlateFontInfo BodyFont6P = Body6H->Font;
-            BodyFont6P.Size = (bShot || (Mode && Mode->IsAvoidTackleLesson6AK())) ? 17 : 19;
+            BodyFont6P.Size = (bShot || (Mode && Mode->IsTackleLesson6AK())) ? 17 : 19;
             Body6H->SetFont(BodyFont6P);
             const FString Summary6H = (Mode && Mode->IsAvoidTackleLesson6AK())
                 ? Mode->GetAvoidTackleReport6AL2()
+                : (Mode && Mode->IsWinTackleLesson6AK())
+                ? Mode->GetWinTackleReport6AM8()
                 : bShot
                 ? FString::Printf(TEXT("Remates realizados: %d / %d\nGoles: %d\nFallos: %d\nEfectividad: %.0f%%\n\nTiempo total: %.1f segundos"),
                     Mode->GetShotsCompleted6N(), Mode->GetShotAttemptsTotal6N(),
@@ -244,6 +249,8 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         {
             const FString Result = (Mode && Mode->IsAvoidTackleLesson6AK())
                 ? TEXT("Se evaluaron diez recorridos: entrada al arco rival con la pelota, recuperación y despeje, falta o pelota fuera.")
+                : (Mode && Mode->IsWinTackleLesson6AK())
+                ? TEXT("3 pts: tackle limpio y recuperacion. 1 pto: toque limpio sin posesion. 0 pts: falta o fallo.")
                 : bShot ? TEXT("Revisa la causa de cada resultado. Sin resolucion significa que no se observo el cruce ni un contacto con barrera.")
                 : !Mode->IsTimeEvaluationEnabled6H()
                 ? TEXT("Evaluación pendiente: todavía no definimos el tiempo de aprobación.")

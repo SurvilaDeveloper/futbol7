@@ -11,6 +11,7 @@ class USoccerPlayerProfile;
 class AStaticMeshActor;
 class UPrimitiveComponent;
 struct FHitResult;
+struct FSoccerTackleContactSummary;
 class ASoccerAICharacter;
 enum class ESoccerGoalkeeperAction : uint8;
 
@@ -18,6 +19,18 @@ enum class ESoccerGoalkeeperAction : uint8;
 enum class ETrainingShotOutcome6P : uint8
 {
     Goal, Wide, OverBar, Barrier, Unresolved, Saved, Post, Crossbar, Intercepted, InvalidZone
+};
+
+// 6AM.8: outcomes for this training exercise only. A legal ball touch is
+// distinct from a subsequent human recovery of actual possession.
+enum class ETrainingWinTackleOutcome6AM8 : uint8
+{
+    CleanRecovery,
+    CleanInterception,
+    Foul,
+    RecoveryWithoutTackle,
+    OpponentGoal,
+    BallOut
 };
 
 /** Standalone first dribbling lesson: guide the ball through four checkpoints. */
@@ -55,6 +68,7 @@ public:
     FString GetLastShotFeedback6P() const;
     FString GetShotResultsReport6P() const;
     FString GetAvoidTackleReport6AL2() const;
+    FString GetWinTackleReport6AM8() const;
     bool IsBetweenShotAttempts6N() const { return bBetweenShotAttempts6N; }
     void RegisterChargedShotRelease6M(float ChargeFraction);
     // Called only after an autopass click while the player possesses the ball.
@@ -168,9 +182,30 @@ private:
     float WinTackleLastTouchAt6AM = -100.f;
     float WinTackleHumanTackleSuppressUntil6AM = -100.f;
     FString WinTackleFeedback6AM;
+    // 6AM.8: ten attempts. Use actual completed tackle-contact summaries;
+    // acquiring a loose ball without a legal tackle awards no tackle points.
+    int32 WinTackleMaxAttempts6AM8 = 10;
+    int32 WinTackleAttemptsFinished6AM8 = 0;
+    int32 WinTacklePoints6AM8 = 0;
+    int32 WinTackleCleanRecoveries6AM8 = 0;
+    int32 WinTackleCleanInterceptions6AM8 = 0;
+    int32 WinTackleFouls6AM8 = 0;
+    int32 WinTackleGoalsConceded6AM8 = 0;
+    int32 WinTackleOuts6AM8 = 0;
+    int32 WinTackleRecoveriesWithoutTackle6AM8 = 0;
+    int32 WinTackleMisses6AM8 = 0;
+    int32 WinTackleTacklesThisAttempt6AM8 = 0;
+    int32 WinTackleLegalTouchesThisAttempt6AM8 = 0;
+    bool bWinTackleWasTackling6AM8 = false;
+    bool bWinTackleHadLegalBallContact6AM8 = false;
+    float WinTackleRoundStartTime6AM8 = 0.f;
+    TArray<FString> WinTackleAttemptResults6AM8;
     void ResetWinTackle6AM();
     void TickWinTackle6AM(float DeltaSeconds);
-    void FinishWinTackleRound6AM(const TCHAR* Outcome);
+    void FinishWinTackleRound6AM(const FString& Outcome,
+        ETrainingWinTackleOutcome6AM8 OutcomeType);
+    bool IsWinTackleFoul6AM8(const FSoccerTackleContactSummary& Contact,
+        int32 ContactOrder, FString& OutReason) const;
 
     // 6AL: training-only use of the exact shared tackle and running-jump actions.
     UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL", meta=(ClampMin="200.0", ClampMax="900.0"))
