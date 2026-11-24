@@ -21,6 +21,9 @@
 
 #include "SoccerAICharacter.h"
 #include "SoccerMatchManager.h"
+#include "SoccerTacklePredictionShared.h"
+#include "Training/Exercises/MovementControl/SoccerTrainingMovementGameMode6B.h"
+#include "EngineUtils.h"
 #include "SoccerDebugManager.h"
 #include "SoccerPlayerProfile.h"
 #include "GameHUD.h"
@@ -58,7 +61,7 @@ namespace
 
 AThirdPersonCppCharacter::AThirdPersonCppCharacter()
 {
-	SelectedMovementSpeed = FastRunSpeed;
+	SelectedMovementSpeed = JogSpeed;
 	GetCharacterMovement()->MaxWalkSpeed = SelectedMovementSpeed;
 
 	PrimaryActorTick.bCanEverTick = true;
@@ -1457,7 +1460,7 @@ void AThirdPersonCppCharacter::ApplyPlayerProfilePhysicalTuning()
 	FastRunMinimumSpeed =
 		PlayerProfileBaselineFastRunMinimumSpeed * PaceMultiplier;
 
-	SelectedMovementSpeed = FastRunSpeed;
+	SelectedMovementSpeed = JogSpeed;
 
 	if (UCharacterMovementComponent* ProfileCharacterMovement = GetCharacterMovement())
 	{
@@ -6098,6 +6101,156 @@ void AThirdPersonCppCharacter::HandleTackleInput()
         FindMatchManager();
     }
 
+    // 6AM.1: the standalone training has no SoccerMatchManager. Without
+    // this branch the legacy fallback would launch the human 500 cm forward
+    // regardless of where the (moving) training ball actually is.
+    // Reuse the same physical tackle, side selection and yaw limiter as the
+    // match. Only the training target prediction differs.
+    const UWorld* TackleWorld6AM1 = GetWorld();
+    const ASoccerTrainingMovementGameMode6B* TrainingMode6AM1 =
+        TackleWorld6AM1 != nullptr
+            ? Cast<ASoccerTrainingMovementGameMode6B>(
+                TackleWorld6AM1->GetAuthGameMode())
+            : nullptr;
+    if (TrainingMode6AM1 != nullptr &&
+        TrainingMode6AM1->IsWinTackleLesson6AK() &&
+        TrainingMode6AM1->IsExerciseRunning6H())
+    {
+        ASoccerBall* TrainingBall6AM1 = ResolveTackleBall();
+        if (!IsValid(TrainingBall6AM1))
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Training6AM1] HUMAN TACKLE BLOCKED: no training ball"));
+            return;
+        }
+
+        const FVector BallNow6AM1 = TrainingBall6AM1->GetActorLocation();
+        FVector EstimatedBallVelocity6AM1 =
+            TrainingBall6AM1->GetBallPhysicsVelocity();
+        EstimatedBallVelocity6AM1.Z = 0.0f;
+        bool bCarrierEstimate6AM1 = false;
+
+        // In this lesson the rival alternates physical autopasses and
+        // possession. During an autopass the ball's PHYSICS velocity is the
+        // reliable source; while held, use the carrier's world velocity.
+        if (EstimatedBallVelocity6AM1.Size2D() < 80.0f)
+        {
+            for (TActorIterator<ASoccerAICharacter> It(GetWorld()); It; ++It)
+            {
+                ASoccerAICharacter* Candidate = *It;
+                if (!IsValid(Candidate) || Candidate->GetTeam() == GetTeam() ||
+                    !Candidate->IsAIPossessingBall() ||
+                    FVector::Dist2D(Candidate->GetActorLocation(), BallNow6AM1) > 190.0f)
+                {
+                    continue;
+                }
+                EstimatedBallVelocity6AM1 = Candidate->GetVelocity();
+                EstimatedBallVelocity6AM1.Z = 0.0f;
+                bCarrierEstimate6AM1 = true;
+                break;
+            }
+        }
+
+        // Estimate the time to the middle/contact portion of the sliding
+        // action. Use the shared match/training lead arithmetic introduced
+        // for predictive tackles in 6AL.6.4; do not teleport or steer the
+        // player after the montage begins.
+        const float RunSpeed6AM1 = GetVelocity().Size2D();
+        const float EstimatedSlideSpeed6AM1 = FMath::Max(350.0f,
+            FMath::Min(900.0f, FMath::Max(RunSpeed6AM1, TackleMinimumInitialSpeed)) * 0.80f);
+        const float MinLead6AM1 = 0.14f;
+        const float MaxLead6AM1 = 0.55f;
+        float LeadSeconds6AM1 = FMath::Clamp(
+            SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
+                GetActorLocation(), BallNow6AM1, EstimatedSlideSpeed6AM1, 0.03f),
+            MinLead6AM1, MaxLead6AM1);
+
+        FVector PredictedBall6AM1 = BallNow6AM1;
+        for (int32 Iteration = 0; Iteration < 2; ++Iteration)
+        {
+            PredictedBall6AM1 =
+                SoccerTacklePredictionShared::PredictCarriedBallLocation(
+                    BallNow6AM1, EstimatedBallVelocity6AM1, LeadSeconds6AM1);
+            const float NewEstimate =
+                SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
+                    GetActorLocation(), PredictedBall6AM1,
+                    EstimatedSlideSpeed6AM1, 0.03f);
+            LeadSeconds6AM1 = FMath::Clamp(
+                FMath::Lerp(LeadSeconds6AM1, NewEstimate, 0.65f),
+                MinLead6AM1, MaxLead6AM1);
+        }
+        PredictedBall6AM1 =
+            SoccerTacklePredictionShared::PredictCarriedBallLocation(
+                BallNow6AM1, EstimatedBallVelocity6AM1, LeadSeconds6AM1);
+
+        // For a rolling/free ball, reuse the match's PHYSICAL ground
+        // trajectory predictor (friction, bounce and stopping) rather than
+        // simply extrapolating its initial velocity linearly.
+        bool bPhysicsPrediction6AM1 = false;
+        if (!bCarrierEstimate6AM1 && EstimatedBallVelocity6AM1.Size2D() > 80.0f)
+        {
+            TArray<FSoccerBallTrajectorySample> Samples6AM1;
+            if (TrainingBall6AM1->BuildPredictedGroundTrajectory(
+                LeadSeconds6AM1 + 0.06f, 0.04f, Samples6AM1))
+            {
+                float BestTimeError6AM1 = FLT_MAX;
+                for (const FSoccerBallTrajectorySample& Sample : Samples6AM1)
+                {
+                    if (!Sample.bNearGround || Sample.bTrajectoryTerminated)
+                    {
+                        continue;
+                    }
+                    const float TimeError =
+                        FMath::Abs(Sample.TimeFromNow - LeadSeconds6AM1);
+                    if (TimeError < BestTimeError6AM1)
+                    {
+                        BestTimeError6AM1 = TimeError;
+                        PredictedBall6AM1 = Sample.Location;
+                        bPhysicsPrediction6AM1 = true;
+                    }
+                }
+            }
+        }
+
+        // A running player must not make an instantaneous 180-degree
+        // reversal. The base class additionally clamps the actual slide to
+        // TackleMaximumStartTurnAngle relative to the actor's facing.
+        FVector ToTarget6AM1 = PredictedBall6AM1 - GetActorLocation();
+        ToTarget6AM1.Z = 0.0f;
+        const FVector RunDirection6AM1 = GetVelocity().GetSafeNormal2D();
+        const float RunningAngle6AM1 =
+            !RunDirection6AM1.IsNearlyZero() && !ToTarget6AM1.IsNearlyZero()
+                ? FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(
+                    FVector::DotProduct(RunDirection6AM1, ToTarget6AM1.GetSafeNormal()),
+                    -1.0f, 1.0f)))
+                : 0.0f;
+        const float MaximumRunningTurn6AM1 =
+            FMath::Min(85.0f, FMath::Max(0.0f, TackleMaximumStartTurnAngle));
+        if (RunSpeed6AM1 > 260.0f && RunningAngle6AM1 > MaximumRunningTurn6AM1)
+        {
+            UE_LOG(LogTemp, Display,
+                TEXT("[Training6AM1] HUMAN TACKLE BLOCKED turn=%.1f limit=%.1f runSpeed=%.1f (no reverse slide)"),
+                RunningAngle6AM1, MaximumRunningTurn6AM1, RunSpeed6AM1);
+            return;
+        }
+
+        const bool bTackleStarted6AM1 =
+            TryStartTackleTowardLocation(PredictedBall6AM1);
+        UE_LOG(LogTemp, Display,
+            TEXT("[Training6AM1] HUMAN TACKLE %s source=%s lead=%.2fs ballSpeed=%.1f ballDist=%.1f leadDist=%.1f turn=%.1f slideDir=(%.2f,%.2f)"),
+            bTackleStarted6AM1 ? TEXT("START") : TEXT("FAILED"),
+            bPhysicsPrediction6AM1 ? TEXT("PHYSICS") :
+                (bCarrierEstimate6AM1 ? TEXT("CARRIER") : TEXT("VELOCITY")),
+            LeadSeconds6AM1, EstimatedBallVelocity6AM1.Size2D(),
+            FVector::Dist2D(GetActorLocation(), BallNow6AM1),
+            FVector::Dist2D(BallNow6AM1, PredictedBall6AM1),
+            RunningAngle6AM1, GetActiveTackleDirection().X,
+            GetActiveTackleDirection().Y);
+        return;
+    }
+
+    // Match behaviour stays exactly as before: it still resolves the ball
+    // through SoccerMatchManager and calls the shared physical tackle.
     FVector TackleTarget =
         GetActorLocation() + GetActorForwardVector() * 500.0f;
 

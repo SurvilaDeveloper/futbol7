@@ -145,6 +145,33 @@ private:
     void DrawAvoidZones6AL6(float Now);
     void EnsureTackleOpponent6AK();
     void PositionTackleScenario6AK();
+
+    // 6AM: first playable stage of "Recuperar con tackle". The attacker uses
+    // the same physical AI autopass/collection actions as in the match; its
+    // tactical orders come from this standalone training GameMode, never from
+    // SoccerMatchManager. Full tackle/foul scoring follows in 6AN.
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AM", meta=(ClampMin="150.0", ClampMax="600.0"))
+    float WinTackleTouchDistance6AM = 310.f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AM", meta=(ClampMin="250.0", ClampMax="1300.0"))
+    float WinTackleTouchSpeed6AM = 675.f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AM", meta=(ClampMin="0.15", ClampMax="1.5"))
+    float WinTackleFollowRepath6AM = 0.38f;
+    UPROPERTY(EditAnywhere, Category="Training|Tackle|6AM", meta=(ClampMin="0.5", ClampMax="8.0"))
+    float WinTackleResetDelay6AM = 2.3f;
+    int32 WinTackleAttempt6AM = 0;
+    int32 WinTackleTouches6AM = 0;
+    bool bWinTackleWaitingReset6AM = false;
+    bool bWinTackleDislodgedThisTackle6AM = false;
+    float WinTackleResetAt6AM = -1.f;
+    float WinTackleReadyAt6AM = -1.f;
+    float WinTackleLastMoveAt6AM = -100.f;
+    float WinTackleLastTouchAt6AM = -100.f;
+    float WinTackleHumanTackleSuppressUntil6AM = -100.f;
+    FString WinTackleFeedback6AM;
+    void ResetWinTackle6AM();
+    void TickWinTackle6AM(float DeltaSeconds);
+    void FinishWinTackleRound6AM(const TCHAR* Outcome);
+
     // 6AL: training-only use of the exact shared tackle and running-jump actions.
     UPROPERTY(EditAnywhere, Category="Training|Tackle|6AL", meta=(ClampMin="200.0", ClampMax="900.0"))
     float AvoidTackleTriggerDistance6AL = 440.f;

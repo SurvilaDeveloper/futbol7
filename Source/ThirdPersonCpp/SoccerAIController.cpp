@@ -16546,12 +16546,238 @@ FVector ASoccerAIController::BuildAIAutoPassTargetLocation(
 	return TargetLocation;
 }
 
+// 6AM.2: reuse the match's local 15x10 dribble-direction planner and its
+// complete physical auto-pass pursuit/collection logic. This is called ONLY
+// by the standalone training GameMode, never by a match.
+int32 ASoccerAIController::TickTrainingDribble6AM2(
+	ASoccerAICharacter* TrainingDribbler,
+	ASoccerBall* Ball,
+	const ASoccerField* TrainingField,
+	const FVector& AttackGoal,
+	const FVector& HumanLocation,
+	int32 CompletedTouches,
+	float SuppressCollectionUntil,
+	float& LastTouchAt,
+	float& LastMoveAt
+)
+{
+	if (!IsValid(TrainingDribbler) || !IsValid(Ball) || !IsValid(TrainingField) ||
+		GetPawn() != TrainingDribbler || IsValid(MatchManager) || GetWorld() == nullptr)
+	{
+		return 0;
+	}
+
+	const float Now = GetWorld()->GetTimeSeconds();
+	const bool bCanCollect = Now >= SuppressCollectionUntil;
+	if (TrainingDribbler->IsTackleActive())
+	{
+		StopMovement();
+		return 0;
+	}
+
+	// A kick montage may still be waiting for its authored impact frame.
+	// Once it has physically touched the ball, the same follow system used
+	// in the match is permitted to drive the character while animating.
+	if (TrainingDribbler->IsAIKickMontageActive() && !TrainingDribbler->IsAIAutoPassActive())
+	{
+		StopMovement();
+		return 0;
+	}
+	if (TrainingDribbler->IsAIDribbleTurnAutoPassActive() &&
+		!TrainingDribbler->IsAIAutoPassActive())
+	{
+		StopMovement();
+		return 0;
+	}
+
+	if (TrainingDribbler->IsAIAutoPassActive())
+	{
+		if (!bCanCollect)
+		{
+			TrainingDribbler->ClearAIAutoPassState();
+			StopMovement();
+			return 0;
+		}
+		const bool bHadPossession = TrainingDribbler->IsAIPossessingBall();
+		const bool bFollowRunning = UpdateAIAutoPassFollow(TrainingDribbler);
+		if (!bHadPossession && TrainingDribbler->IsAIPossessingBall())
+		{
+			return 3;
+		}
+		if (bFollowRunning)
+		{
+			return 0;
+		}
+	}
+
+	FVector BallVelocity = Ball->GetBallPhysicsVelocity();
+	BallVelocity.Z = 0.f;
+	const float BallSpeed = BallVelocity.Size();
+	const float BallDistance = FVector::Dist2D(
+		TrainingDribbler->GetActorLocation(), Ball->GetActorLocation());
+
+	if (TrainingDribbler->IsAIPossessingBall() &&
+		(TrainingDribbler->GetControlledAIBall() != Ball || BallDistance > 210.f))
+	{
+		TrainingDribbler->ReleaseAIBall(false);
+	}
+
+	if (bCanCollect && !TrainingDribbler->IsAIPossessingBall() &&
+		!TrainingDribbler->IsAIAutoPassActive() && BallDistance <= 105.f &&
+		BallSpeed < 360.f)
+	{
+		TrainingDribbler->PossessAIBall(Ball);
+		StopMovement();
+		return 1;
+	}
+
+	if (TrainingDribbler->IsAIPossessingBall() && !TrainingDribbler->IsAIAutoPassActive() &&
+		!TrainingDribbler->IsAIKickMontageActive() &&
+		!TrainingDribbler->IsAIDribbleTurnAutoPassActive() &&
+		BallDistance <= 90.f && BallSpeed < 260.f &&
+		Now - LastTouchAt >= 0.72f)
+	{
+		FVector PreferredDirection = AttackGoal - TrainingDribbler->GetActorLocation();
+		PreferredDirection.Z = 0.f;
+		const float RemainingDistance = PreferredDirection.Size();
+		PreferredDirection = PreferredDirection.GetSafeNormal();
+		// 6AM.4: use match dribbling for BOTH short and occasional long touches.
+		// Bring the longer ball forward when there is space to chase it.
+		// A closer human defender increases frequency so they get genuine
+		// opportunities to intercept the free rolling ball, not the carrier.
+		const float HumanBallDistance6AM4 = FVector::Dist2D(
+			HumanLocation, Ball->GetActorLocation());
+		const bool bHumanCanChallenge6AM4 = HumanBallDistance6AM4 <= 1700.f;
+		const int32 LongTouchInterval6AM4 = bHumanCanChallenge6AM4 ? 3 : 4;
+		const int32 NextTouchIndex6AM4 = CompletedTouches + 1;
+		const bool bLongTouchScheduled6AM4 =
+			CompletedTouches >= 2 &&
+			(NextTouchIndex6AM4 % LongTouchInterval6AM4) == 0;
+		const float LongTouchDistance6AM4 = FMath::Max(
+			AIAutoPassDistance * (bHumanCanChallenge6AM4 ? 2.0f : 1.8f),
+			bHumanCanChallenge6AM4 ? 1040.f : 940.f);
+		const bool bLongTouchCandidate6AM4 = bLongTouchScheduled6AM4 &&
+			RemainingDistance > LongTouchDistance6AM4 + 250.f;
+		// 6AM.3: the normal dribble-grid clamps to points 130 cm INSIDE
+		// the pitch. Keep it everywhere except the final touch into the
+		// human goal, otherwise the training rival can never finish the run.
+		const FVector BallPitch6AM3 = TrainingField->WorldToPitchLocal(
+			Ball->GetActorLocation());
+		const bool bFinishAtHumanGoal6AM3 =
+			RemainingDistance <= AIAutoPassDistance + 140.f &&
+			FMath::Abs(BallPitch6AM3.Y) <=
+				SoccerFieldDimensions::GoalHalfWidthCm + 180.f &&
+			BallPitch6AM3.X <= -SoccerFieldDimensions::HalfPitchLengthCm + 900.f;
+		if ((RemainingDistance > 120.f || bFinishAtHumanGoal6AM3) &&
+			!PreferredDirection.IsNearlyZero())
+		{
+			FVector PlannedDirection = FVector::ZeroVector;
+			bool bGridSafe = false;
+			const bool bGridEvaluated = FindBestLocalAIDribbleDirection(
+				TrainingDribbler, PreferredDirection, false, PlannedDirection,
+				bGridSafe, TrainingField, Ball);
+			// If the local grid found only risky lanes, allow its least-risky
+			// direction so the training opponent does not freeze indefinitely.
+			const FVector UseDirection = bGridEvaluated &&
+				!PlannedDirection.IsNearlyZero()
+				? PlannedDirection : PreferredDirection;
+			const float TouchDistance = FMath::Min(
+				bLongTouchCandidate6AM4 && !bFinishAtHumanGoal6AM3
+					? LongTouchDistance6AM4 : AIAutoPassDistance,
+				FMath::Max(140.f, RemainingDistance - 90.f));
+			FVector Target = TrainingDribbler->GetActorLocation() +
+				UseDirection * TouchDistance;
+			FVector LocalTarget = TrainingField->WorldToPitchLocal(Target);
+			LocalTarget.X = FMath::Clamp(LocalTarget.X,
+				SoccerFieldDimensions::LeftGoalLineX + 130.f,
+				SoccerFieldDimensions::RightGoalLineX - 130.f);
+			LocalTarget.Y = FMath::Clamp(LocalTarget.Y,
+				SoccerFieldDimensions::SouthTouchLineY + 150.f,
+				SoccerFieldDimensions::NorthTouchLineY - 150.f);
+			// This training-only last touch targets a point inside the goal
+			// mouth, while all regular field dribbles keep their original
+			// safety clamps and match-style selection.
+			if (bFinishAtHumanGoal6AM3)
+			{
+				LocalTarget.X = SoccerFieldDimensions::LeftGoalLineX -
+					FMath::Min(75.f, SoccerFieldDimensions::GoalDepthCm * 0.65f);
+				LocalTarget.Y = 0.f;
+			}
+			Target = TrainingField->PitchLocalToWorld(LocalTarget);
+			Target.Z = TrainingDribbler->GetActorLocation().Z;
+			const float MinDribbleDistance6AM3 =
+				bFinishAtHumanGoal6AM3 ? 30.f : 140.f;
+			const float ActualTouchDistance6AM4 = FVector::Dist2D(
+				Target, Ball->GetActorLocation());
+			// If the pitch clamps shorten the path, use an ordinary short touch.
+			const bool bLongTouch6AM4 = bLongTouchCandidate6AM4 &&
+				!bFinishAtHumanGoal6AM3 &&
+				ActualTouchDistance6AM4 >= FMath::Max(
+					AIAutoPassDistance + 200.f, 720.f);
+			if (ActualTouchDistance6AM4 > MinDribbleDistance6AM3)
+			{
+				LastTouchAt = Now;
+				if (bFinishAtHumanGoal6AM3)
+				{
+					UE_LOG(LogTemp, Display,
+						TEXT("[Training6AM3] FINAL GOAL TOUCH remaining=%.1f ballY=%.1f targetX=%.1f"),
+						RemainingDistance, BallPitch6AM3.Y, LocalTarget.X);
+				}
+				// Keep the normal match auto-pass animation, follow and collection;
+				// only the training touch distance and initial speed vary.
+				const float TouchSpeed6AM4 = bLongTouch6AM4
+					? FMath::Max(AIAutoPassHorizontalSpeed * 1.36f, 1550.f)
+					: AIAutoPassHorizontalSpeed;
+				TrainingDribbler->StartAIAutoPassToLocation(Target,
+					TouchSpeed6AM4, AIAutoPassMinTravelTime,
+					AIAutoPassMaxTravelTime);
+				MoveToLocationWithAIMovement(
+					ESoccerAIOrder::AttackRunIntoSpace,
+					Target, AIAutoPassFollowAcceptanceRadius, false);
+				UE_LOG(LogTemp, Display,
+					TEXT("[Training6AM4] %s DRIBBLE grid=%s safe=%s touch=%d speed=%.0f distance=%.0f humanDist=%.0f target=%s"),
+					bLongTouch6AM4 ? TEXT("LONG") : TEXT("SHORT"),
+					bGridEvaluated ? TEXT("YES") : TEXT("NO"),
+					bGridSafe ? TEXT("YES") : TEXT("NO"),
+					NextTouchIndex6AM4, TouchSpeed6AM4,
+					ActualTouchDistance6AM4, HumanBallDistance6AM4,
+					*Target.ToString());
+				return 2;
+			}
+		}
+	}
+
+	// Ordinary free-ball pursuit is also shared with match tactical movement.
+	if (Now - LastMoveAt >= 0.32f && !TrainingDribbler->IsAIAutoPassActive())
+	{
+		LastMoveAt = Now;
+		FVector PredictedBall = Ball->GetActorLocation() +
+			BallVelocity * FMath::Clamp(BallDistance / 1100.f, 0.04f, 0.23f);
+		PredictedBall.Z = TrainingDribbler->GetActorLocation().Z;
+		if (FVector::Dist2D(TrainingDribbler->GetActorLocation(), PredictedBall) > 48.f)
+		{
+			MoveToLocationWithAIMovement(
+					ESoccerAIOrder::ChaseBall, PredictedBall, 40.f, false);
+			TrainingDribbler->RequestAIMovementMode(
+					ESoccerAIMovementMode::FastRun,
+					ESoccerAIMovementReason::FreeBallRace, true);
+		}
+		else
+		{
+			StopMovement();
+		}
+	}
+	return 0;
+}
+
 bool ASoccerAIController::FindBestLocalAIDribbleDirection(
 	const ASoccerAICharacter* SoccerCharacter,
 	const FVector& PreferredDirection,
 	bool bConservativeMode,
 	FVector& OutBestDirection,
-	bool& bOutDirectionIsSafe
+	bool& bOutDirectionIsSafe,
+	const ASoccerField* TrainingField,
+	const ASoccerBall* TrainingBall
 ) const
 {
 	OutBestDirection = FVector::ZeroVector;
@@ -16580,7 +16806,13 @@ bool ASoccerAIController::FindBestLocalAIDribbleDirection(
 
 	FVector BallLocation = SoccerCharacter->GetActorLocation();
 
-	if (IsValid(MatchManager))
+	// Training passes its own world actors. For matches, the original
+	// manager lookup is unchanged, including the exact selection weights.
+	if (IsValid(TrainingBall))
+	{
+		BallLocation = TrainingBall->GetActorLocation();
+	}
+	else if (IsValid(MatchManager))
 	{
 		ASoccerBall* SoccerBall = MatchManager->GetSoccerBall();
 
@@ -16606,9 +16838,9 @@ bool ASoccerAIController::FindBestLocalAIDribbleDirection(
 	const float GridMinX = SoccerFieldDimensions::LeftGoalLineX;
 	const float GridMinY = SoccerFieldDimensions::SouthTouchLineY;
 
-	const ASoccerField* SoccerField = IsValid(MatchManager)
-		? MatchManager->GetSoccerField()
-		: nullptr;
+	const ASoccerField* SoccerField = IsValid(TrainingField)
+		? TrainingField
+		: IsValid(MatchManager) ? MatchManager->GetSoccerField() : nullptr;
 	const FVector BallPitchLocation = IsValid(SoccerField)
 		? SoccerField->WorldToPitchLocal(BallLocation)
 		: BallLocation;

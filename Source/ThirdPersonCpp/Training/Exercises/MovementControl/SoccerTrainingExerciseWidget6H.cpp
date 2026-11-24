@@ -145,8 +145,15 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
                    "Para tener éxito, vos y la pelota deben cruzar la línea de gol e ingresar juntos al arco rival CON POSESIÓN. "
                    "El intento también termina si un defensor recupera y despeja afuera, hay falta o la pelota sale del campo. "
                    "Diez intentos; los saltos se registran por separado.")
-            : TEXT("RECUPERAR CON TACKLE: escenario preparado (6AK). "
-                   "La conduccion automatica del rival llega en 6AM."))
+            : TEXT("RECUPERAR CON TACKLE — 6AM.3\n\n"
+                   "El rival empieza cerca de su propio arco y debe atravesar toda la cancha "
+                   "conduciendo la pelota hasta tu arco, usando los autopases y la conducción "
+                   "del partido. Tu posición inicial sigue siendo la misma.\n\n"
+                   "Acercate desde un costado y practicá el tackle para quitar la pelota "
+                   "sin cometer falta. El intento continúa al entrar al área: solo termina "
+                   "si la pelota cruza la línea de gol entre los postes, la recuperás "
+                   "o sale de la cancha. La evaluación de falta y tackle limpio llegará "
+                   "en una etapa posterior."))
         : (Mode && Mode->IsZoneFinishLesson6AH())
         ? TEXT("Diez jugadas de conducción y definición. Empezás en el centro de la cancha, con la pelota unos metros adelante.\n\n"
                "Con clic izquierdo podés buscar la pelota y hacer autopases. También podés conducirla con I, J, K y L. "

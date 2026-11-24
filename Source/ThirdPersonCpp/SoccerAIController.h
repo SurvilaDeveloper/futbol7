@@ -11,6 +11,7 @@
 class UCurveTable;
 class ASoccerAICharacter;
 class ASoccerBall;
+class ASoccerField;
 class ASoccerMatchManager;
 class ASoccerCharacterBase;
 class AThirdPersonCppCharacter;
@@ -205,6 +206,24 @@ public:
 	}
 
 	virtual void Tick(float DeltaTime) override;
+
+	// 6AM.2: run the *same* local-grid direction picker and physical
+	// auto-pass follow system as match open play, with the training field and
+	// ball supplied explicitly. The normal match tactical Tick stays OFF.
+	// Return: 0=no event, 1=loose ball collected, 2=dribble touch started,
+	// 3=own auto-pass recollected. Call only from the WinTackle lesson.
+	int32 TickTrainingDribble6AM2(
+		ASoccerAICharacter* Character,
+		ASoccerBall* Ball,
+		const ASoccerField* TrainingField,
+		const FVector& AttackGoal,
+		const FVector& HumanLocation,
+		int32 CompletedTouches,
+		float SuppressCollectionUntil,
+		float& LastTouchAt,
+		float& LastMoveAt
+	);
+
 
 	void HandleGoalkeeperContactWindowBegin(
 		ASoccerAICharacter* SoccerCharacter
@@ -1732,7 +1751,9 @@ private:
 		const FVector& PreferredDirection,
 		bool bConservativeMode,
 		FVector& OutBestDirection,
-		bool& bOutDirectionIsSafe
+		bool& bOutDirectionIsSafe,
+		const ASoccerField* TrainingField = nullptr,
+		const ASoccerBall* TrainingBall = nullptr
 	) const;
 
 	float EstimateLocalAIDribbleBallArrivalTime(
