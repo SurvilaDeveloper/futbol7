@@ -219,6 +219,11 @@ void ASoccerAICharacter::Tick(float DeltaTime)
 		CancelPendingAIKickAnimation(true);
 	}
 
+	if (ShouldCancelTrainingDribbleTurn6AM10())
+	{
+		CancelTrainingDribbleTurn6AM10();
+	}
+
 	if (IsAerialActionLocked() || IsAerialActionWaitingToStart())
 	{
 		StopGoalkeeperRetreatBackpedalAnimation();
@@ -596,6 +601,13 @@ void ASoccerAICharacter::PossessAIBall(ASoccerBall* NewControlledBall)
 
 void ASoccerAICharacter::ReleaseAIBall(bool bStartRecoveryCooldown)
 {
+	// A completed turn calls ReleaseAIBall from its own physical impact.
+	// Only an EXTERNAL loss before that impact invalidates the pending turn.
+	if (bTrainingDribbleTurn6AM10 && !bAIDribbleTurnAutoPassHasImpactedBall)
+	{
+		CancelTrainingDribbleTurn6AM10();
+	}
+
 	// External possession cleanup (restart, reset, etc.) must also erase a
 	// delayed kick. The normal montage-start path calls ReleaseAIBall before
 	// bAIKickMontageActive is set, so it does not enter this branch.
@@ -1854,6 +1866,62 @@ bool ASoccerAICharacter::StartTrainingRunningAutoPass6AM72(
 	return bAIAutoPassActive;
 }
 
+bool ASoccerAICharacter::TryStartTrainingDribbleTurn6AM10(
+	const FVector& TargetLocation,
+	float HorizontalSpeed,
+	float MinTravelTime,
+	float MaxTravelTime
+)
+{
+	if (!bAIIsPossessingBall || !IsValid(ControlledBall) || bAIAutoPassActive ||
+		bAIKickMontageActive || bAIDribbleTurnAutoPassActive ||
+		IsTackleActive() || IsTackleEvasionActive() || IsTackleFallReactionActive() ||
+		IsAerialActionQueuedOrPlaying())
+	{
+		return false;
+	}
+
+	bTrainingDribbleTurn6AM10 = true;
+	if (TryStartAIDribbleTurnAutoPassToLocation(
+		TargetLocation, HorizontalSpeed, MinTravelTime, MaxTravelTime))
+	{
+		return true;
+	}
+	bTrainingDribbleTurn6AM10 = false;
+	return false;
+}
+
+bool ASoccerAICharacter::ShouldCancelTrainingDribbleTurn6AM10() const
+{
+	return bTrainingDribbleTurn6AM10 && bAIDribbleTurnAutoPassActive &&
+		(IsTackleActive() || IsTackleEvasionActive() || IsTackleFallReactionActive() ||
+		 IsAerialActionQueuedOrPlaying() ||
+		 (!bAIDribbleTurnAutoPassHasImpactedBall &&
+		  (!bAIIsPossessingBall || !IsValid(ControlledBall))));
+}
+
+void ASoccerAICharacter::CancelTrainingDribbleTurn6AM10()
+{
+	if (!bTrainingDribbleTurn6AM10)
+	{
+		return;
+	}
+
+	UAnimMontage* MontageToStop = TrainingDribbleTurnMontage6AM10;
+	// Finish normally attempts a fallback impact. Mark it handled BEFORE
+	// finishing so an interrupted turn can never launch a delayed ball.
+	bAIDribbleTurnAutoPassHasImpactedBall = true;
+	FinishAIDribbleTurnAutoPassAnimation();
+	if (IsValid(MontageToStop) && GetMesh())
+	{
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.08f, MontageToStop);
+		}
+	}
+	UE_LOG(LogTemp, Display, TEXT("[Training6AM10] TURN CANCELLED"));
+}
+
 bool ASoccerAICharacter::IsAIAutoPassActive() const
 {
 	return bAIAutoPassActive;
@@ -3000,6 +3068,10 @@ void ASoccerAICharacter::StartAIDribbleTurnAutoPass(
 
 	bAIDribbleTurnAutoPassActive = true;
 	bAIDribbleTurnAutoPassHasImpactedBall = false;
+	if (bTrainingDribbleTurn6AM10)
+	{
+		TrainingDribbleTurnMontage6AM10 = TurnMontage;
+	}
 
 	ActiveAIDribbleTurnDirection =
 		SafeDesiredDirection;
@@ -3035,6 +3107,13 @@ void ASoccerAICharacter::StartAIDribbleTurnAutoPass(
 		FMath::Acos(AITurnDot)
 	);
 
+	if (bTrainingDribbleTurn6AM10)
+	{
+		UE_LOG(LogTemp, Display,
+			TEXT("[Training6AM10] TURN START angle=%.1f speed=%.1f montage=%s"),
+			AITurnAngleDegrees, GetVelocity().Size2D(), *GetNameSafe(TurnMontage));
+	}
+
 	ActiveAIDribbleTurnForcedLocomotionSpeed =
 		ForcedLocomotionSpeed *
 		GetPlayerProfileBalanceTurnSpeedRetention(AITurnAngleDegrees);
@@ -3063,6 +3142,10 @@ void ASoccerAICharacter::StartAIDribbleTurnAutoPass(
 
 	if (MontagePlayResult <= 0.0f)
 	{
+		if (bTrainingDribbleTurn6AM10)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Training6AM10] TURN MONTAGE FAILED montage=%s"), *GetNameSafe(TurnMontage));
+		}
 		PerformAIDribbleTurnAutoPassImpact();
 		FinishAIDribbleTurnAutoPassAnimation();
 		return;
@@ -3137,6 +3220,12 @@ void ASoccerAICharacter::StartAIDribbleTurnAutoPass(
 
 void ASoccerAICharacter::PerformAIDribbleTurnAutoPassImpact()
 {
+	// The timer may execute between character/controller ticks.
+	if (ShouldCancelTrainingDribbleTurn6AM10())
+	{
+		CancelTrainingDribbleTurn6AM10();
+		return;
+	}
 	if (bAIDribbleTurnAutoPassHasImpactedBall)
 	{
 		return;
@@ -3177,6 +3266,8 @@ void ASoccerAICharacter::FinishAIDribbleTurnAutoPassAnimation()
 
 	bAIDribbleTurnAutoPassActive = false;
 	bAIDribbleTurnAutoPassHasImpactedBall = false;
+	bTrainingDribbleTurn6AM10 = false;
+	TrainingDribbleTurnMontage6AM10 = nullptr;
 
 	ActiveAIDribbleTurnDirection = FVector::ZeroVector;
 	ActiveAIDribbleTurnAutoPassTargetLocation = FVector::ZeroVector;

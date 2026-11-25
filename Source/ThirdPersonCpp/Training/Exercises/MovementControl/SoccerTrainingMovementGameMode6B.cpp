@@ -1895,6 +1895,7 @@ void ASoccerTrainingMovementGameMode6B::FinishWinTackleRound6AM(
         if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
             AI->StopMovement();
         TackleOpponent6AK->SetAIChasingBall(false);
+        TackleOpponent6AK->CancelTrainingDribbleTurn6AM10();
         TackleOpponent6AK->ClearAIAutoPassState();
     }
     UE_LOG(LogTemp, Display,
@@ -2001,6 +2002,7 @@ void ASoccerTrainingMovementGameMode6B::TickWinTackle6AM(float DeltaSeconds)
             // Lose AI logical claim as in normal play; cancel any kick that
             // still waits for the foot-contact frame of its montage.
             Rival->CancelAIKickMontageBeforeImpact();
+            Rival->CancelTrainingDribbleTurn6AM10();
             if (Rival->IsAIPossessingBall()) Rival->ReleaseAIBall(false);
             Rival->ClearAIAutoPassState();
             AI->StopMovement();
@@ -2013,6 +2015,7 @@ void ASoccerTrainingMovementGameMode6B::TickWinTackle6AM(float DeltaSeconds)
     if (Trainee6B->IsPossessingBall())
     {
         Rival->CancelAIKickMontageBeforeImpact();
+        Rival->CancelTrainingDribbleTurn6AM10();
         Rival->ClearAIAutoPassState();
         if (Rival->IsAIPossessingBall()) Rival->ReleaseAIBall(false);
         // Do not resolve until the tackle ends: a later opponent contact
@@ -3132,6 +3135,7 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
         // 6AM: drop any kick, movement or possession from the previous round
         // BEFORE relocating the same physical practice ball.
         TackleOpponent6AK->CancelAIKickMontageBeforeImpact();
+        TackleOpponent6AK->CancelTrainingDribbleTurn6AM10();
         TackleOpponent6AK->ClearAIAutoPassState();
         TackleOpponent6AK->ReleaseAIBall(false);
         // 6AM.5: reset the in-place evasive jump before teleporting the

@@ -16596,14 +16596,17 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 	// auto-pass follow or kick orders that could cancel its physical motion.
 	if (TrainingDribbler->IsTackleEvasionActive())
 	{
+		TrainingDribbler->CancelTrainingDribbleTurn6AM10();
 		return 0;
 	}
 	if (TrainingDribbler->IsTackleFallReactionActive())
 	{
+		TrainingDribbler->CancelTrainingDribbleTurn6AM10();
 		return 0;
 	}
 	if (TryStartAITackleEvasion(TrainingDribbler))
 	{
+		TrainingDribbler->CancelTrainingDribbleTurn6AM10();
 		UE_LOG(LogTemp, Display,
 			TEXT("[Training6AM5] RIVAL TACKLE EVADE jump=YES runnerSpeed=%.1f ballDistance=%.1f"),
 			TrainingDribbler->GetVelocity().Size2D(),
@@ -16612,6 +16615,7 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 	}
 	if (TrainingDribbler->IsTackleActive())
 	{
+		TrainingDribbler->CancelTrainingDribbleTurn6AM10();
 		StopMovement();
 		return 0;
 	}
@@ -16624,10 +16628,32 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 		StopMovement();
 		return 0;
 	}
-	if (TrainingDribbler->IsAIDribbleTurnAutoPassActive() &&
-		!TrainingDribbler->IsAIAutoPassActive())
+	if (TrainingDribbler->IsAIDribbleTurnAutoPassActive())
 	{
-		StopMovement();
+		// Like a match, keep the turn in control before foot impact, then
+		// follow the physical ball without starting a second touch mid-turn.
+		if (!bCanCollect)
+		{
+			TrainingDribbler->CancelTrainingDribbleTurn6AM10();
+			TrainingDribbler->ClearAIAutoPassState();
+			StopMovement();
+			return 0;
+		}
+		if (!TrainingDribbler->IsAIAutoPassActive())
+		{
+			StopMovement();
+			return 0;
+		}
+		const bool bHadPossessionBeforeTurnFollow = TrainingDribbler->IsAIPossessingBall();
+		const bool bTurnFollowRunning = UpdateAIAutoPassFollow(TrainingDribbler, true);
+		if (!bHadPossessionBeforeTurnFollow && TrainingDribbler->IsAIPossessingBall())
+		{
+			return 3;
+		}
+		if (!bTurnFollowRunning && !TrainingDribbler->IsAIPossessingBall())
+		{
+			StopMovement();
+		}
 		return 0;
 	}
 
@@ -16642,16 +16668,11 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 			TrainingDribbler->GetAIAutoPassTargetLocation());
 		const bool bLongKickStillAnimating6AM71 =
 			AutoPassTravel6AM71 >= 720.f &&
-			(TrainingDribbler->IsAIKickMontageActive() ||
-			 TrainingDribbler->IsAIDribbleTurnAutoPassActive());
+			TrainingDribbler->IsAIKickMontageActive();
 		if (bLongKickStillAnimating6AM71)
 		{
-			// The dribble-turn montage owns its own scripted motion; do not
-			// interfere with it. The ordinary in-place strike needs no MoveTo.
-			if (TrainingDribbler->IsAIKickMontageActive())
-			{
-				StopMovement();
-			}
+			// Ordinary in-place strike needs no MoveTo until blend-out.
+			StopMovement();
 			return 0;
 		}
 		if (!bCanCollect)
@@ -16703,7 +16724,7 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 		return 1;
 	}
 
-	if (TrainingDribbler->IsAIPossessingBall() && !TrainingDribbler->IsAIAutoPassActive() &&
+	if (bCanCollect && TrainingDribbler->IsAIPossessingBall() && !TrainingDribbler->IsAIAutoPassActive() &&
 		!TrainingDribbler->IsAIKickMontageActive() &&
 		!TrainingDribbler->IsAIDribbleTurnAutoPassActive() &&
 		BallDistance <= 90.f && BallSpeed < 260.f &&
@@ -16894,7 +16915,19 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 				const float TouchSpeed6AM4 = bLongTouch6AM4
 					? FMath::Max(AIAutoPassHorizontalSpeed * 1.36f, 1550.f)
 					: AIAutoPassHorizontalSpeed;
-				if (bFinishAtHumanGoal6AM3)
+				// Test the final, field-clamped target with the SAME selector as
+				// the match. Do not stop first: it needs the real running speed.
+				if (TrainingDribbler->TryStartTrainingDribbleTurn6AM10(
+					Target, TouchSpeed6AM4, AIAutoPassMinTravelTime,
+					AIAutoPassMaxTravelTime))
+				{
+					if (TrainingDribbler->IsAIDribbleTurnAutoPassActive())
+					{
+						StopMovement();
+						ClearFocus(EAIFocusPriority::Gameplay);
+					}
+				}
+				else if (bFinishAtHumanGoal6AM3)
 				{
 					// Preserve the physical, animated final goal touch.
 					StopMovement();
@@ -16904,7 +16937,8 @@ int32 ASoccerAIController::TickTrainingDribble6AM2(
 				}
 				else
 				{
-					// 6AM.7.2: no kick/turn montage and no StopMovement.
+					// 6AM.7.2 fallback for straight/gentle touches or missing montage:
+					// no ordinary kick montage and no StopMovement.
 					// Keep the current run and let match auto-pass FOLLOW pick up
 					// the physical ball on the next training Tick.
 					if (!TrainingDribbler->StartTrainingRunningAutoPass6AM72(

@@ -261,6 +261,16 @@ public:
 		float MaxTravelTime
 	);
 
+	// 6AM.10: only use the match turn montage when its existing selector
+	// accepts the actual target and running speed. No ordinary kick fallback.
+	bool TryStartTrainingDribbleTurn6AM10(
+		const FVector& TargetLocation,
+		float HorizontalSpeed,
+		float MinTravelTime,
+		float MaxTravelTime
+	);
+	void CancelTrainingDribbleTurn6AM10();
+
 	bool IsAIAutoPassActive() const;
 
 	ASoccerBall* GetAIAutoPassBall() const;
@@ -731,6 +741,12 @@ public:
 
 private:
 	bool bAIDribbleTurnAutoPassActive = false;
+
+	// Training-only ownership: cancellation must not change match turns.
+	bool bTrainingDribbleTurn6AM10 = false;
+	UPROPERTY(Transient)
+	UAnimMontage* TrainingDribbleTurnMontage6AM10 = nullptr;
+	bool ShouldCancelTrainingDribbleTurn6AM10() const;
 
 	bool bAIDribbleTurnAutoPassHasImpactedBall = false;
 
