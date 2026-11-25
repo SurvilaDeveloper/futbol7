@@ -1,4 +1,4 @@
-#include "Training/Exercises/MovementControl/SoccerTrainingMovementGameMode6B.h"
+﻿#include "Training/Exercises/MovementControl/SoccerTrainingMovementGameMode6B.h"
 #include "SoccerGoalkeeperPositioningShared6AA.h"
 #include "Training/Exercises/MovementControl/SoccerTrainingMovementHUD6B.h"
 #include "Training/Shared/SoccerTrainingPlayerController6B.h"
@@ -101,6 +101,7 @@ ASoccerTrainingMovementGameMode6B::ASoccerTrainingMovementGameMode6B()
 void ASoccerTrainingMovementGameMode6B::StartPlay()
 {
     const FString Lesson = UGameplayStatics::ParseOption(OptionsString, TEXT("TrainingLesson"));
+    bGroundPassLesson6AN = Lesson.Equals(TEXT("GroundPass"), ESearchCase::IgnoreCase);
     bAutoPassLesson6J = Lesson.Equals(TEXT("AutoPass"), ESearchCase::IgnoreCase);
     bZoneFinishLesson6AH = Lesson.Equals(TEXT("ZoneFinish"), ESearchCase::IgnoreCase);
     bAvoidTackleLesson6AK = Lesson.Equals(TEXT("AvoidTackle"), ESearchCase::IgnoreCase);
@@ -108,7 +109,7 @@ void ASoccerTrainingMovementGameMode6B::StartPlay()
     bGoalkeeperShotLesson6T = bZoneFinishLesson6AH || Lesson.Equals(TEXT("GoalkeeperShot"), ESearchCase::IgnoreCase);
     bChargedShotLesson6M = bGoalkeeperShotLesson6T || Lesson.Equals(TEXT("ChargedShot"), ESearchCase::IgnoreCase);
     UE_LOG(LogTemp, Display, TEXT("[Training6J] Lesson: %s"),
-        bAvoidTackleLesson6AK ? TEXT("AvoidTackle") : bWinTackleLesson6AK ? TEXT("WinTackle") : bZoneFinishLesson6AH ? TEXT("ZoneFinish") : bGoalkeeperShotLesson6T ? TEXT("GoalkeeperShot") : bChargedShotLesson6M ? TEXT("ChargedShot") : bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
+        bGroundPassLesson6AN ? TEXT("GroundPass") : bAvoidTackleLesson6AK ? TEXT("AvoidTackle") : bWinTackleLesson6AK ? TEXT("WinTackle") : bZoneFinishLesson6AH ? TEXT("ZoneFinish") : bGoalkeeperShotLesson6T ? TEXT("GoalkeeperShot") : bChargedShotLesson6M ? TEXT("ChargedShot") : bAutoPassLesson6J ? TEXT("AutoPass") : TEXT("Dribble"));
     // 6L: ASoccerField can live in a shared, Always Loaded streaming level.
     // Never create the temporary cube when the real field is present.
     if (FindSharedField6L())
@@ -178,6 +179,11 @@ void ASoccerTrainingMovementGameMode6B::Tick(float DeltaSeconds)
     }
     if (!IsExerciseRunning6H() || !IsValid(PracticeBall6B) || !IsValid(Trainee6B)) return;
     ElapsedTime6B += DeltaSeconds;
+    if (bGroundPassLesson6AN)
+    {
+        TickGroundPass6AN();
+        return;
+    }
     // 6AM has its own driving attacker; avoid affecting the 6AL exercise.
     if (bAvoidTackleLesson6AK)
     {
@@ -1640,6 +1646,15 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
     OutOfControlSeconds6B = 0.f;
     bHadControl6B = false;
     ClearPracticeBarriers6O();
+    if (bGroundPassLesson6AN)
+    {
+        GroundPassCompleted6AN = GroundPassSuccesses6AN = GroundPassTechnicalRetries6AN = 0;
+        GroundPassResults6AN.Empty();
+        GroundPassShots6AN1 = GroundPassReceipts6AN1 = GroundPassRequests6AN1 = 0;
+        GroundPassInterceptions6AN1 = GroundPassLosses6AN1 = GroundPassNeutralRetries6AN1 = 0;
+        PrepareGroundPass6AN();
+        return;
+    }
     if (bChargedShotLesson6M) PrepareShotAttempt6N();
     if (IsTackleLesson6AK())
     {
@@ -3205,6 +3220,7 @@ FVector ASoccerTrainingMovementGameMode6B::GetCurrentCheckpoint6B() const
 
 FString ASoccerTrainingMovementGameMode6B::GetExerciseMessage6B() const
 {
+    if (bGroundPassLesson6AN) return GroundPassFeedback6AN;
     if (IsTackleLesson6AK())
     {
         if (!bExerciseStarted6H) return TEXT("Lee las instrucciones y comienza el ejercicio");
@@ -3366,4 +3382,462 @@ void ASoccerTrainingMovementGameMode6B::EnsureBall6B()
     }
     PracticeBall6B = World->SpawnActor<ASoccerBall>(BallClass,
         BallPosition, BallRotation, Spawn);
+}
+
+
+// 6AN.1: dynamic pass request, reception and goal against one defender.
+void ASoccerTrainingMovementGameMode6B::StopGroundPassActors6AN1()
+{
+    ASoccerAICharacter* Bots[] = { GroundPassTeammate6AN, GroundPassDefender6AN1 };
+    for (ASoccerAICharacter* Bot : Bots)
+    {
+        if (!IsValid(Bot)) continue;
+        Bot->CancelAIKickMontageBeforeImpact();
+        Bot->CancelTrainingDribbleTurn6AM10();
+        Bot->ClearAIAutoPassState();
+        Bot->ReleaseAIBall(false);
+        if (Bot->IsTackleActive()) Bot->CancelTackle();
+        if (Bot->IsTackleEvasionActive()) Bot->CancelTackleEvasion();
+        if (AAIController* AI = Cast<AAIController>(Bot->GetController()))
+        {
+            AI->StopMovement();
+            AI->ClearFocus(EAIFocusPriority::Gameplay);
+            AI->SetActorTickEnabled(false);
+        }
+        Bot->SetAIChasingBall(false);
+        if (UCharacterMovementComponent* Move = Bot->GetCharacterMovement()) Move->StopMovementImmediately();
+    }
+    if (IsValid(Trainee6B))
+    {
+        Trainee6B->ReleaseBallForMatchRestart(false);
+        if (Trainee6B->IsTackleActive()) Trainee6B->CancelTackle();
+        if (Trainee6B->IsTackleEvasionActive()) Trainee6B->CancelTackleEvasion();
+        if (UCharacterMovementComponent* Move = Trainee6B->GetCharacterMovement()) Move->StopMovementImmediately();
+    }
+}
+
+void ASoccerTrainingMovementGameMode6B::PrepareGroundPass6AN()
+{
+    ASoccerField* Field = FindSharedField6L();
+    if (!Field || !IsValid(Trainee6B) || !IsValid(PracticeBall6B) || !TackleOpponentClass6AK)
+    {
+        GroundPassState6AN = 5;
+        GroundPassFeedback6AN = TEXT("6AN: falta cancha, pelota, humano o Tackle Opponent Class 6AK.");
+        return;
+    }
+    FActorSpawnParameters Params;
+    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+    if (!IsValid(GroundPassTeammate6AN))
+        GroundPassTeammate6AN = GetWorld()->SpawnActor<ASoccerAICharacter>(TackleOpponentClass6AK.Get(),
+            Field->PitchLocalToWorld(FVector(0.f, 0.f, 130.f)), Field->GetActorRotation(), Params);
+    if (!IsValid(GroundPassDefender6AN1))
+        GroundPassDefender6AN1 = GetWorld()->SpawnActor<ASoccerAICharacter>(TackleOpponentClass6AK.Get(),
+            Field->PitchLocalToWorld(FVector(0.f, 350.f, 130.f)), Field->GetActorRotation(), Params);
+    if (!IsValid(GroundPassTeammate6AN) || !IsValid(GroundPassDefender6AN1) ||
+        !Cast<ASoccerAIController>(GroundPassTeammate6AN->GetController()) ||
+        !Cast<AAIController>(GroundPassDefender6AN1->GetController()))
+    {
+        StopGroundPassActors6AN1();
+        GroundPassState6AN = 5;
+        GroundPassFeedback6AN = TEXT("6AN: revisa BP_SoccerAIFieldPlayer y su AI Controller.");
+        UE_LOG(LogTemp, Error, TEXT("[Training6AN2] %s"), *GroundPassFeedback6AN);
+        return;
+    }
+    StopGroundPassActors6AN1();
+    ASoccerAICharacter* Mate = GroundPassTeammate6AN;
+    ASoccerAICharacter* Defender = GroundPassDefender6AN1;
+    Mate->SetTeamForTraining(ESoccerTeam::PlayerTeam);
+    Trainee6B->SetTeamForTraining(ESoccerTeam::PlayerTeam);
+    Defender->SetTeamForTraining(ESoccerTeam::OpponentTeam);
+    const int32 Index = FMath::Clamp(GroundPassCompleted6AN, 0, 9);
+    const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
+    const float HalfWidth = SoccerFieldDimensions::HalfPitchWidthCm;
+    GroundPassSide6AN1 = Index < 2 ? 1.f : Index < 4 ? -1.f : (Index % 2 == 0 ? 1.f : -1.f);
+    bGroundPassPatrolForward6AN1 = true;
+    const float BandY = GroundPassSide6AN1 * HalfWidth * 0.72f;
+    const float PressureGap = FMath::Lerp(0.34f, 0.15f, Index / 9.f) * HalfWidth;
+    const FVector MatePos = Field->PitchLocalToWorld(FVector(-0.30f * HalfLength, BandY, 130.f));
+    // 6AN.2: start farther from both bots, toward the attacking half.
+    const FVector HumanPos = Field->PitchLocalToWorld(FVector(0.10f * HalfLength, GroundPassSide6AN1 * HalfWidth * 0.24f, 130.f));
+    const FVector DefenderPos = Field->PitchLocalToWorld(FVector(-0.30f * HalfLength - 0.06f * HalfLength,
+        BandY - GroundPassSide6AN1 * PressureGap, 130.f));
+    const FVector Forward = (Field->PitchLocalToWorld(FVector(HalfLength, BandY, 130.f)) - MatePos).GetSafeNormal2D();
+    Mate->SetActorLocationAndRotation(MatePos, Forward.Rotation(), false, nullptr, ETeleportType::TeleportPhysics);
+    Defender->SetActorLocationAndRotation(DefenderPos, (MatePos - DefenderPos).GetSafeNormal2D().Rotation(), false, nullptr, ETeleportType::TeleportPhysics);
+    const FRotator HumanFacing = (MatePos - HumanPos).GetSafeNormal2D().Rotation();
+    Trainee6B->SetActorLocationAndRotation(HumanPos, HumanFacing, false, nullptr, ETeleportType::TeleportPhysics);
+    if (AController* HumanController = Trainee6B->GetController())
+    {
+        FRotator Camera = HumanController->GetControlRotation();
+        Camera.Yaw = HumanFacing.Yaw;
+        HumanController->SetControlRotation(Camera);
+    }
+    // Same physical ball / possession reset as 6AN and 6AM.
+    PracticeBall6B->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+    PracticeBall6B->SetPossessed(false);
+    UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent());
+    if (Body) Body->SetSimulatePhysics(false);
+    FVector BallPos = MatePos + Forward * 60.f;
+    BallPos.Z = Field->PitchLocalToWorld(FVector::ZeroVector).Z + PracticeBall6B->GetBallRadiusCm() + 3.f;
+    PracticeBall6B->SetActorLocation(BallPos, false, nullptr, ETeleportType::TeleportPhysics);
+    RestorePracticeBallGroundCollision6AB3(PracticeBall6B);
+    if (Body)
+    {
+        Body->SetSimulatePhysics(true);
+        Body->SetPhysicsLinearVelocity(FVector::ZeroVector);
+        Body->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+        Body->WakeAllRigidBodies();
+    }
+    Mate->PossessAIBall(PracticeBall6B);
+    Defender->SetTrainingRunSpeedMultiplier6AL63(FMath::Lerp(1.f, 1.10f, Index / 9.f));
+    GroundPassState6AN = 0;
+    GroundPassStateAt6AN = GetWorld()->GetTimeSeconds();
+    GroundPassLastDribble6AN1 = GroundPassLastMateMove6AN1 = GroundPassLastDefenderMove6AN1 = -100.f;
+    GroundPassLastDefenderTackle6AN1 = GroundPassStateAt6AN;
+    GroundPassDefenderControlSince6AN1 = -1.f;
+    GroundPassTouches6AN1 = 0;
+    bGroundPassCollectRequested6AN = bGroundPassRequested6AN1 = bGroundPassReceived6AN1 = false;
+    bGroundPassShotInFlight6AN1 = bGroundPassDefenderWasTackling6AN1 = bGroundPassDefenderTouched6AN1 = false;
+    GroundPassPreviousBallLocal6AN1 = Field->WorldToPitchLocal(BallPos);
+    GroundPassFeedback6AN = TEXT("Preparando al companero y al defensor...");
+    UE_LOG(LogTemp, Display, TEXT("[Training6AN2] PREPARE attempt=%d side=%.0f gap=%.0f humanMate=%.0f humanDefender=%.0f"),
+        Index + 1, GroundPassSide6AN1, PressureGap, FVector::Dist2D(HumanPos, MatePos), FVector::Dist2D(HumanPos, DefenderPos));
+}
+
+void ASoccerTrainingMovementGameMode6B::RequestGroundPass6AN()
+{
+    if (!bGroundPassLesson6AN || !IsExerciseRunning6H() || GroundPassState6AN != 1 || bGroundPassRequested6AN1) return;
+    bGroundPassRequested6AN1 = true;
+    ++GroundPassRequests6AN1;
+    GroundPassFeedback6AN = TEXT("Pedido F pendiente: el companero busca el momento de pasar.");
+    UE_LOG(LogTemp, Display, TEXT("[Training6AN2] REQUEST attempt=%d"), GetGroundPassAttempt6AN());
+}
+
+bool ASoccerTrainingMovementGameMode6B::TryLaunchGroundPass6AN1()
+{
+    ASoccerAICharacter* Mate = GroundPassTeammate6AN;
+    if (!bGroundPassRequested6AN1 || !Mate->IsAIPossessingBall() || Mate->IsAIAutoPassActive() ||
+        Mate->IsAIDribbleTurnAutoPassActive() || Mate->IsAIKickMontageActive() || Mate->IsTackleActive() ||
+        Mate->IsTackleEvasionActive() || Mate->IsTackleFallReactionActive()) return false;
+    const FVector Ball = PracticeBall6B->GetActorLocation();
+    const FVector Target = Trainee6B->GetActorLocation();
+    if (FVector::Dist2D(Target, Ball) < 180.f || FVector::Dist2D(Mate->GetActorLocation(), Ball) > 90.f ||
+        PracticeBall6B->GetBallPhysicsVelocity().Size2D() > 260.f) return false;
+    // Approximate the rolling range using the actual ball damping. Unlike an
+    // aerial pass this is a single ground impulse, never a guided ball.
+    UPrimitiveComponent* BallBody = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent());
+    const float Damping = BallBody ? FMath::Clamp(BallBody->GetLinearDamping(), 0.1f, 3.f) : 1.8f;
+    const float PassDistance = FVector::Dist2D(Ball, Target);
+    const float Speed = FMath::Clamp((PassDistance * (Damping + 0.30f) + 250.f) /
+        FMath::Max(0.1f, TrainingHorizontalLaunchScale6G), 1100.f, 4400.f);
+    if (AAIController* AI = Cast<AAIController>(Mate->GetController())) AI->StopMovement();
+    if (Mate->TryStartAIKickMontageForOpenPlay(PracticeBall6B, Target, Speed, 0.3f, 1.5f, false, true))
+    {
+        GroundPassState6AN = 2;
+        GroundPassStateAt6AN = GetWorld()->GetTimeSeconds();
+        GroundPassFeedback6AN = TEXT("El companero esta ejecutando el pase rasante.");
+        UE_LOG(LogTemp, Display, TEXT("[Training6AN2] PASS START distance=%.0f speed=%.0f damping=%.2f"), PassDistance, Speed, Damping);
+        return true;
+    }
+    GroundPassTechnicalFailure6AN(TEXT("No se pudo iniciar el montaje de pase"));
+    return true;
+}
+
+void ASoccerTrainingMovementGameMode6B::TickGroundPassDefender6AN1(const ASoccerField* Field, float Now)
+{
+    ASoccerAICharacter* Defender = GroundPassDefender6AN1;
+    ASoccerAICharacter* Mate = GroundPassTeammate6AN;
+    const bool bBeforePass = GroundPassState6AN < 3;
+    AAIController* AI = Cast<AAIController>(Defender->GetController());
+    if (!AI) return;
+    // 6AN.2: before the real pass impact, the rival is a marker, not a ball
+    // winner. No slide, foot steal or loose-ball claim may run in this phase.
+    // The bot's tactical controller Tick remains disabled by PrepareGroundPass6AN.
+    if (bBeforePass)
+    {
+        if (Defender->IsTackleActive()) Defender->CancelTackle();
+        bGroundPassDefenderWasTackling6AN1 = false;
+        bGroundPassDefenderTouched6AN1 = false;
+        GroundPassDefenderControlSince6AN1 = -1.f;
+        if (Defender->IsTackleFallReactionActive() || Defender->IsTackleEvasionActive()) return;
+        if (Now - GroundPassLastDefenderMove6AN1 >= 0.22f)
+        {
+            GroundPassLastDefenderMove6AN1 = Now;
+            const float PressureDistance = FMath::Lerp(260.f, 180.f, GroundPassCompleted6AN / 9.f);
+            FVector MarkLocal = Field->WorldToPitchLocal(Mate->GetActorLocation() + Mate->GetVelocity() * 0.12f);
+            // Stay on the inside of the band, rather than running through the ball.
+            MarkLocal.Y -= GroundPassSide6AN1 * PressureDistance;
+            MarkLocal.X = FMath::Clamp(MarkLocal.X, SoccerFieldDimensions::LeftGoalLineX + 100.f, SoccerFieldDimensions::RightGoalLineX - 100.f);
+            MarkLocal.Y = FMath::Clamp(MarkLocal.Y, SoccerFieldDimensions::SouthTouchLineY + 100.f, SoccerFieldDimensions::NorthTouchLineY - 100.f);
+            MarkLocal.Z = 130.f;
+            Defender->SetAIChasingBall(false);
+            AI->MoveToLocation(Field->PitchLocalToWorld(MarkLocal), 45.f, false, true, true, false, nullptr, true);
+            Defender->RequestAIMovementMode(GroundPassCompleted6AN < 4 ? ESoccerAIMovementMode::Run : ESoccerAIMovementMode::FastRun,
+                ESoccerAIMovementReason::PressBallCarrier, true);
+        }
+        return;
+    }
+    if (GroundPassState6AN != 3) return;
+    ASoccerCharacterBase* Carrier = Trainee6B;
+    const FVector Ball = PracticeBall6B->GetActorLocation();
+    const FVector Local = Field->WorldToPitchLocal(Ball);
+    const float BallDistance = FVector::Dist2D(Defender->GetActorLocation(), Ball);
+    const bool bTackling = Defender->IsTackleActive();
+    if (bTackling || bGroundPassDefenderWasTackling6AN1)
+    {
+        const FSoccerTackleContactSummary Contact = Defender->GetTackleContactSummary();
+        if (Contact.bBallContactApplied && !bGroundPassDefenderTouched6AN1)
+        {
+            bGroundPassDefenderTouched6AN1 = true;
+            if (Trainee6B->HasHumanLogicalBallControl()) Trainee6B->ReleaseBallForAISteal();
+            // An active slide with real contact is a defensive touch, not a new human shot.
+            bGroundPassShotInFlight6AN1 = false;
+        }
+        if (!bTackling && bGroundPassDefenderWasTackling6AN1)
+        {
+            FString FoulReason;
+            if (IsWinTackleFoul6AM8(Contact, static_cast<int32>(Defender->GetTackleContactOrder()), FoulReason))
+            {
+                RetryGroundPass6AN1(TEXT("Falta del defensor: ") + FoulReason);
+                return;
+            }
+        }
+        bGroundPassDefenderWasTackling6AN1 = bTackling;
+        if (bTackling) return;
+    }
+    if (Defender->IsTackleFallReactionActive() || Defender->IsTackleEvasionActive()) return;
+    const bool bCarrierControl = Trainee6B->HasHumanLogicalBallControl();
+    const bool bBallGrounded = FMath::Abs(Local.Z) < 60.f;
+    // Only a real close foot challenge may steal a controlled ball.
+    if (bCarrierControl && bBallGrounded && BallDistance <= 55.f)
+    {
+        Trainee6B->ReleaseBallForAISteal();
+    }
+    const bool bCarrierControlNow = Trainee6B->HasHumanLogicalBallControl();
+    if (!bCarrierControlNow && bBallGrounded && BallDistance <= 70.f &&
+        PracticeBall6B->GetBallPhysicsVelocity().Size2D() < 300.f)
+    {
+        if (GroundPassDefenderControlSince6AN1 < 0.f) GroundPassDefenderControlSince6AN1 = Now;
+        // A short real recovery window for Q or a new collection, not a remote steal.
+        AI->StopMovement();
+        if (Now - GroundPassDefenderControlSince6AN1 >= 0.55f)
+        {
+            Defender->PossessAIBall(PracticeBall6B);
+            if (bGroundPassReceived6AN1) ++GroundPassLosses6AN1;
+            else ++GroundPassInterceptions6AN1;
+            FinishGroundPass6AN(false, bGroundPassReceived6AN1 ? TEXT("El rival recupero la pelota") : TEXT("Pase interceptado"));
+        }
+        return;
+    }
+    GroundPassDefenderControlSince6AN1 = -1.f;
+    const float Cooldown = FMath::Lerp(2.6f, 1.4f, GroundPassCompleted6AN / 9.f);
+    // Slides are reserved for challenging the human in control. The former
+    // passer must be clear of the defender; loose passes can be intercepted on foot.
+    const bool bMateClearOfSlide = FVector::Dist2D(Defender->GetActorLocation(), Mate->GetActorLocation()) > 1000.f;
+    if (bCarrierControlNow && bMateClearOfSlide && bBallGrounded && BallDistance <= 480.f && FVector::Dist2D(Carrier->GetActorLocation(), Ball) < 260.f &&
+        Now - GroundPassLastDefenderTackle6AN1 >= Cooldown && !Carrier->IsTackleFallReactionActive())
+    {
+        FVector PredictedBall = Ball;
+        float Lead = 0.f;
+        const FVector BallVelocity = Carrier->GetVelocity();
+        if (Defender->FindMovingBallTackleContact(Ball, BallVelocity, 0.08f, 0.7f, 0.35f, PredictedBall, Lead) &&
+            FVector::Dist2D(Mate->GetActorLocation(), PredictedBall) > 350.f &&
+            Defender->TryStartTackleTowardPredictedLocation(PredictedBall, Lead))
+        {
+            bGroundPassDefenderWasTackling6AN1 = true;
+            bGroundPassDefenderTouched6AN1 = false;
+            GroundPassLastDefenderTackle6AN1 = Now;
+            UE_LOG(LogTemp, Display, TEXT("[Training6AN2] TACKLE HUMAN attempt=%d"), GetGroundPassAttempt6AN());
+            AI->StopMovement();
+            return;
+        }
+    }
+    if (Now - GroundPassLastDefenderMove6AN1 >= 0.22f)
+    {
+        GroundPassLastDefenderMove6AN1 = Now;
+        FVector Chase = Ball + PracticeBall6B->GetBallPhysicsVelocity() * FMath::Clamp(BallDistance / 1800.f, 0.03f, 0.25f);
+        FVector ChaseLocal = Field->WorldToPitchLocal(Chase);
+        ChaseLocal.X = FMath::Clamp(ChaseLocal.X, SoccerFieldDimensions::LeftGoalLineX + 100.f, SoccerFieldDimensions::RightGoalLineX - 100.f);
+        ChaseLocal.Y = FMath::Clamp(ChaseLocal.Y, SoccerFieldDimensions::SouthTouchLineY + 100.f, SoccerFieldDimensions::NorthTouchLineY - 100.f);
+        ChaseLocal.Z = 130.f;
+        Defender->SetAIChasingBall(true);
+        AI->MoveToLocation(Field->PitchLocalToWorld(ChaseLocal), 35.f, false, true, true, false, nullptr, true);
+        Defender->RequestAIMovementMode(GroundPassCompleted6AN < 4 ? ESoccerAIMovementMode::Run : ESoccerAIMovementMode::FastRun,
+            ESoccerAIMovementReason::PressBallCarrier, true);
+    }
+}
+
+void ASoccerTrainingMovementGameMode6B::RegisterGroundPassHumanKick6AN(bool bShot)
+{
+    if (!bGroundPassLesson6AN || !CanCollectGroundPass6AN()) return;
+    bGroundPassShotInFlight6AN1 = bShot;
+    if (bShot) ++GroundPassShots6AN1;
+}
+
+void ASoccerTrainingMovementGameMode6B::TickGroundPass6AN()
+{
+    if (GroundPassState6AN == 5) return;
+    const float Now = GetWorld()->GetTimeSeconds();
+    if (GroundPassState6AN == 4)
+    {
+        if (Now - GroundPassStateAt6AN >= 1.8f && !Trainee6B->IsTackleFallReactionActive() &&
+            (!IsValid(GroundPassTeammate6AN) || !GroundPassTeammate6AN->IsTackleFallReactionActive()) &&
+            (!IsValid(GroundPassDefender6AN1) || !GroundPassDefender6AN1->IsTackleFallReactionActive())) PrepareGroundPass6AN();
+        return;
+    }
+    const ASoccerField* Field = FindSharedField6L();
+    if (!Field || !IsValid(GroundPassTeammate6AN) || !IsValid(GroundPassDefender6AN1))
+    {
+        GroundPassTechnicalFailure6AN(TEXT("Falta cancha o bot"));
+        return;
+    }
+    if (GroundPassState6AN == 0)
+    {
+        if (Now - GroundPassStateAt6AN < 0.65f) return;
+        GroundPassState6AN = 1;
+        GroundPassFeedback6AN = TEXT("Pulsa F para pedir el pase mientras el companero conduce.");
+    }
+    ASoccerAICharacter* Mate = GroundPassTeammate6AN;
+    const FVector LocalBall = Field->WorldToPitchLocal(PracticeBall6B->GetActorLocation());
+    const float Radius = PracticeBall6B->GetBallRadiusCm();
+    // Evaluate the actual pass impact before the defender can change ownership.
+    if (GroundPassState6AN == 2)
+    {
+        if (Mate->HasAIKickMontageImpactedBall())
+        {
+            GroundPassState6AN = 3;
+            GroundPassReceiveAt6AN = Now;
+            GroundPassFinishAt6AN1 = Now + GroundPassReceiveSeconds6AN + GroundPassFinishSeconds6AN1;
+            GroundPassPreviousBallLocal6AN1 = LocalBall;
+            Mate->ClearAIAutoPassState();
+            if (AAIController* AI = Cast<AAIController>(Mate->GetController())) AI->StopMovement();
+            Mate->SetAIChasingBall(false);
+            GroundPassFeedback6AN = TEXT("Clic izquierdo para recibir; clic derecho para definir al arco rival.");
+            GroundPassTechnicalRetries6AN = 0;
+            UE_LOG(LogTemp, Display, TEXT("[Training6AN2] PASS IMPACT attempt=%d"), GetGroundPassAttempt6AN());
+        }
+        else if (!Mate->IsAIKickMontageActive() || Now - GroundPassStateAt6AN > 5.f)
+        {
+            if (Mate->IsTackleFallReactionActive() || Mate->IsTackleEvasionActive() || GroundPassDefender6AN1->IsTackleActive())
+            {
+                Mate->CancelAIKickMontageBeforeImpact();
+                GroundPassState6AN = 1;
+                GroundPassFeedback6AN = TEXT("Pase interrumpido por la presion; pedido F pendiente.");
+            }
+            else
+            {
+                GroundPassTechnicalFailure6AN(TEXT("El pase no tuvo contacto fisico"));
+                return;
+            }
+        }
+    }
+    const bool bOutside = FMath::Abs(LocalBall.X) > SoccerFieldDimensions::HalfPitchLengthCm + Radius ||
+        FMath::Abs(LocalBall.Y) > SoccerFieldDimensions::HalfPitchWidthCm + Radius;
+    if (GroundPassState6AN == 3)
+    {
+        // Test the full-ball crossing of the goal plane, including interpolated height.
+        const float GoalPlane = SoccerFieldDimensions::RightGoalLineX + Radius;
+        if (GroundPassPreviousBallLocal6AN1.X < GoalPlane && LocalBall.X >= GoalPlane)
+        {
+            const float Alpha = (GoalPlane - GroundPassPreviousBallLocal6AN1.X) / FMath::Max(KINDA_SMALL_NUMBER, LocalBall.X - GroundPassPreviousBallLocal6AN1.X);
+            const FVector Crossing = FMath::Lerp(GroundPassPreviousBallLocal6AN1, LocalBall, Alpha);
+            if (FMath::Abs(Crossing.Y) <= SoccerFieldDimensions::GoalHalfWidthCm - Radius && Crossing.Z >= -Radius &&
+                Crossing.Z <= SoccerFieldDimensions::GoalHeightCm - Radius)
+            {
+                FinishGroundPass6AN(bGroundPassShotInFlight6AN1, bGroundPassShotInFlight6AN1 ? TEXT("GOL tras remate del humano") : TEXT("Ingreso sin remate del humano"));
+                return;
+            }
+        }
+        GroundPassPreviousBallLocal6AN1 = LocalBall;
+        if (bOutside) { FinishGroundPass6AN(false, TEXT("Pelota fuera de la cancha")); return; }
+        if (Trainee6B->IsPossessingBall())
+        {
+            if (!bGroundPassReceived6AN1)
+            {
+                bGroundPassReceived6AN1 = true;
+                ++GroundPassReceipts6AN1;
+                GroundPassFinishAt6AN1 = Now + GroundPassFinishSeconds6AN1;
+                GroundPassFeedback6AN = TEXT("Pase recibido. Esquiva al defensor y remata al arco vacio.");
+            }
+            // A subsequent possession invalidates attribution to an earlier shot.
+            if (!Trainee6B->IsKicking()) bGroundPassShotInFlight6AN1 = false;
+        }
+        if (!bGroundPassReceived6AN1 && !bGroundPassShotInFlight6AN1 && Now - GroundPassReceiveAt6AN >= GroundPassReceiveSeconds6AN)
+        { FinishGroundPass6AN(false, TEXT("No se recibio ni remato dentro del tiempo")); return; }
+        if (Now >= GroundPassFinishAt6AN1) { FinishGroundPass6AN(false, TEXT("Tiempo de definicion agotado")); return; }
+    }
+    else if (bOutside) { RetryGroundPass6AN1(TEXT("Pelota fuera antes del pase")); return; }
+    TickGroundPassDefender6AN1(Field, Now);
+    if (GroundPassState6AN != 1) return;
+    if (TryLaunchGroundPass6AN1()) return;
+    // 6AM shared continuous dribbling + animated turns + real tackle evasion.
+    // Alternate longitudinal endpoints in a band corridor, not the goal.
+    const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
+    const float HalfWidth = SoccerFieldDimensions::HalfPitchWidthCm;
+    const FVector MateLocal = Field->WorldToPitchLocal(Mate->GetActorLocation());
+    if (bGroundPassPatrolForward6AN1 && MateLocal.X > 0.12f * HalfLength) bGroundPassPatrolForward6AN1 = false;
+    else if (!bGroundPassPatrolForward6AN1 && MateLocal.X < -0.40f * HalfLength) bGroundPassPatrolForward6AN1 = true;
+    const FVector Patrol = Field->PitchLocalToWorld(FVector(bGroundPassPatrolForward6AN1 ? 0.32f * HalfLength : -0.60f * HalfLength,
+        GroundPassSide6AN1 * HalfWidth * 0.72f, 130.f));
+    if (ASoccerAIController* Controller = Cast<ASoccerAIController>(Mate->GetController()))
+    {
+        const UCharacterMovementComponent* DefenderMove = GroundPassDefender6AN1->GetCharacterMovement();
+        const float DefenderSpeed = DefenderMove ? DefenderMove->MaxWalkSpeed : 750.f;
+        const int32 Event = Controller->TickTrainingDribble6AM2(Mate, PracticeBall6B, Field, Patrol,
+            GroundPassDefender6AN1->GetActorLocation(), DefenderSpeed, GroundPassTouches6AN1,
+            GroundPassDefenderControlSince6AN1 >= 0.f ? Now + 0.10f : -100.f,
+            GroundPassLastDribble6AN1, GroundPassLastMateMove6AN1);
+        if (Event == 2) ++GroundPassTouches6AN1;
+    }
+}
+
+void ASoccerTrainingMovementGameMode6B::RetryGroundPass6AN1(const FString& Reason)
+{
+    ++GroundPassNeutralRetries6AN1;
+    StopGroundPassActors6AN1();
+    GroundPassState6AN = 4;
+    GroundPassStateAt6AN = GetWorld()->GetTimeSeconds();
+    GroundPassFeedback6AN = Reason + TEXT(". Se repite sin penalizacion.");
+    UE_LOG(LogTemp, Display, TEXT("[Training6AN2] RETRY attempt=%d %s"), GetGroundPassAttempt6AN(), *Reason);
+}
+
+void ASoccerTrainingMovementGameMode6B::GroundPassTechnicalFailure6AN(const FString& Reason)
+{
+    StopGroundPassActors6AN1();
+    ++GroundPassTechnicalRetries6AN;
+    UE_LOG(LogTemp, Warning, TEXT("[Training6AN2] TECHNICAL attempt=%d retry=%d %s"), GetGroundPassAttempt6AN(), GroundPassTechnicalRetries6AN, *Reason);
+    GroundPassState6AN = GroundPassTechnicalRetries6AN >= 3 ? 5 : 4;
+    GroundPassStateAt6AN = GetWorld()->GetTimeSeconds();
+    GroundPassFeedback6AN = Reason + (GroundPassState6AN == 5 ? TEXT(". Revisa el BP y sus montajes; pausa para reiniciar.") : TEXT(". Se repite sin descontar intento."));
+}
+
+void ASoccerTrainingMovementGameMode6B::FinishGroundPass6AN(bool bSuccess, const FString& Reason)
+{
+    if (GroundPassState6AN != 3) return;
+    ++GroundPassCompleted6AN;
+    if (bSuccess) ++GroundPassSuccesses6AN;
+    GroundPassResults6AN.Add(FString::Printf(TEXT("%d. %s (%.1f s)"), GroundPassCompleted6AN, *Reason,
+        GetWorld()->GetTimeSeconds() - GroundPassReceiveAt6AN));
+    GroundPassFeedback6AN = Reason;
+    GroundPassTechnicalRetries6AN = 0;
+    GroundPassState6AN = 4;
+    GroundPassStateAt6AN = GetWorld()->GetTimeSeconds();
+    StopGroundPassActors6AN1();
+    UE_LOG(LogTemp, Display, TEXT("[Training6AN2] END %d/10 goal=%d %s"), GroundPassCompleted6AN, bSuccess ? 1 : 0, *Reason);
+    if (GroundPassCompleted6AN >= 10)
+    {
+        bComplete6B = true;
+        if (ASoccerTrainingPlayerController6B* PC = Cast<ASoccerTrainingPlayerController6B>(GetWorld()->GetFirstPlayerController())) PC->ShowExerciseResults6H();
+    }
+}
+
+FString ASoccerTrainingMovementGameMode6B::GetGroundPassReport6AN() const
+{
+    FString Report = FString::Printf(TEXT("Intentos: %d/10\nGoles: %d | Fallos: %d | Efectividad: %.0f%%\nPedidos de pase: %d | Recepciones: %d | Remates: %d\nIntercepciones: %d | Perdidas: %d\nRepeticiones sin penalizacion: %d\nTiempo total: %.1f s\n\n"),
+        GroundPassCompleted6AN, GroundPassSuccesses6AN, GroundPassCompleted6AN - GroundPassSuccesses6AN,
+        100.f * GroundPassSuccesses6AN / FMath::Max(1, GroundPassCompleted6AN),
+        GroundPassRequests6AN1, GroundPassReceipts6AN1, GroundPassShots6AN1, GroundPassInterceptions6AN1,
+        GroundPassLosses6AN1, GroundPassNeutralRetries6AN1, ElapsedTime6B);
+    for (const FString& Result : GroundPassResults6AN) Report += Result + TEXT("\n");
+    return Report;
 }

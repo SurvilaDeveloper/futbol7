@@ -1,4 +1,4 @@
-#include "Training/Shared/SoccerTrainingSelectorWidget6B.h"
+﻿#include "Training/Shared/SoccerTrainingSelectorWidget6B.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
@@ -87,7 +87,7 @@ void USoccerTrainingSelectorWidget6B::BuildSelector6B()
 
     USizeBox* Size = WidgetTree->ConstructWidget<USizeBox>();
     Size->SetWidthOverride(740.f);
-    Size->SetHeightOverride(1100.f);
+    Size->SetHeightOverride(1200.f);
     Scale->AddChild(Size);
     if (UScaleBoxSlot* ScaleSlot = Cast<UScaleBoxSlot>(Size->Slot))
     {
@@ -129,6 +129,9 @@ void USoccerTrainingSelectorWidget6B::BuildSelector6B()
     WinTackleButton6AK = MakeButton(WidgetTree, TEXT("RECUPERAR PELOTA CON TACKLE"), true);
     WinTackleButton6AK->OnClicked.AddDynamic(this, &USoccerTrainingSelectorWidget6B::OpenWinTackle6AK);
     AddRow(List, WinTackleButton6AK, 12.f);
+    GroundPassButton6AN = MakeButton(WidgetTree, TEXT("PASE RASANTE Y DEFINICIÓN"), true);
+    GroundPassButton6AN->OnClicked.AddDynamic(this, &USoccerTrainingSelectorWidget6B::OpenGroundPass6AN);
+    AddRow(List, GroundPassButton6AN, 12.f);
 
     BackButton6B = MakeButton(WidgetTree, TEXT("VOLVER AL MENÚ PRINCIPAL"), false);
     BackButton6B->OnClicked.AddDynamic(this,
@@ -146,15 +149,16 @@ void USoccerTrainingSelectorWidget6B::FocusFirstExercise6B()
 
 void USoccerTrainingSelectorWidget6B::Navigate6B(int32 Offset)
 {
-    UButton* Items[8] = { MovementButton6B, AutoPassButton6J, ChargedShotButton6M, GoalkeeperShotButton6T, ZoneFinishButton6AH, AvoidTackleButton6AK, WinTackleButton6AK, BackButton6B };
-    const int32 Current = IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus() ? 7
+    UButton* Items[9] = { MovementButton6B, AutoPassButton6J, ChargedShotButton6M, GoalkeeperShotButton6T, ZoneFinishButton6AH, AvoidTackleButton6AK, WinTackleButton6AK, GroundPassButton6AN, BackButton6B };
+    const int32 Current = IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus() ? 8
+        : IsValid(GroundPassButton6AN) && GroundPassButton6AN->HasKeyboardFocus() ? 7
         : IsValid(WinTackleButton6AK) && WinTackleButton6AK->HasKeyboardFocus() ? 6
         : IsValid(AvoidTackleButton6AK) && AvoidTackleButton6AK->HasKeyboardFocus() ? 5
         : IsValid(ZoneFinishButton6AH) && ZoneFinishButton6AH->HasKeyboardFocus() ? 4
         : IsValid(GoalkeeperShotButton6T) && GoalkeeperShotButton6T->HasKeyboardFocus() ? 3
         : IsValid(ChargedShotButton6M) && ChargedShotButton6M->HasKeyboardFocus() ? 2
         : IsValid(AutoPassButton6J) && AutoPassButton6J->HasKeyboardFocus() ? 1 : 0;
-    const int32 Next = (Current + Offset + 8) % 8;
+    const int32 Next = (Current + Offset + 9) % 9;
     if (IsValid(Items[Next])) Items[Next]->SetKeyboardFocus();
 }
 
@@ -187,6 +191,9 @@ void USoccerTrainingSelectorWidget6B::NativeTick(const FGeometry& Geometry, floa
             ? FLinearColor(0.48f, 0.99f, 0.66f, 1.f) : Green);
     if (IsValid(AvoidTackleButton6AK))
         AvoidTackleButton6AK->SetBackgroundColor(AvoidTackleButton6AK->HasKeyboardFocus()
+            ? FLinearColor(0.48f, 0.99f, 0.66f, 1.f) : Green);
+    if (IsValid(GroundPassButton6AN))
+        GroundPassButton6AN->SetBackgroundColor(GroundPassButton6AN->HasKeyboardFocus()
             ? FLinearColor(0.48f, 0.99f, 0.66f, 1.f) : Green);
     if (IsValid(WinTackleButton6AK))
         WinTackleButton6AK->SetBackgroundColor(WinTackleButton6AK->HasKeyboardFocus()
@@ -243,6 +250,13 @@ void USoccerTrainingSelectorWidget6B::OpenAvoidTackle6AK()
         true, TEXT("TrainingLesson=AvoidTackle"));
 }
 
+void USoccerTrainingSelectorWidget6B::OpenGroundPass6AN()
+{
+    UGameplayStatics::OpenLevel(this,
+        FName(TEXT("/Game/ThirdPersonCPP/Maps/Training/MovementControl/SoccerTrainingMovementMap")),
+        true, TEXT("TrainingLesson=GroundPass"));
+}
+
 void USoccerTrainingSelectorWidget6B::OpenWinTackle6AK()
 {
     UGameplayStatics::OpenLevel(this,
@@ -285,6 +299,7 @@ FReply USoccerTrainingSelectorWidget6B::NativeOnPreviewKeyDown(
         Key == EKeys::Gamepad_FaceButton_Bottom)
     {
         if (IsValid(BackButton6B) && BackButton6B->HasKeyboardFocus()) Back6B();
+        else if (IsValid(GroundPassButton6AN) && GroundPassButton6AN->HasKeyboardFocus()) OpenGroundPass6AN();
         else if (IsValid(WinTackleButton6AK) && WinTackleButton6AK->HasKeyboardFocus()) OpenWinTackle6AK();
         else if (IsValid(AvoidTackleButton6AK) && AvoidTackleButton6AK->HasKeyboardFocus()) OpenAvoidTackle6AK();
         else if (IsValid(ZoneFinishButton6AH) && ZoneFinishButton6AH->HasKeyboardFocus()) OpenZoneFinish6AH();

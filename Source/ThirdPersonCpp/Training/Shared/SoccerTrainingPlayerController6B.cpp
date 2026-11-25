@@ -1,4 +1,4 @@
-#include "Training/Shared/SoccerTrainingPlayerController6B.h"
+﻿#include "Training/Shared/SoccerTrainingPlayerController6B.h"
 #include "Training/Shared/SoccerTrainingPauseWidget6B.h"
 #include "Training/Exercises/MovementControl/SoccerTrainingExerciseWidget6H.h"
 #include "Training/Exercises/MovementControl/SoccerTrainingMovementGameMode6B.h"
@@ -100,6 +100,13 @@ bool ASoccerTrainingPlayerController6B::InputKey(
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     if (TrainingMode && TrainingMode->IsExerciseRunning6H() && !bTrainingPaused6B)
     {
+        if (TrainingMode->IsGroundPassLesson6AN() &&
+            (Key == EKeys::Q || Key == EKeys::RightMouseButton || Key == EKeys::Gamepad_RightTriggerAxis ||
+             Key == EKeys::LeftMouseButton || Key == EKeys::Gamepad_RightTrigger))
+        {
+            if (!TrainingMode->CanCollectGroundPass6AN()) return true;
+            return Super::InputKey(Key, EventType, AmountDepressed, bGamepad);
+        }
         if (Key == EKeys::RightMouseButton)
         {
             if (!TrainingMode->IsChargedShotLesson6M() || TrainingMode->HasShotBeenReleased6M() || TrainingMode->IsBetweenShotAttempts6N())
@@ -221,7 +228,7 @@ void ASoccerTrainingPlayerController6B::RestartTraining6B()
             const bool bShot = TrainingMode && TrainingMode->IsChargedShotLesson6M();
             UGameplayStatics::OpenLevel(this,
                 FName(*(Folder + TEXT("/") + ShortName)), true,
-                (TrainingMode && TrainingMode->IsAvoidTackleLesson6AK()) ? TEXT("TrainingLesson=AvoidTackle") : (TrainingMode && TrainingMode->IsWinTackleLesson6AK()) ? TEXT("TrainingLesson=WinTackle") : (TrainingMode && TrainingMode->IsZoneFinishLesson6AH()) ? TEXT("TrainingLesson=ZoneFinish") : (TrainingMode && TrainingMode->IsGoalkeeperShotLesson6T()) ? TEXT("TrainingLesson=GoalkeeperShot") : bShot ? TEXT("TrainingLesson=ChargedShot") : bAutoPass ? TEXT("TrainingLesson=AutoPass") : TEXT(""));
+                (TrainingMode && TrainingMode->IsGroundPassLesson6AN()) ? TEXT("TrainingLesson=GroundPass") : (TrainingMode && TrainingMode->IsAvoidTackleLesson6AK()) ? TEXT("TrainingLesson=AvoidTackle") : (TrainingMode && TrainingMode->IsWinTackleLesson6AK()) ? TEXT("TrainingLesson=WinTackle") : (TrainingMode && TrainingMode->IsZoneFinishLesson6AH()) ? TEXT("TrainingLesson=ZoneFinish") : (TrainingMode && TrainingMode->IsGoalkeeperShotLesson6T()) ? TEXT("TrainingLesson=GoalkeeperShot") : bShot ? TEXT("TrainingLesson=ChargedShot") : bAutoPass ? TEXT("TrainingLesson=AutoPass") : TEXT(""));
         }
     }
 }

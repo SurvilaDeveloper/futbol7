@@ -1,4 +1,4 @@
-#include "Training/Exercises/MovementControl/SoccerTrainingMovementHUD6B.h"
+﻿#include "Training/Exercises/MovementControl/SoccerTrainingMovementHUD6B.h"
 #include "Training/Exercises/MovementControl/SoccerTrainingMovementGameMode6B.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
@@ -18,6 +18,35 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
 
     const float X = 32.f;
     const float Y = 40.f;
+    if (Mode->IsGroundPassLesson6AN())
+    {
+        DrawRect(FLinearColor(0.015f, 0.025f, 0.035f, 0.78f), X - 12.f, Y - 12.f, 900.f, 150.f);
+        DrawText(TEXT("ENTRENAMIENTO | PASE RASANTE"), FLinearColor::White, X, Y, Font, 1.25f, false);
+        DrawText(FString::Printf(TEXT("Intento %d/10 | Goles %d"), Mode->GetGroundPassAttempt6AN(), Mode->GetGroundPassSuccesses6AN()), FLinearColor::Yellow, X, Y + 30.f, Font, 1.2f, false);
+        DrawText(Mode->GetExerciseMessage6B(), FLinearColor(0.7f, 0.95f, 1.f), X, Y + 60.f, Font, 1.0f, false);
+        if (Mode->CanCollectGroundPass6AN())
+        {
+            const AThirdPersonCppCharacter* Trainee = Cast<AThirdPersonCppCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0));
+            if (IsValid(Trainee))
+            {
+                float Charge = 0.f;
+                if (Trainee->GetKickChargePercent(Charge))
+                {
+                    const float Fraction = FMath::Clamp(Charge, 0.f, 1.f);
+                    DrawText(FString::Printf(TEXT("FUERZA: %.0f%%"), Fraction * 100.f), FLinearColor::Yellow, X, Y + 92.f, Font, 1.2f, false);
+                    DrawRect(FLinearColor(0.08f, 0.13f, 0.16f, 1.f), X + 180.f, Y + 100.f, 260.f, 12.f);
+                    DrawRect(FLinearColor(1.f, 0.69f, 0.19f, 1.f), X + 180.f, Y + 100.f, 260.f * Fraction, 12.f);
+                }
+                float AimScreenX = 0.f, AimScreenY = 0.f;
+                if (Trainee->GetAimCursorScreenPosition(AimScreenX, AimScreenY))
+                {
+                    DrawLine(AimScreenX - 60.f, AimScreenY, AimScreenX + 60.f, AimScreenY, FLinearColor::Green, 2.f);
+                    DrawLine(AimScreenX, AimScreenY - 10.f, AimScreenX, AimScreenY + 10.f, FLinearColor::Green, 2.f);
+                }
+            }
+        }
+        return;
+    }
     DrawRect(FLinearColor(0.015f, 0.025f, 0.035f, 0.78f), X - 12.f, Y - 12.f, 1040.f, 260.f);
     DrawText(Mode->IsAvoidTackleLesson6AK() ? TEXT("ENTRENAMIENTO | ESQUIVAR TACKLES") : Mode->IsWinTackleLesson6AK() ? TEXT("ENTRENAMIENTO | RECUPERAR CON TACKLE") : Mode->IsZoneFinishLesson6AH() ? TEXT("ENTRENAMIENTO | DEFINICIÓN POR ZONAS") : Mode->IsGoalkeeperShotLesson6T() ? TEXT("ENTRENAMIENTO | REMATES CONTRA ARQUERO") : Mode->IsChargedShotLesson6M() ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : Mode->IsAutoPassLesson6J() ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | MOVIMIENTO Y CONTROL"), FLinearColor::White, X, Y, Font, 1.25f, false);

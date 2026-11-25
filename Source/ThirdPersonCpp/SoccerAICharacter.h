@@ -1,4 +1,4 @@
-//SoccerAICharacter.h
+﻿//SoccerAICharacter.h
 
 #pragma once
 
@@ -223,7 +223,8 @@ public:
 		float HorizontalSpeed,
 		float MinTravelTime,
 		float MaxTravelTime,
-		bool bUseAirTarget = false
+		bool bUseAirTarget = false,
+		bool bForceGroundPass6AN = false
 	);
 
 	// True while an AI pass/shot/restart montage is still active.
@@ -630,6 +631,7 @@ private:
 
 	bool bAIKickMontageActive = false;
 	bool bPendingAIKickUsesAirTarget = false;
+	bool bPendingAIKickForceGround6AN = false;
 	bool bPendingAIKickHasImpactedBall = false;
 	bool bLastAIKickMontageEndedAfterImpact = false;
 	bool bPendingAIKickIsAutoPass = false;
@@ -649,7 +651,8 @@ private:
 	UAnimMontage* SelectAIKickMontageForBallLocation(
 		const FVector& BallLocation,
 		const FVector& TargetLocation,
-		float& OutHorizontalSpeed
+		float& OutHorizontalSpeed,
+		bool bAllowShortPassMontage6AN1 = false
 	) const;
 
 	bool StartAIKickMontage(

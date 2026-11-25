@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
@@ -46,6 +46,14 @@ public:
     // 6H: pre-start instructions, active time trial and finish summary.
     UFUNCTION(BlueprintCallable, Category="Training|Exercise")
     void BeginExercise6H();
+    bool IsGroundPassLesson6AN() const { return bGroundPassLesson6AN; }
+    void RequestGroundPass6AN();
+    bool CanCollectGroundPass6AN() const { return GroundPassState6AN == 3 && IsExerciseRunning6H(); }
+    void RegisterGroundPassCollect6AN() { bGroundPassCollectRequested6AN = true; }
+    void RegisterGroundPassHumanKick6AN(bool bShot);
+    int32 GetGroundPassAttempt6AN() const { return FMath::Min(10, GroundPassCompleted6AN + 1); }
+    int32 GetGroundPassSuccesses6AN() const { return GroundPassSuccesses6AN; }
+    FString GetGroundPassReport6AN() const;
     bool IsAutoPassLesson6J() const { return bAutoPassLesson6J; }
     bool IsChargedShotLesson6M() const { return bChargedShotLesson6M; }
     bool IsGoalkeeperShotLesson6T() const { return bGoalkeeperShotLesson6T; }
@@ -89,6 +97,54 @@ public:
     FString GetExerciseMessage6B() const;
 
 private:
+    // 6AN: standalone pass request, real animated contact and real possession.
+    // 0 preparing, 1 dribbling / waiting F, 2 pass montage, 3 receive and shoot, 4 feedback, 5 technical error.
+    bool bGroundPassLesson6AN = false;
+    int32 GroundPassState6AN = 0;
+    int32 GroundPassCompleted6AN = 0;
+    int32 GroundPassSuccesses6AN = 0;
+    int32 GroundPassTechnicalRetries6AN = 0;
+    float GroundPassStateAt6AN = 0.f;
+    float GroundPassReceiveAt6AN = 0.f;
+    bool bGroundPassCollectRequested6AN = false;
+    FString GroundPassFeedback6AN;
+    TArray<FString> GroundPassResults6AN;
+    UPROPERTY(Transient) ASoccerAICharacter* GroundPassTeammate6AN = nullptr;
+    UPROPERTY(EditAnywhere, Category="Training|Ground Pass|6AN", meta=(ClampMin="2.0", ClampMax="20.0"))
+    float GroundPassReceiveSeconds6AN = 8.f;
+    UPROPERTY(EditAnywhere, Category="Training|Ground Pass|6AN", meta=(ClampMin="5.0", ClampMax="60.0"))
+    float GroundPassFinishSeconds6AN1 = 20.f;
+    UPROPERTY(Transient) ASoccerAICharacter* GroundPassDefender6AN1 = nullptr;
+    bool bGroundPassRequested6AN1 = false;
+    bool bGroundPassReceived6AN1 = false;
+    bool bGroundPassShotInFlight6AN1 = false;
+    bool bGroundPassDefenderWasTackling6AN1 = false;
+    bool bGroundPassDefenderTouched6AN1 = false;
+    bool bGroundPassPatrolForward6AN1 = true;
+    float GroundPassSide6AN1 = 1.f;
+    float GroundPassLastDribble6AN1 = -100.f;
+    float GroundPassLastMateMove6AN1 = -100.f;
+    float GroundPassLastDefenderMove6AN1 = -100.f;
+    float GroundPassLastDefenderTackle6AN1 = -100.f;
+    float GroundPassDefenderControlSince6AN1 = -1.f;
+    float GroundPassFinishAt6AN1 = 0.f;
+    FVector GroundPassPreviousBallLocal6AN1 = FVector::ZeroVector;
+    int32 GroundPassTouches6AN1 = 0;
+    int32 GroundPassShots6AN1 = 0;
+    int32 GroundPassReceipts6AN1 = 0;
+    int32 GroundPassRequests6AN1 = 0;
+    int32 GroundPassInterceptions6AN1 = 0;
+    int32 GroundPassLosses6AN1 = 0;
+    int32 GroundPassNeutralRetries6AN1 = 0;
+    bool TryLaunchGroundPass6AN1();
+    void TickGroundPassDefender6AN1(const ASoccerField* Field, float Now);
+    void StopGroundPassActors6AN1();
+    void RetryGroundPass6AN1(const FString& Reason);
+    void PrepareGroundPass6AN();
+    void TickGroundPass6AN();
+    void FinishGroundPass6AN(bool bSuccess, const FString& Reason);
+    void GroundPassTechnicalFailure6AN(const FString& Reason);
+
     // Optional: select the SAME player-profile Data Asset used by the human
     // in a match. No synthetic speed or ball-control coefficients are applied.
     UPROPERTY(EditAnywhere, Category="Training|Movement Control|Parity")

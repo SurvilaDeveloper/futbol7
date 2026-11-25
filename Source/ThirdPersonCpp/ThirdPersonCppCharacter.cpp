@@ -1790,6 +1790,11 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
         CompletedKickMode == ESoccerPendingKickMode::KickAndRelease &&
         ContactResult.ActionType == ESoccerAerialActionType::JumpHeaderKick)
     {
+        if (ASoccerTrainingMovementGameMode6B* GroundPassTraining = GetWorld()
+            ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr)
+        {
+            GroundPassTraining->RegisterGroundPassHumanKick6AN(true);
+        }
         if (!IsValid(MatchManager))
         {
             FindMatchManager();
@@ -6113,7 +6118,8 @@ void AThirdPersonCppCharacter::HandleTackleInput()
                 TackleWorld6AM1->GetAuthGameMode())
             : nullptr;
     if (TrainingMode6AM1 != nullptr &&
-        TrainingMode6AM1->IsWinTackleLesson6AK() &&
+        (TrainingMode6AM1->IsWinTackleLesson6AK() ||
+            (TrainingMode6AM1->IsGroundPassLesson6AN() && TrainingMode6AM1->CanCollectGroundPass6AN())) &&
         TrainingMode6AM1->IsExerciseRunning6H())
     {
         ASoccerBall* TrainingBall6AM1 = ResolveTackleBall();
@@ -6305,6 +6311,15 @@ void AThirdPersonCppCharacter::RequestPassFromTeammate(
 	ESoccerHumanPassRequestType RequestType
 )
 {
+    if (ASoccerTrainingMovementGameMode6B* Training = GetWorld()
+        ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr)
+    {
+        if (Training->IsGroundPassLesson6AN())
+        {
+            if (RequestType == ESoccerHumanPassRequestType::Normal) Training->RequestGroundPass6AN();
+            return;
+        }
+    }
 	// The pass request is a persistent tactical state, not a one-frame action.
 	// Always forward the key press so the same key can turn it off and the
 	// other key can switch its type, even while another assisted action exists.
@@ -6345,6 +6360,16 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 	{
 		return;
 	}
+
+    if (ASoccerTrainingMovementGameMode6B* Training = GetWorld()
+        ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr)
+    {
+        if (Training->IsGroundPassLesson6AN())
+        {
+            if (!Training->CanCollectGroundPass6AN()) return;
+            if (!HasHumanLogicalBallControl()) Training->RegisterGroundPassCollect6AN();
+        }
+    }
 
 	if (!IsValid(MatchManager))
 	{
@@ -7215,6 +7240,10 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 				TargetKickMaxTravelTime
 			);
 		}
+        if (ASoccerTrainingMovementGameMode6B* GroundPassTraining = Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()))
+        {
+            GroundPassTraining->RegisterGroundPassHumanKick6AN(ExecutedMode == ESoccerPendingKickMode::KickAndRelease);
+        }
         if (IsValid(MatchManager) &&
             ExecutedMode == ESoccerPendingKickMode::KickAndRelease)
         {
@@ -7535,6 +7564,10 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 			TargetKickMaxTravelTime
 		);
 	}
+    if (ASoccerTrainingMovementGameMode6B* GroundPassTraining = Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()))
+    {
+        GroundPassTraining->RegisterGroundPassHumanKick6AN(ActiveKickMode == ESoccerPendingKickMode::KickAndRelease);
+    }
     if (IsValid(MatchManager) &&
         ActiveKickMode == ESoccerPendingKickMode::KickAndRelease)
     {

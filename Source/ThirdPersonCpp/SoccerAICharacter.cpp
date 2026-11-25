@@ -1,4 +1,4 @@
-//SoccerAICharacter.cpp
+﻿//SoccerAICharacter.cpp
 
 #include "SoccerAICharacter.h"
 
@@ -1689,7 +1689,8 @@ bool ASoccerAICharacter::TryStartAIKickMontageForOpenPlay(
 	float HorizontalSpeed,
 	float MinTravelTime,
 	float MaxTravelTime,
-	bool bUseAirTarget
+	bool bUseAirTarget,
+	bool bForceGroundPass6AN
 )
 {
 	if (!IsValid(BallToKick) || !bAIIsPossessingBall ||
@@ -1699,17 +1700,20 @@ bool ASoccerAICharacter::TryStartAIKickMontageForOpenPlay(
 	}
 
 	float SpeedToUse = HorizontalSpeed;
-	UAnimMontage* KickMontage = SelectAIKickMontageForTarget(
-		TargetLocation, SpeedToUse);
+	UAnimMontage* KickMontage = bForceGroundPass6AN
+        ? SelectAIKickMontageForBallLocation(BallToKick->GetActorLocation(), TargetLocation, SpeedToUse, true)
+        : SelectAIKickMontageForTarget(TargetLocation, SpeedToUse);
 	if (!KickMontage)
 	{
 		return false;
 	}
 	// Reuse the match's normal montage, ball-release, impact timer, and
 	// physical-contact validation. No restart ball freeze and no fallback kick.
-	return StartAIKickMontage(
+	const bool bStarted = StartAIKickMontage(
 		KickMontage, TargetLocation, SpeedToUse,
 		MinTravelTime, MaxTravelTime, bUseAirTarget, false);
+	if (bStarted) bPendingAIKickForceGround6AN = bForceGroundPass6AN && !bUseAirTarget;
+	return bStarted;
 }
 
 bool ASoccerAICharacter::IsAIKickMontageActive() const
@@ -2057,7 +2061,8 @@ UAnimMontage* ASoccerAICharacter::SelectAIKickMontageForTarget(
 UAnimMontage* ASoccerAICharacter::SelectAIKickMontageForBallLocation(
 	const FVector& BallLocation,
 	const FVector& TargetLocation,
-	float& OutHorizontalSpeed
+	float& OutHorizontalSpeed,
+	bool bAllowShortPassMontage6AN1
 ) const
 {
 	const float Distance2D = FVector::Dist2D(
@@ -2067,7 +2072,7 @@ UAnimMontage* ASoccerAICharacter::SelectAIKickMontageForBallLocation(
 
 	// Keep the same initial thresholds as the human, but in AI-owned
 	// properties so future AI tuning does not affect player controls.
-	if (Distance2D <= AIShortKickMaxDistance)
+	if (!bAllowShortPassMontage6AN1 && Distance2D <= AIShortKickMaxDistance)
 	{
 		return nullptr;
 	}
@@ -2274,6 +2279,7 @@ bool ASoccerAICharacter::StartAIKickMontageWithBall(
 	PendingAIKickMinTravelTime = MinTravelTime;
 	PendingAIKickMaxTravelTime = MaxTravelTime;
 	bPendingAIKickUsesAirTarget = bUseAirTarget;
+	bPendingAIKickForceGround6AN = false;
 	bPendingAIKickHasImpactedBall = false;
 	bLastAIKickMontageEndedAfterImpact = false;
 	bPendingAIKickIsAutoPass = bTreatAsAutoPass;
@@ -2434,7 +2440,11 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 		);
 	}
 
-	if (bPendingAIKickUsesAirTarget)
+	if (bPendingAIKickForceGround6AN)
+	{
+		BallToKick->KickGroundToTarget(ExecutedKickTarget, ExecutedKickHorizontalSpeed);
+	}
+	else if (bPendingAIKickUsesAirTarget)
 	{
 		BallToKick->KickToAirTarget(
 			ExecutedKickTarget,
@@ -2498,6 +2508,7 @@ void ASoccerAICharacter::FinishPendingAIKickAnimation()
 	PendingAIKickMinTravelTime = 0.0f;
 	PendingAIKickMaxTravelTime = 0.0f;
 	bPendingAIKickUsesAirTarget = false;
+	bPendingAIKickForceGround6AN = false;
 	bPendingAIKickHasImpactedBall = false;
 	bPendingAIKickIsAutoPass = false;
 	bPendingAIKickIsRestart = false;
@@ -2558,6 +2569,7 @@ void ASoccerAICharacter::CancelPendingAIKickAnimation(
 	PendingAIKickMinTravelTime = 0.0f;
 	PendingAIKickMaxTravelTime = 0.0f;
 	bPendingAIKickUsesAirTarget = false;
+	bPendingAIKickForceGround6AN = false;
 	bPendingAIKickHasImpactedBall = false;
 	bLastAIKickMontageEndedAfterImpact = false;
 	bPendingAIKickIsAutoPass = false;
