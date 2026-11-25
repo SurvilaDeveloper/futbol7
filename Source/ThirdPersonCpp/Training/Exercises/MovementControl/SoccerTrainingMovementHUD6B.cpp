@@ -24,7 +24,9 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
         DrawText(Mode->IsAerialPassLesson6AO() ? TEXT("ENTRENAMIENTO | PASE AÉREO") : TEXT("ENTRENAMIENTO | PASE RASANTE"), FLinearColor::White, X, Y, Font, 1.25f, false);
         DrawText(FString::Printf(TEXT("Intento %d/10 | Goles %d"), Mode->GetGroundPassAttempt6AN(), Mode->GetGroundPassSuccesses6AN()), FLinearColor::Yellow, X, Y + 30.f, Font, 1.2f, false);
         DrawText(Mode->GetExerciseMessage6B(), FLinearColor(0.7f, 0.95f, 1.f), X, Y + 60.f, Font, 1.0f, false);
-        if (Mode->CanCollectGroundPass6AN())
+        // The aerial lesson needs aim before delivery; charge is displayed
+        // only when the actual character input is held.
+        if (Mode->IsAerialPassLesson6AO() || Mode->CanCollectGroundPass6AN())
         {
             const AThirdPersonCppCharacter* Trainee = Cast<AThirdPersonCppCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0));
             if (IsValid(Trainee))

@@ -104,7 +104,8 @@ bool ASoccerTrainingPlayerController6B::InputKey(
             (Key == EKeys::Q || Key == EKeys::RightMouseButton || Key == EKeys::Gamepad_RightTriggerAxis ||
              Key == EKeys::LeftMouseButton || Key == EKeys::Gamepad_RightTrigger))
         {
-            if (!TrainingMode->CanCollectGroundPass6AN()) return true;
+            const bool bCanAnticipateAerial = TrainingMode->HasPendingAerialPass6AO1() && Key != EKeys::Q;
+            if (!TrainingMode->CanCollectGroundPass6AN() && !bCanAnticipateAerial) return true;
             return Super::InputKey(Key, EventType, AmountDepressed, bGamepad);
         }
         if (Key == EKeys::RightMouseButton)

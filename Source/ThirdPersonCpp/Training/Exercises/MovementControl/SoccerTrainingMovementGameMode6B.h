@@ -48,6 +48,11 @@ public:
     void BeginExercise6H();
     bool IsGroundPassLesson6AN() const { return bGroundPassLesson6AN && !bAerialPassLesson6AO; }
     bool IsAerialPassLesson6AO() const { return bAerialPassLesson6AO; }
+    bool HasPendingAerialPass6AO1() const
+    {
+        return bAerialPassLesson6AO && IsExerciseRunning6H() &&
+            bGroundPassRequested6AN1 && (GroundPassState6AN == 1 || GroundPassState6AN == 2);
+    }
     bool IsPassLesson6AO() const { return bGroundPassLesson6AN; }
     void RegisterAerialPassContact6AO(bool bHead, bool bShot, bool bJump);
     void RequestGroundPass6AN();
@@ -108,6 +113,12 @@ private:
     int32 AerialPassHeadControls6AO = 0;
     int32 AerialPassStandingShots6AO = 0;
     int32 AerialPassJumpShots6AO = 0;
+    int32 AerialPassStandingGoals6AO4 = 0;
+    int32 AerialPassJumpGoals6AO4 = 0;
+    bool bLastHeaderWasJump6AO4 = false;
+    UPROPERTY(EditAnywhere, Category="Training|Aerial Pass|6AO", meta=(ClampMin="0.0", ClampMax="8.0"))
+    float AerialPassDeepHoldSeconds6AO4 = 3.0f;
+    float AerialPassDeepHoldUntil6AO4 = -1.f;
     UPROPERTY(EditAnywhere, Category="Training|Aerial Pass|6AO", meta=(ClampMin="100.0", ClampMax="5000.0"))
     float AerialPassSpeed6AO = 1800.f;
     int32 GroundPassState6AN = 0;
@@ -128,6 +139,7 @@ private:
     bool bGroundPassRequested6AN1 = false;
     bool bGroundPassReceived6AN1 = false;
     bool bGroundPassShotInFlight6AN1 = false;
+    bool bLastHumanShotWasHeader6AO3 = false;
     bool bGroundPassDefenderWasTackling6AN1 = false;
     bool bGroundPassDefenderTouched6AN1 = false;
     bool bGroundPassPatrolForward6AN1 = true;

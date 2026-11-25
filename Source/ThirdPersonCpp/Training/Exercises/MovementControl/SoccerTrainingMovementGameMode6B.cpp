@@ -1652,6 +1652,7 @@ void ASoccerTrainingMovementGameMode6B::BeginExercise6H()
         GroundPassCompleted6AN = GroundPassSuccesses6AN = GroundPassTechnicalRetries6AN = 0;
         GroundPassResults6AN.Empty();
         AerialPassChestContacts6AO = AerialPassHeadControls6AO = AerialPassStandingShots6AO = AerialPassJumpShots6AO = 0;
+        AerialPassStandingGoals6AO4 = AerialPassJumpGoals6AO4 = 0;
         GroundPassShots6AN1 = GroundPassReceipts6AN1 = GroundPassRequests6AN1 = 0;
         GroundPassInterceptions6AN1 = GroundPassLosses6AN1 = GroundPassNeutralRetries6AN1 = 0;
         PrepareGroundPass6AN();
@@ -3411,6 +3412,8 @@ void ASoccerTrainingMovementGameMode6B::StopGroundPassActors6AN1()
     }
     if (IsValid(Trainee6B))
     {
+        // An already-playing aerial montage must not survive a teleport/reset.
+        if (bAerialPassLesson6AO && Trainee6B->IsAerialActionQueuedOrPlaying()) Trainee6B->CancelAerialAction();
         Trainee6B->ReleaseBallForMatchRestart(false);
         if (Trainee6B->IsTackleActive()) Trainee6B->CancelTackle();
         if (Trainee6B->IsTackleEvasionActive()) Trainee6B->CancelTackleEvasion();
@@ -3456,6 +3459,7 @@ void ASoccerTrainingMovementGameMode6B::PrepareGroundPass6AN()
     const float HalfWidth = SoccerFieldDimensions::HalfPitchWidthCm;
     GroundPassSide6AN1 = Index < 2 ? 1.f : Index < 4 ? -1.f : (Index % 2 == 0 ? 1.f : -1.f);
     bGroundPassPatrolForward6AN1 = true;
+    AerialPassDeepHoldUntil6AO4 = -1.f;
     const float BandY = GroundPassSide6AN1 * HalfWidth * 0.72f;
     const float PressureGap = FMath::Lerp(0.34f, 0.15f, Index / 9.f) * HalfWidth;
     const FVector MatePos = Field->PitchLocalToWorld(FVector(-0.30f * HalfLength, BandY, 130.f));
@@ -3500,6 +3504,8 @@ void ASoccerTrainingMovementGameMode6B::PrepareGroundPass6AN()
     GroundPassTouches6AN1 = 0;
     bGroundPassCollectRequested6AN = bGroundPassRequested6AN1 = bGroundPassReceived6AN1 = false;
     bGroundPassShotInFlight6AN1 = bGroundPassDefenderWasTackling6AN1 = bGroundPassDefenderTouched6AN1 = false;
+    bLastHumanShotWasHeader6AO3 = false;
+    bLastHeaderWasJump6AO4 = false;
     GroundPassPreviousBallLocal6AN1 = Field->WorldToPitchLocal(BallPos);
     GroundPassFeedback6AN = TEXT("Preparando al companero y al defensor...");
     UE_LOG(LogTemp, Display, TEXT("[%s] PREPARE attempt=%d side=%.0f gap=%.0f humanMate=%.0f humanDefender=%.0f"), bAerialPassLesson6AO ? TEXT("Training6AO") : TEXT("Training6AN2"),
@@ -3554,6 +3560,16 @@ bool ASoccerTrainingMovementGameMode6B::TryLaunchGroundPass6AN1()
     if (Mate->TryStartAIKickMontageForOpenPlay(PracticeBall6B, Target, LaunchSpeed, MinTime, MaxTime, bAerialPassLesson6AO, true))
     {
         GroundPassState6AN = 2;
+        if (bAerialPassLesson6AO)
+        {
+            if (const ASoccerField* Field = FindSharedField6L())
+            {
+                const FVector FromLocal = Field->WorldToPitchLocal(Ball);
+                const FVector ToLocal = Field->WorldToPitchLocal(Target);
+                UE_LOG(LogTemp, Display, TEXT("[Training6AO3] CROSS fromX=%.0f fromY=%.0f toX=%.0f toY=%.0f remainingToLine=%.0f"),
+                    FromLocal.X, FromLocal.Y, ToLocal.X, ToLocal.Y, SoccerFieldDimensions::RightGoalLineX - FromLocal.X);
+            }
+        }
         GroundPassStateAt6AN = GetWorld()->GetTimeSeconds();
         GroundPassFeedback6AN = bAerialPassLesson6AO ? TEXT("El companero esta ejecutando el pase aereo.") : TEXT("El companero esta ejecutando el pase rasante.");
         UE_LOG(LogTemp, Display, TEXT("[%s] PASS START distance=%.0f speed=%.0f damping=%.2f targetZ=%.0f"), bAerialPassLesson6AO ? TEXT("Training6AO") : TEXT("Training6AN2"), PassDistance, LaunchSpeed, Damping, Target.Z);
@@ -3612,6 +3628,10 @@ void ASoccerTrainingMovementGameMode6B::TickGroundPassDefender6AN1(const ASoccer
             if (Trainee6B->HasHumanLogicalBallControl()) Trainee6B->ReleaseBallForAISteal();
             // An active slide with real contact is a defensive touch, not a new human shot.
             bGroundPassShotInFlight6AN1 = false;
+            if (bLastHumanShotWasHeader6AO3)
+            {
+                UE_LOG(LogTemp, Display, TEXT("[Training6AO4] HEADER ATTRIBUTION END defender touch"));
+            }
         }
         if (!bTackling && bGroundPassDefenderWasTackling6AN1)
         {
@@ -3645,7 +3665,9 @@ void ASoccerTrainingMovementGameMode6B::TickGroundPassDefender6AN1(const ASoccer
             Defender->PossessAIBall(PracticeBall6B);
             if (bGroundPassReceived6AN1) ++GroundPassLosses6AN1;
             else ++GroundPassInterceptions6AN1;
-            FinishGroundPass6AN(false, bGroundPassReceived6AN1 ? TEXT("El rival recupero la pelota") : TEXT("Pase interceptado"));
+            FinishGroundPass6AN(false, bGroundPassReceived6AN1
+                ? (bLastHumanShotWasHeader6AO3 ? TEXT("Cabezazo recuperado por el rival") : TEXT("El rival recupero la pelota"))
+                : TEXT("Pase interceptado"));
         }
         return;
     }
@@ -3691,21 +3713,43 @@ void ASoccerTrainingMovementGameMode6B::RegisterGroundPassHumanKick6AN(bool bSho
 {
     if (!bGroundPassLesson6AN || !CanCollectGroundPass6AN()) return;
     bGroundPassShotInFlight6AN1 = bShot;
-    if (bShot) ++GroundPassShots6AN1;
+    bLastHumanShotWasHeader6AO3 = false;
+    bLastHeaderWasJump6AO4 = false;
+    if (bShot)
+    {
+        ++GroundPassShots6AN1;
+        if (bAerialPassLesson6AO && !bGroundPassReceived6AN1)
+        {
+            bGroundPassReceived6AN1 = true;
+            ++GroundPassReceipts6AN1;
+            GroundPassFinishAt6AN1 = GetWorld()->GetTimeSeconds() + GroundPassFinishSeconds6AN1;
+        }
+    }
 }
 
 void ASoccerTrainingMovementGameMode6B::RegisterAerialPassContact6AO(bool bHead, bool bShot, bool bJump)
 {
     if (!bAerialPassLesson6AO || !CanCollectGroundPass6AN()) return;
+    // An accepted aerial touch is a reception even without foot possession.
+    if (!bGroundPassReceived6AN1)
+    {
+        bGroundPassReceived6AN1 = true;
+        ++GroundPassReceipts6AN1;
+        GroundPassFinishAt6AN1 = GetWorld()->GetTimeSeconds() + GroundPassFinishSeconds6AN1;
+    }
     if (bShot && bHead)
     {
         if (bJump) ++AerialPassJumpShots6AO;
         else ++AerialPassStandingShots6AO;
         RegisterGroundPassHumanKick6AN(true);
+        bLastHumanShotWasHeader6AO3 = true;
+        bLastHeaderWasJump6AO4 = bJump;
     }
     else
     {
         bGroundPassShotInFlight6AN1 = false;
+        bLastHumanShotWasHeader6AO3 = false;
+        bLastHeaderWasJump6AO4 = false;
         if (bHead) ++AerialPassHeadControls6AO;
         else ++AerialPassChestContacts6AO;
     }
@@ -3784,15 +3828,38 @@ void ASoccerTrainingMovementGameMode6B::TickGroundPass6AN()
         {
             const float Alpha = (GoalPlane - GroundPassPreviousBallLocal6AN1.X) / FMath::Max(KINDA_SMALL_NUMBER, LocalBall.X - GroundPassPreviousBallLocal6AN1.X);
             const FVector Crossing = FMath::Lerp(GroundPassPreviousBallLocal6AN1, LocalBall, Alpha);
+            if (bAerialPassLesson6AO && bLastHumanShotWasHeader6AO3 && bGroundPassShotInFlight6AN1)
+            {
+                UE_LOG(LogTemp, Display, TEXT("[Training6AO4] HEADER CROSSING local=%s jump=%d wide=%d high=%d"),
+                    *Crossing.ToCompactString(), bLastHeaderWasJump6AO4,
+                    FMath::Abs(Crossing.Y) > SoccerFieldDimensions::GoalHalfWidthCm - Radius,
+                    Crossing.Z > SoccerFieldDimensions::GoalHeightCm - Radius);
+            }
             if (FMath::Abs(Crossing.Y) <= SoccerFieldDimensions::GoalHalfWidthCm - Radius && Crossing.Z >= -Radius &&
                 Crossing.Z <= SoccerFieldDimensions::GoalHeightCm - Radius)
             {
-                FinishGroundPass6AN(bGroundPassShotInFlight6AN1, bGroundPassShotInFlight6AN1 ? TEXT("GOL tras remate del humano") : TEXT("Ingreso sin remate del humano"));
+                if (bGroundPassShotInFlight6AN1 && bLastHumanShotWasHeader6AO3)
+                {
+                    if (bLastHeaderWasJump6AO4) ++AerialPassJumpGoals6AO4;
+                    else ++AerialPassStandingGoals6AO4;
+                }
+                FinishGroundPass6AN(bGroundPassShotInFlight6AN1, bGroundPassShotInFlight6AN1
+                    ? (bLastHumanShotWasHeader6AO3 ? (bLastHeaderWasJump6AO4 ? TEXT("GOL de cabeza con salto") : TEXT("GOL de cabeza sin salto")) : TEXT("GOL tras remate del humano"))
+                    : TEXT("Ingreso sin remate del humano"));
                 return;
             }
         }
         GroundPassPreviousBallLocal6AN1 = LocalBall;
-        if (bOutside) { FinishGroundPass6AN(false, TEXT("Pelota fuera de la cancha")); return; }
+        if (bOutside)
+        {
+            if (bLastHumanShotWasHeader6AO3 && bGroundPassShotInFlight6AN1)
+            {
+                UE_LOG(LogTemp, Display, TEXT("[Training6AO4] HEADER EXIT local=%s jump=%d"),
+                    *LocalBall.ToCompactString(), bLastHeaderWasJump6AO4);
+            }
+            FinishGroundPass6AN(false, bLastHumanShotWasHeader6AO3 && bGroundPassShotInFlight6AN1 ? TEXT("Cabezazo fuera de la cancha") : TEXT("Pelota fuera de la cancha"));
+            return;
+        }
         if (Trainee6B->IsPossessingBall())
         {
             if (!bGroundPassReceived6AN1)
@@ -3803,7 +3870,16 @@ void ASoccerTrainingMovementGameMode6B::TickGroundPass6AN()
                 GroundPassFeedback6AN = TEXT("Pase recibido. Esquiva al defensor y remata al arco vacio.");
             }
             // A subsequent possession invalidates attribution to an earlier shot.
-            if (!Trainee6B->IsKicking()) bGroundPassShotInFlight6AN1 = false;
+            if (!Trainee6B->IsKicking() && !(bLastHumanShotWasHeader6AO3 && Trainee6B->IsAerialActionQueuedOrPlaying()))
+            {
+                if (bLastHumanShotWasHeader6AO3 && bGroundPassShotInFlight6AN1)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("[Training6AO4] HEADER ATTRIBUTION END new possession"));
+                }
+                bGroundPassShotInFlight6AN1 = false;
+                bLastHumanShotWasHeader6AO3 = false;
+                bLastHeaderWasJump6AO4 = false;
+            }
         }
         if (!bGroundPassReceived6AN1 && !bGroundPassShotInFlight6AN1 && Now - GroundPassReceiveAt6AN >= GroundPassReceiveSeconds6AN + (bAerialPassLesson6AO ? 2.f : 0.f))
         { FinishGroundPass6AN(false, TEXT("No se recibio ni remato dentro del tiempo")); return; }
@@ -3818,9 +3894,33 @@ void ASoccerTrainingMovementGameMode6B::TickGroundPass6AN()
     const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
     const float HalfWidth = SoccerFieldDimensions::HalfPitchWidthCm;
     const FVector MateLocal = Field->WorldToPitchLocal(Mate->GetActorLocation());
-    if (bGroundPassPatrolForward6AN1 && MateLocal.X > 0.12f * HalfLength) bGroundPassPatrolForward6AN1 = false;
-    else if (!bGroundPassPatrolForward6AN1 && MateLocal.X < -0.40f * HalfLength) bGroundPassPatrolForward6AN1 = true;
-    const FVector Patrol = Field->PitchLocalToWorld(FVector(bGroundPassPatrolForward6AN1 ? 0.32f * HalfLength : -0.60f * HalfLength,
+    // In 6AO allow a deep run so the human can request a cross from the
+    // goal-line side. Preserve 6AN.2 and leave a safety margin inside the pitch.
+    const float ForwardTurnX = (bAerialPassLesson6AO ? 0.88f : 0.12f) * HalfLength;
+    const float ForwardTargetX = (bAerialPassLesson6AO ? 0.94f : 0.32f) * HalfLength;
+    if (bGroundPassPatrolForward6AN1 && MateLocal.X > ForwardTurnX)
+    {
+        bGroundPassPatrolForward6AN1 = false;
+        if (bAerialPassLesson6AO)
+        {
+            AerialPassDeepHoldUntil6AO4 = Now + FMath::Max(0.f, AerialPassDeepHoldSeconds6AO4);
+            UE_LOG(LogTemp, Display, TEXT("[Training6AO4] DEEP HOLD localX=%.0f remainingToLine=%.0f seconds=%.2f"),
+                MateLocal.X, SoccerFieldDimensions::RightGoalLineX - MateLocal.X, AerialPassDeepHoldSeconds6AO4);
+        }
+    }
+    const bool bDeepHold6AO4 = bAerialPassLesson6AO && Now < AerialPassDeepHoldUntil6AO4;
+    if (!bDeepHold6AO4 && AerialPassDeepHoldUntil6AO4 >= 0.f)
+    {
+        AerialPassDeepHoldUntil6AO4 = -1.f;
+        UE_LOG(LogTemp, Display, TEXT("[Training6AO4] DEEP HOLD END localX=%.0f"), MateLocal.X);
+    }
+    if (!bDeepHold6AO4 && !bGroundPassPatrolForward6AN1 && MateLocal.X < -0.40f * HalfLength)
+        bGroundPassPatrolForward6AN1 = true;
+    // Continue real dribbling near the end line, using the shared planner.
+    // Do not immobilize the carrier or ball; R remains available at any time.
+    const float PatrolX6AO4 = bDeepHold6AO4 ? 0.88f * HalfLength :
+        bGroundPassPatrolForward6AN1 ? ForwardTargetX : -0.60f * HalfLength;
+    const FVector Patrol = Field->PitchLocalToWorld(FVector(PatrolX6AO4,
         GroundPassSide6AN1 * HalfWidth * 0.72f, 130.f));
     if (ASoccerAIController* Controller = Cast<ASoccerAIController>(Mate->GetController()))
     {
@@ -3883,6 +3983,10 @@ FString ASoccerTrainingMovementGameMode6B::GetGroundPassReport6AN() const
         GroundPassLosses6AN1, GroundPassNeutralRetries6AN1, ElapsedTime6B);
     if (bAerialPassLesson6AO)
         Report += FString::Printf(TEXT("Contactos de pecho: %d | Controles de cabeza: %d\nCabezazos dirigidos: %d | Cabezazos con salto: %d\n\n"), AerialPassChestContacts6AO, AerialPassHeadControls6AO, AerialPassStandingShots6AO, AerialPassJumpShots6AO);
+    if (bAerialPassLesson6AO)
+    {
+        Report += FString::Printf(TEXT("Goles de cabeza con salto: %d | Sin salto: %d\n\n"), AerialPassJumpGoals6AO4, AerialPassStandingGoals6AO4);
+    }
     for (const FString& Result : GroundPassResults6AN) Report += Result + TEXT("\n");
     return Report;
 }

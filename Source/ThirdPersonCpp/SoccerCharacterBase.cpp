@@ -5821,6 +5821,14 @@ bool ASoccerCharacterBase::BuildJumpHeaderPlanForProfile(
 
     ContactTimes.Sort();
 
+    // 6AO.4: shared match/training solver. Only a human attacking header
+    // with a requested target may rotate partly towards the intended shot.
+    // Keep the original incoming-facing candidate as a physical fallback.
+    FVector RequestedHeaderTarget6AO4 = FVector::ZeroVector;
+    const bool bAimAware6AO4 = IsPlayerControlled() &&
+        Profile.ActionType == ESoccerAerialActionType::JumpHeaderKick &&
+        ResolveAerialActiveHeaderTarget(RequestedHeaderTarget6AO4);
+
     bool bFoundPlan = false;
     float BestScore = TNumericLimits<float>::Max();
 
@@ -6006,129 +6014,154 @@ bool ASoccerCharacterBase::BuildJumpHeaderPlanForProfile(
                     FacingDirection = FVector::ForwardVector;
                 }
 
-                FVector PredictedChestLower;
-                FVector PredictedChestUpper;
-                FVector PredictedHead;
-
-                if (!GetAerialContactTrackWorldLocations(
-                    Profile.ActionType,
-                    ActualContactTime,
-                    FacingDirection,
-                    CurrentActorLocation,
-                    PredictedChestLower,
-                    PredictedChestUpper,
-                    PredictedHead
-                ))
+                const FVector DesiredHeaderDirection6AO4 =
+                    (RequestedHeaderTarget6AO4 - CandidateLocation).GetSafeNormal2D();
+                const bool bHasAim6AO4 = bAimAware6AO4 && !DesiredHeaderDirection6AO4.IsNearlyZero();
+                const float AimDelta6AO4 = bHasAim6AO4 ? FMath::FindDeltaAngleDegrees(
+                    FacingDirection.Rotation().Yaw, DesiredHeaderDirection6AO4.Rotation().Yaw) : 0.0f;
+                const float PartialTurn6AO4 = FMath::Clamp(AimDelta6AO4 * 0.5f, -30.0f, 30.0f);
+                const int32 FacingCount6AO4 = bHasAim6AO4 && FMath::Abs(PartialTurn6AO4) > 5.0f ? 2 : 1;
+                for (int32 FacingIndex6AO4 = 0; FacingIndex6AO4 < FacingCount6AO4; ++FacingIndex6AO4)
                 {
-                    continue;
-                }
+                    const FVector CandidateFacing6AO4 = FacingIndex6AO4 == 0 ? FacingDirection :
+                        FacingDirection.RotateAngleAxis(PartialTurn6AO4, FVector::UpVector).GetSafeNormal2D();
+                    FVector PredictedChestLower;
+                    FVector PredictedChestUpper;
+                    FVector PredictedHead;
 
-                const FVector HeadOffsetFromActor =
-                    PredictedHead - CurrentActorLocation;
-                FVector PreparationLocation =
-                    CandidateLocation - HeadOffsetFromActor;
-                PreparationLocation.Z = CurrentActorLocation.Z;
+                    if (!GetAerialContactTrackWorldLocations(
+                        Profile.ActionType,
+                        ActualContactTime,
+                        CandidateFacing6AO4,
+                        CurrentActorLocation,
+                        PredictedChestLower,
+                        PredictedChestUpper,
+                        PredictedHead
+                    ))
+                    {
+                        continue;
+                    }
 
-                const FVector ReconstructedHeadLocation =
-                    PreparationLocation + HeadOffsetFromActor;
-                const float VerticalError = FMath::Abs(
-                    CandidateLocation.Z - ReconstructedHeadLocation.Z
-                );
+                    const FVector HeadOffsetFromActor =
+                        PredictedHead - CurrentActorLocation;
+                    FVector PreparationLocation =
+                        CandidateLocation - HeadOffsetFromActor;
+                    PreparationLocation.Z = CurrentActorLocation.Z;
 
-                if (VerticalError > MaximumVerticalError)
-                {
-                    continue;
-                }
-
-                const float PlayerArrivalTime =
-                    EstimateArrivalTimeToLocation(
-                        PreparationLocation,
-                        Profile.PreparationReachRadius
+                    const FVector ReconstructedHeadLocation =
+                        PreparationLocation + HeadOffsetFromActor;
+                    const float VerticalError = FMath::Abs(
+                        CandidateLocation.Z - ReconstructedHeadLocation.Z
                     );
 
-                if (!FMath::IsFinite(PlayerArrivalTime))
-                {
-                    continue;
-                }
+                    if (VerticalError > MaximumVerticalError)
+                    {
+                        continue;
+                    }
 
-                const float LatestUsefulArrivalTime = FMath::Max(
-                    0.0f,
-                    MontageStartDelay - Profile.PreparationSettleTime
-                );
-                const float ArrivalMargin =
-                    LatestUsefulArrivalTime - PlayerArrivalTime;
-
-                if (
-                    PlayerArrivalTime >
-                    LatestUsefulArrivalTime +
-                    FMath::Max(0.0f, AerialJumpHeaderArrivalTolerance)
-                )
-                {
-                    continue;
-                }
-
-                const float TimingOffset =
-                    ActualContactTime - Profile.IdealContactTime;
-                const float NormalizedVerticalError =
-                    MaximumVerticalError > KINDA_SMALL_NUMBER
-                    ? FMath::Clamp(
-                        VerticalError / MaximumVerticalError,
-                        0.0f,
-                        1.0f
-                    )
-                    : 0.0f;
-                const float UsefulArrivalMargin = FMath::Clamp(
-                    ArrivalMargin,
-                    0.0f,
-                    0.30f
-                );
-
-                const float CandidateScore =
-                    CandidateBallTime +
-                    FMath::Abs(TimingOffset) *
-                        FMath::Max(
-                            0.0f,
-                            AerialJumpHeaderTimingDeviationScoreWeight
-                        ) +
-                    NormalizedVerticalError *
-                        FMath::Max(
-                            0.0f,
-                            AerialJumpHeaderVerticalErrorScoreWeight
-                        ) -
-                    UsefulArrivalMargin *
-                        FMath::Max(
-                            0.0f,
-                            AerialJumpHeaderArrivalMarginScoreBonus
+                    const float PlayerArrivalTime =
+                        EstimateArrivalTimeToLocation(
+                            PreparationLocation,
+                            Profile.PreparationReachRadius
                         );
 
-                if (bFoundPlan && CandidateScore >= BestScore)
-                {
-                    continue;
+                    if (!FMath::IsFinite(PlayerArrivalTime))
+                    {
+                        continue;
+                    }
+
+                    const float LatestUsefulArrivalTime = FMath::Max(
+                        0.0f,
+                        MontageStartDelay - Profile.PreparationSettleTime
+                    );
+                    const float ArrivalMargin =
+                        LatestUsefulArrivalTime - PlayerArrivalTime;
+
+                    if (
+                        PlayerArrivalTime >
+                        LatestUsefulArrivalTime +
+                        FMath::Max(0.0f, AerialJumpHeaderArrivalTolerance)
+                    )
+                    {
+                        continue;
+                    }
+
+                    // A rotated alternative must leave enough time to prepare.
+                    // The original candidate retains its existing tolerance.
+                    if (FacingIndex6AO4 != 0 && (ArrivalMargin < 0.0f ||
+                        MontageStartDelay < FMath::Abs(PartialTurn6AO4) /
+                            FMath::Max(1.0f, AerialFacingRotationSpeedDegreesPerSecond)))
+                    {
+                        continue;
+                    }
+
+                    const float TimingOffset =
+                        ActualContactTime - Profile.IdealContactTime;
+                    const float NormalizedVerticalError =
+                        MaximumVerticalError > KINDA_SMALL_NUMBER
+                        ? FMath::Clamp(
+                            VerticalError / MaximumVerticalError,
+                            0.0f,
+                            1.0f
+                        )
+                        : 0.0f;
+                    const float UsefulArrivalMargin = FMath::Clamp(
+                        ArrivalMargin,
+                        0.0f,
+                        0.30f
+                    );
+
+                    const float AimPenalty6AO4 = bHasAim6AO4
+                        ? FMath::Abs(FMath::FindDeltaAngleDegrees(
+                            CandidateFacing6AO4.Rotation().Yaw, DesiredHeaderDirection6AO4.Rotation().Yaw)) * 0.002f
+                        : 0.0f;
+                    const float CandidateScore =
+                        CandidateBallTime + AimPenalty6AO4 +
+                        FMath::Abs(TimingOffset) *
+                            FMath::Max(
+                                0.0f,
+                                AerialJumpHeaderTimingDeviationScoreWeight
+                            ) +
+                        NormalizedVerticalError *
+                            FMath::Max(
+                                0.0f,
+                                AerialJumpHeaderVerticalErrorScoreWeight
+                            ) -
+                        UsefulArrivalMargin *
+                            FMath::Max(
+                                0.0f,
+                                AerialJumpHeaderArrivalMarginScoreBonus
+                            );
+
+                    if (bFoundPlan && CandidateScore >= BestScore)
+                    {
+                        continue;
+                    }
+
+                    bFoundPlan = true;
+                    BestScore = CandidateScore;
+
+                    OutPlan.bValid = true;
+                    OutPlan.ActionType = Profile.ActionType;
+                    OutPlan.PlannedContactSurface =
+                        ESoccerAerialContactSurface::Head;
+                    OutPlan.Ball = const_cast<ASoccerBall*>(SoccerBall);
+                    OutPlan.ContactLocation = CandidateLocation;
+                    OutPlan.PreparationLocation = PreparationLocation;
+                    OutPlan.FacingDirection = CandidateFacing6AO4;
+                    OutPlan.BallArrivalTime = CandidateBallTime;
+                    OutPlan.PlayerArrivalTime = PlayerArrivalTime;
+                    OutPlan.MontageStartDelay = MontageStartDelay;
+                    OutPlan.ExpectedContactTimeFromMontageStart =
+                        ActualContactTime;
+                    OutPlan.PreparationArrivalMargin = ArrivalMargin;
+                    OutPlan.ContactTimingOffsetFromIdeal = TimingOffset;
+                    OutPlan.PredictedHeadVerticalError = VerticalError;
+                    OutPlan.BallHeightAboveGround = BallHeightAboveGround;
+                    OutPlan.PredictedIncomingBallVelocity = CandidateVelocity;
+                    OutPlan.TrajectoryRevision =
+                        SoccerBall->GetTrajectoryRevision();
                 }
-
-                bFoundPlan = true;
-                BestScore = CandidateScore;
-
-                OutPlan.bValid = true;
-                OutPlan.ActionType = Profile.ActionType;
-                OutPlan.PlannedContactSurface =
-                    ESoccerAerialContactSurface::Head;
-                OutPlan.Ball = const_cast<ASoccerBall*>(SoccerBall);
-                OutPlan.ContactLocation = CandidateLocation;
-                OutPlan.PreparationLocation = PreparationLocation;
-                OutPlan.FacingDirection = FacingDirection;
-                OutPlan.BallArrivalTime = CandidateBallTime;
-                OutPlan.PlayerArrivalTime = PlayerArrivalTime;
-                OutPlan.MontageStartDelay = MontageStartDelay;
-                OutPlan.ExpectedContactTimeFromMontageStart =
-                    ActualContactTime;
-                OutPlan.PreparationArrivalMargin = ArrivalMargin;
-                OutPlan.ContactTimingOffsetFromIdeal = TimingOffset;
-                OutPlan.PredictedHeadVerticalError = VerticalError;
-                OutPlan.BallHeightAboveGround = BallHeightAboveGround;
-                OutPlan.PredictedIncomingBallVelocity = CandidateVelocity;
-                OutPlan.TrajectoryRevision =
-                    SoccerBall->GetTrajectoryRevision();
             }
         }
     }

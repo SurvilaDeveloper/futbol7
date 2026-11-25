@@ -4,6 +4,7 @@
 
 #include "SoccerAICharacter.h"
 #include "SoccerCharacterBase.h"
+#include "ThirdPersonCppCharacter.h"
 #include "SoccerMatchManager.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -627,6 +628,14 @@ void ASoccerBall::UpdatePassiveCharacterBodyContact(float DeltaTime)
             continue;
         }
 
+        const AThirdPersonCppCharacter* Human = Cast<AThirdPersonCppCharacter>(Candidate);
+        if (IsValid(Human) && Human->ShouldDeferPassiveBallBodyContact6AO2(this))
+        {
+            // Intentional low foot action owns this contact until its impact.
+            // The ball remains physical and can still be touched by others.
+            continue;
+        }
+
         if (
             Candidate == LastPassiveCharacterBodyContact &&
             CurrentWorldTime - LastPassiveCharacterBodyContactWorldTime <
@@ -789,6 +798,14 @@ void ASoccerBall::UpdatePassiveCharacterBodyContact(float DeltaTime)
     );
     BallMesh->WakeAllRigidBodies();
 
+    if (const AThirdPersonCppCharacter* Human = Cast<AThirdPersonCppCharacter>(BestCharacter))
+    {
+        if (Human->HasActiveHumanBallClaim())
+        {
+            UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO2] PASSIVE BODY DEFLECTION incoming=%.1f outgoing=%.1f"),
+                IncomingBallSpeed, OutgoingBallVelocity.Size());
+        }
+    }
     LastPassiveCharacterBodyContact = BestCharacter;
     LastPassiveCharacterBodyContactWorldTime = CurrentWorldTime;
     PreviousPassiveCharacterBodyBallLocation = ContactBallLocation;
@@ -2123,6 +2140,16 @@ void ASoccerBall::OnBallHit(
     const FHitResult& Hit
 )
 {
+    // Distinguish actual engine physics hits (e.g. Blueprint collision overrides)
+    // from the analytic passive body contacts handled separately.
+    if (const AThirdPersonCppCharacter* Human = Cast<AThirdPersonCppCharacter>(OtherActor))
+    {
+        if (Human->HasActiveHumanBallClaim() && (Human->IsChasingBall() || Human->IsKicking()))
+        {
+            UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO2] PHYSICS HIT component=%s impulse=%.1f"),
+                *GetNameSafe(OtherComp), NormalImpulse.Size());
+        }
+    }
     if (bDebugBallHitEvents)
     {
         UE_LOG(

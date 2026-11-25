@@ -13,11 +13,14 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "Engine/Engine.h"
 #include "SoccerBall.h"
+#include "SoccerField.h"
+#include "SoccerFieldDimensions.h"
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 
 #include "SoccerAICharacter.h"
 #include "SoccerMatchManager.h"
@@ -717,14 +720,14 @@ bool AThirdPersonCppCharacter::GetHumanJumpHeaderHUDStatus(
 		return false;
 	}
 
-	if (HeaderJumpKickMontage == nullptr)
+	if (!bHumanStandingHeaderFallback6AO1 && HeaderJumpKickMontage == nullptr)
 	{
 		OutText = TEXT("CABEZAZO: FALTA HEADER JUMP KICK MONTAGE");
 		OutColor = FLinearColor(1.0f, 0.20f, 0.15f, 1.0f);
 		return true;
 	}
 
-	if (JumpHeaderKickContactTrackCurveTable == nullptr)
+	if (!bHumanStandingHeaderFallback6AO1 && JumpHeaderKickContactTrackCurveTable == nullptr)
 	{
 		OutText = TEXT("CABEZAZO: FALTA CURVE TABLE DE SALTO");
 		OutColor = FLinearColor(1.0f, 0.20f, 0.15f, 1.0f);
@@ -746,7 +749,7 @@ bool AThirdPersonCppCharacter::GetHumanJumpHeaderHUDStatus(
 		break;
 
 	case ESoccerAerialActionPhase::WaitingToStart:
-		OutText = TEXT("CABEZAZO: ESPERANDO SALTO");
+		OutText = bHumanStandingHeaderFallback6AO1 ? TEXT("CABEZAZO: ESPERANDO CONTACTO") : TEXT("CABEZAZO: ESPERANDO SALTO");
 		OutColor = FLinearColor(1.0f, 0.88f, 0.25f, 1.0f);
 		break;
 
@@ -781,6 +784,7 @@ bool AThirdPersonCppCharacter::GetHumanJumpHeaderHUDStatus(
 void AThirdPersonCppCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	bFreeChargedShotFastRun6AO3 = false;
 	UpdateDribbleComparison6F(DeltaTime);
 
 	// Restarts and goalkeeper hand possession are authoritative. Clear any
@@ -808,6 +812,7 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 	 * Tick. Observe the result before processing human locomotion so a lost
 	 * jump-header solution cannot leave a stale target or charge armed.
 	 */
+	LogHumanAerialPhase6AO1();
 	UpdateHumanJumpHeaderRequestLifecycle(DeltaTime);
 
 	if (IsTackleActive() || IsTackleFallReactionActive())
@@ -1597,6 +1602,11 @@ void AThirdPersonCppCharacter::UpdateEnergyAdjustedMovementSpeed()
 		NewMaxWalkSpeed = GetEnergyAdjustedFastRunSpeed();
 	}
 
+	if (SoccerControlState == ESoccerPlayerControlState::ChasingBall &&
+		PendingKickMode == ESoccerPendingKickMode::KickAndRelease && bFreeChargedShotFastRun6AO3)
+	{
+		NewMaxWalkSpeed = GetEnergyAdjustedFastRunSpeed();
+	}
 	GetCharacterMovement()->MaxWalkSpeed = NewMaxWalkSpeed;
 }
 
@@ -1614,7 +1624,7 @@ void AThirdPersonCppCharacter::UpdatePlayerEnergy(float DeltaTime)
 
 	if (bIsMoving)
 	{
-		if (IsSelectedMovementSpeed(FastRunSpeed))
+		if (IsSelectedMovementSpeed(FastRunSpeed) || bFreeChargedShotFastRun6AO3)
 		{
 			EnergyChangePerSecond = -FastRunEnergyDrainPerSecond;
 		}
@@ -1657,6 +1667,16 @@ void AThirdPersonCppCharacter::UpdatePlayerEnergy(float DeltaTime)
 void AThirdPersonCppCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	if (bHumanAerialCalibrationLog6AO1)
+	{
+		FName HeadBone, ChestLowerBone, ChestUpperBone;
+		FString BoneFailure;
+		const bool bBonesOK = ResolveAerialContactBoneNames(HeadBone, ChestLowerBone, ChestUpperBone, &BoneFailure);
+		UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] ASSETS actor=%s chest=%s jump=%s block=%s tracks=%d/%d/%d animInstance=%d bones=%d reason=%s"),
+			*GetName(), *GetNameSafe(HeaderChestMontage), *GetNameSafe(HeaderJumpKickMontage), *GetNameSafe(HeaderJumpBlockMontage),
+			StandingAerialControlContactTrackCurveTable != nullptr, JumpHeaderKickContactTrackCurveTable != nullptr,
+			JumpHeaderBlockContactTrackCurveTable != nullptr, GetMesh() && GetMesh()->GetAnimInstance(), bBonesOK, *BoneFailure);
+	}
 
 	ApplyPlayerProfilePhysicalTuning();
 
@@ -1683,6 +1703,13 @@ bool AThirdPersonCppCharacter::ResolveAerialActiveHeaderTarget(
     FVector& OutTargetLocation
 ) const
 {
+    // A montage can begin on press. Aim must remain live until release/contact.
+    if (bHumanJumpHeaderRequestActive && bIsChargingKickRelease &&
+        GetMouseFieldLocation(OutTargetLocation))
+    {
+        return true;
+    }
+
     if (
         PendingKickMode != ESoccerPendingKickMode::None &&
         !PendingKickTarget.IsNearlyZero()
@@ -1701,6 +1728,13 @@ bool AThirdPersonCppCharacter::ResolveAerialStandingHeaderRedirectTarget(
     FVector& OutTargetLocation
 ) const
 {
+    // A montage can begin on press. Aim must remain live until release/contact.
+    if (bHumanJumpHeaderRequestActive && bIsChargingKickRelease &&
+        GetMouseFieldLocation(OutTargetLocation))
+    {
+        return true;
+    }
+
     if (
         PendingKickMode != ESoccerPendingKickMode::None &&
         !PendingKickTarget.IsNearlyZero()
@@ -1761,11 +1795,115 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
 )
 {
     Super::OnAerialBallContactResolved(ContactResult);
+    bHumanAerialContactSeen6AO1 = ContactResult.bContactResolved;
+    if (bHumanAerialCalibrationLog6AO1)
+        UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] CONTACT action=%d surface=%d resolved=%d accepted=%d time=%.3f quality=%.3f velocity=%s"),
+            int32(ContactResult.ActionType), int32(ContactResult.ContactSurface), ContactResult.bContactResolved,
+            ContactResult.bTouchAcceptedByRules, ContactResult.MontagePosition, ContactResult.ContactQuality, *ContactResult.OutgoingBallVelocity.ToCompactString());
+    bInitialClickControlledReceptionPending = false;
+    bHumanStandingHeaderFallback6AO1 = false;
 
     const ESoccerPendingKickMode CompletedKickMode =
         PendingKickMode;
     const FVector CompletedKickTarget =
         PendingKickTarget;
+    if (bHumanAerialCalibrationLog6AO1 && ContactResult.bContactResolved &&
+        ContactResult.bTouchAcceptedByRules && CompletedKickMode == ESoccerPendingKickMode::KickAndRelease &&
+        (ContactResult.ActionType == ESoccerAerialActionType::JumpHeaderKick ||
+         ContactResult.ContactSurface == ESoccerAerialContactSurface::Head))
+    {
+        FVector Aim = CompletedKickTarget;
+        if (ContactResult.ActionType == ESoccerAerialActionType::JumpHeaderKick)
+            ResolveAerialActiveHeaderTarget(Aim);
+        else
+            ResolveAerialStandingHeaderRedirectTarget(Aim);
+        const FVector Desired = (Aim - ContactResult.ContactLocation).GetSafeNormal2D();
+        const FVector Out = ContactResult.OutgoingBallVelocity.GetSafeNormal2D();
+        const FVector Facing = GetActorForwardVector().GetSafeNormal2D();
+        const float AimAngle = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(Facing, Desired), -1.f, 1.f)));
+        const float AimError = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(Desired, Out), -1.f, 1.f)));
+        UE_LOG(LogTemp, Display, TEXT("[HumanHeader6AO3] AIM target=%s facing=%s outgoing=%s aimBodyDeg=%.1f errorDeg=%.1f quality=%.3f pressure=%.3f requestedHeaderSpeed=%.1f actualXY=%.1f"),
+            *Aim.ToCompactString(), *Facing.ToCompactString(), *Out.ToCompactString(), AimAngle, AimError,
+            ContactResult.ContactQuality, ContactResult.OpponentPressure, ResolveAerialActiveHeaderSpeedOverride(), ContactResult.OutgoingBallVelocity.Size2D());
+        // Forecast the first pitch exit after the accepted physical contact.
+        // In matches the opposing goal follows the current half/team; the
+        // standalone pass exercise always attacks the positive pitch axis.
+        if (IsValid(ControlledBall) && GetWorld())
+        {
+            const ASoccerField* Field6AO4 = nullptr;
+            for (TActorIterator<ASoccerField> It(GetWorld()); It; ++It)
+            {
+                Field6AO4 = *It;
+                break;
+            }
+            if (IsValid(Field6AO4))
+            {
+                float GoalSign6AO4 = 1.0f;
+                if (IsValid(MatchManager))
+                {
+                    const ESoccerTeam OtherTeam6AO4 = GetTeam() == ESoccerTeam::PlayerTeam
+                        ? ESoccerTeam::OpponentTeam : ESoccerTeam::PlayerTeam;
+                    GoalSign6AO4 = Field6AO4->WorldToPitchLocal(
+                        MatchManager->GetOwnGoalCenterLocation(OtherTeam6AO4)).X >= 0.0f ? 1.0f : -1.0f;
+                }
+                TArray<FSoccerBallTrajectorySample> Flight6AO4;
+                if (ControlledBall->BuildPredictedTrajectory(6.0f, 0.025f, Flight6AO4) && Flight6AO4.Num() > 1)
+                {
+                    const float Radius6AO4 = ControlledBall->GetBallRadiusCm();
+                    const float Plane6AO4 = SoccerFieldDimensions::HalfPitchLengthCm + Radius6AO4;
+                    const float SidePlane6AO4 = SoccerFieldDimensions::HalfPitchWidthCm + Radius6AO4;
+                    float MaxProgress6AO4 = -TNumericLimits<float>::Max();
+                    bool bExit6AO4 = false;
+                    for (int32 I6AO4 = 1; I6AO4 < Flight6AO4.Num(); ++I6AO4)
+                    {
+                        const FVector A6AO4 = Field6AO4->WorldToPitchLocal(Flight6AO4[I6AO4 - 1].Location);
+                        const FVector B6AO4 = Field6AO4->WorldToPitchLocal(Flight6AO4[I6AO4].Location);
+                        MaxProgress6AO4 = FMath::Max(MaxProgress6AO4, GoalSign6AO4 * B6AO4.X);
+                        // First boundary crossing, interpolated in pitch coordinates.
+                        float ExitAlpha6AO4 = 2.0f;
+                        int32 ExitKind6AO4 = 0; // 1 opposing goal line, 2 own goal line, 3 sideline
+                        for (int32 Boundary6AO4 = 0; Boundary6AO4 < 4; ++Boundary6AO4)
+                        {
+                            const bool bLong6AO4 = Boundary6AO4 < 2;
+                            const float Sign6AO4 = Boundary6AO4 % 2 == 0 ? 1.0f : -1.0f;
+                            const float Limit6AO4 = bLong6AO4 ? Plane6AO4 : SidePlane6AO4;
+                            const float AAxis6AO4 = Sign6AO4 * (bLong6AO4 ? A6AO4.X : A6AO4.Y);
+                            const float BAxis6AO4 = Sign6AO4 * (bLong6AO4 ? B6AO4.X : B6AO4.Y);
+                            if (AAxis6AO4 < Limit6AO4 && BAxis6AO4 >= Limit6AO4)
+                            {
+                                const float Alpha6AO4 = (Limit6AO4 - AAxis6AO4) / (BAxis6AO4 - AAxis6AO4);
+                                if (Alpha6AO4 < ExitAlpha6AO4)
+                                {
+                                    ExitAlpha6AO4 = Alpha6AO4;
+                                    ExitKind6AO4 = !bLong6AO4 ? 3 : Sign6AO4 == GoalSign6AO4 ? 1 : 2;
+                                }
+                            }
+                        }
+                        if (ExitKind6AO4 == 0) continue;
+                        const FVector Cross6AO4 = FMath::Lerp(A6AO4, B6AO4, ExitAlpha6AO4);
+                        const bool bWide6AO4 = FMath::Abs(Cross6AO4.Y) > SoccerFieldDimensions::GoalHalfWidthCm - Radius6AO4;
+                        const bool bHigh6AO4 = Cross6AO4.Z > SoccerFieldDimensions::GoalHeightCm - Radius6AO4;
+                        const TCHAR* Result6AO4 = ExitKind6AO4 == 3 ? TEXT("SIDELINE") : ExitKind6AO4 == 2 ? TEXT("OWN_END") :
+                            bWide6AO4 && bHigh6AO4 ? TEXT("WIDE_AND_HIGH") : bWide6AO4 ? TEXT("WIDE") : bHigh6AO4 ? TEXT("HIGH") :
+                            Cross6AO4.Z < -Radius6AO4 ? TEXT("BELOW_FIELD") : TEXT("ON_TARGET");
+                        UE_LOG(LogTemp, Display, TEXT("[HumanHeader6AO4] GOAL FORECAST result=%s local=%s t=%.3f goalSign=%.0f"),
+                            Result6AO4, *Cross6AO4.ToCompactString(), FMath::Lerp(Flight6AO4[I6AO4 - 1].TimeFromNow, Flight6AO4[I6AO4].TimeFromNow, ExitAlpha6AO4), GoalSign6AO4);
+                        bExit6AO4 = true;
+                        break;
+                    }
+                    if (!bExit6AO4)
+                    {
+                        UE_LOG(LogTemp, Display, TEXT("[HumanHeader6AO4] GOAL FORECAST result=NO_EXIT maxProgress=%.1f remaining=%.1f lastTime=%.3f"),
+                            MaxProgress6AO4, Plane6AO4 - MaxProgress6AO4, Flight6AO4.Last().TimeFromNow);
+                    }
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Display, TEXT("[HumanHeader6AO4] GOAL FORECAST unavailable"));
+                }
+            }
+        }
+    }
 
     bHumanJumpHeaderRequestActive = false;
     bHumanJumpHeaderMontageStarted = false;
@@ -1807,7 +1945,9 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
     // A charged header is a true shot only if the animation touched the ball.
     if (ContactResult.bContactResolved &&
         CompletedKickMode == ESoccerPendingKickMode::KickAndRelease &&
-        ContactResult.ActionType == ESoccerAerialActionType::JumpHeaderKick)
+        (ContactResult.ActionType == ESoccerAerialActionType::JumpHeaderKick ||
+         (ContactResult.ActionType == ESoccerAerialActionType::StandingControl &&
+          ContactResult.ContactSurface == ESoccerAerialContactSurface::Head)))
     {
         if (ASoccerTrainingMovementGameMode6B* GroundPassTraining = GetWorld()
             ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr)
@@ -1891,6 +2031,7 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
 
 void AThirdPersonCppCharacter::EnterManualControl()
 {
+	bFreeChargedShotFastRun6AO3 = false;
 	if (
 		SoccerControlState == ESoccerPlayerControlState::PossessingBall ||
 		SoccerControlState == ESoccerPlayerControlState::DribbleTurning ||
@@ -1927,6 +2068,7 @@ void AThirdPersonCppCharacter::EnterManualControl()
 
 void AThirdPersonCppCharacter::EnterChasingBall()
 {
+	bFreeChargedShotFastRun6AO3 = false;
 	if (
 		SoccerControlState == ESoccerPlayerControlState::PossessingBall ||
 		SoccerControlState == ESoccerPlayerControlState::DribbleTurning ||
@@ -1997,7 +2139,8 @@ void AThirdPersonCppCharacter::StartBallControl()
 
 	ClearHumanJumpHeaderRequest(true, true);
 	PendingKickMode = ESoccerPendingKickMode::None;
-	bInitialClickControlledReceptionPending = false;
+	bInitialClickControlledReceptionPending = true;
+	HumanAerialNextRetry6AO1 = -1.f;
 	EnterChasingBall();
 
 	/*
@@ -2050,6 +2193,17 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 		return;
 	}
 
+	// A requested pass can be armed while the teammate is still preparing it.
+	// Never turn that anticipation into a ground kick against the teammate.
+	if (HasPendingHumanAerialPass6AO1())
+	{
+		if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+			Movement->StopMovementImmediately();
+		return;
+	}
+	RetryHumanAerialReception6AO1();
+	if (IsAerialActionQueuedOrPlaying()) return;
+
 	FVector ToBall = ControlledBall->GetActorLocation() - GetActorLocation();
 	ToBall.Z = 0.0f;
 
@@ -2073,6 +2227,19 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 
 	const bool bHasPendingKick =
 		PendingKickMode != ESoccerPendingKickMode::None;
+
+	// Free charged shots approach a strike point, not the center of the ball.
+	// Keep aerial plans, set pieces, steals and ordinary autopasses unchanged.
+	if (PendingKickMode == ESoccerPendingKickMode::KickAndRelease &&
+		bHasPendingKickHorizontalSpeedOverride && !bIsChargingKickRelease &&
+		!bIsHumanStealAttemptActive && IsBallAtPlayablePossessionHeight(ControlledBall) &&
+		!HasPendingHumanAerialPass6AO1() &&
+		!(IsValid(MatchManager) && MatchManager->CanHumanFootRestartTakerExecuteNow(this)))
+	{
+		if (bHumanJumpHeaderRequestActive) ClearHumanJumpHeaderRequest(false, false);
+		MoveTowardFreeChargedShot6AO2(PursuitLocation, bCanPossessBall);
+		return;
+	}
 
 	// A strong change of direction requested while chasing may need a physical
 	// setup behind the live ball before its montage can start. Keep that setup
@@ -2275,8 +2442,9 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 				);
 			}
 		}
-		else if (IsBallAtPlayablePossessionHeight(ControlledBall))
+		else if (IsBallAtPlayablePossessionHeight(ControlledBall) && !(bHumanJumpHeaderRequestActive && bIsChargingKickRelease))
 		{
+			if (bHumanJumpHeaderRequestActive) ClearHumanJumpHeaderRequest(false, false);
 			ExecutePendingKick();
 		}
 
@@ -2296,6 +2464,93 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 
 		SetActorRotation(TargetRotation);
 	}
+}
+
+bool AThirdPersonCppCharacter::ShouldDeferPassiveBallBodyContact6AO2(const ASoccerBall* Ball) const
+{
+    if (!IsValid(Ball) || Ball != ControlledBall || !HasActiveHumanBallClaim() ||
+        IsTackleActive() || IsTackleFallReactionActive() || IsAerialActionQueuedOrPlaying() ||
+        !IsBallWithinHumanFootPhysicalContact(Ball)) return false;
+
+    const bool bApproach = SoccerControlState == ESoccerPlayerControlState::ChasingBall &&
+        PendingKickMode == ESoccerPendingKickMode::KickAndRelease && bHasPendingKickHorizontalSpeedOverride &&
+        !bIsChargingKickRelease && !bIsHumanStealAttemptActive;
+    const bool bStrike = SoccerControlState == ESoccerPlayerControlState::Kicking &&
+        ActiveKickMode == ESoccerPendingKickMode::KickAndRelease && bActiveKickUsesChargedTrajectory &&
+        !bActiveKickHasImpactedBall && !bActiveKickWasHumanRestartExecution;
+    if (!bApproach && !bStrike) return false;
+
+    // Only the low ball in the actual strike zone belongs to the intentional
+    // foot-contact logic. Other players and all other body contacts stay live.
+    const FVector Target = bStrike ? ActiveKickTarget : PendingKickTarget;
+    return IsChargedKickBallPositionAligned(Ball->GetActorLocation(), Target);
+}
+
+void AThirdPersonCppCharacter::MoveTowardFreeChargedShot6AO2(const FVector& PursuitLocation, bool bCanKick)
+{
+    UCharacterMovementComponent* Movement = GetCharacterMovement();
+    if (!Movement || !IsValid(ControlledBall)) return;
+    // Keep the full energy-adjusted FastRun during this assisted approach.
+    // The selected manual speed is not overwritten.
+    bFreeChargedShotFastRun6AO3 = true;
+    Movement->MaxWalkSpeed = GetEnergyAdjustedFastRunSpeed();
+    const FVector BallLocation = ControlledBall->GetActorLocation();
+    FVector KickDirection = (PendingKickTarget - BallLocation).GetSafeNormal2D();
+    if (KickDirection.IsNearlyZero()) KickDirection = GetActorForwardVector().GetSafeNormal2D();
+    if (KickDirection.IsNearlyZero()) return;
+    const float Distance = FVector::Dist2D(GetActorLocation(), BallLocation);
+    if (bHumanAerialCalibrationLog6AO1 && GetWorld() && GetWorld()->GetTimeSeconds() >= HumanShotNextSpeedLog6AO4)
+    {
+        HumanShotNextSpeedLog6AO4 = GetWorld()->GetTimeSeconds() + 0.25f;
+        UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO4] APPROACH distance=%.1f actual=%.1f max=%.1f fastRun=%.1f"),
+            Distance, GetVelocity().Size2D(), Movement->MaxWalkSpeed, GetEnergyAdjustedFastRunSpeed());
+    }
+    const float Reach = FMath::Max(1.0f, FMath::Min(HumanFootContactMaxDistance, ChargedKickAlignedMaxDistance));
+    const float StandOff = FMath::Min(Reach * 0.85f, FMath::Max(1.0f, HumanDribbleRepositionBehindDistance));
+    const float Forward = FVector::DotProduct(BallLocation - GetActorLocation(), KickDirection);
+    if (bCanKick && Forward >= StandOff * 0.55f &&
+        CanHumanChargedKickContactBallAtImpact(ControlledBall, PendingKickTarget, 0.12f))
+    {
+        Movement->StopMovementImmediately();
+        SetActorRotation(KickDirection.Rotation());
+        ExecutePendingKick();
+        if (SoccerControlState != ESoccerPlayerControlState::ChasingBall) return;
+        // A longer montage may still have rejected the predicted contact.
+        // Keep the request and continue to its preparation point.
+    }
+
+    FVector SetupBall = PursuitLocation;
+    if (Distance < 350.0f)
+    {
+        // Short forecast while closing the final metres; no ball relocation.
+        SetupBall = BallLocation + ControlledBall->GetBallPhysicsVelocity() * 0.18f;
+    }
+    FVector Setup = SetupBall - KickDirection * StandOff;
+    if (Distance < 220.0f && Forward < StandOff * 0.45f)
+    {
+        // Do not run through the ball when approaching from the wrong side.
+        const FVector Right = FVector::CrossProduct(FVector::UpVector, KickDirection).GetSafeNormal();
+        const float Lateral = FVector::DotProduct(GetActorLocation() - BallLocation, Right);
+        const float Side = Lateral >= 0.0f ? 1.0f : -1.0f;
+        const float Clearance = StandOff + ControlledBall->GetBallRadiusCm() + 15.0f;
+        Setup += Right * Side * Clearance;
+    }
+    FVector ToSetup = Setup - GetActorLocation();
+    ToSetup.Z = 0.0f;
+    const float Remaining = ToSetup.Size();
+    const FVector Direction = ToSetup.GetSafeNormal();
+    // Only stop at the final preparation point (or when the next movement
+    // step would overshoot it). Do not introduce a jog/walk approach phase.
+    const float StepTime = GetWorld() ? FMath::Clamp(GetWorld()->GetDeltaSeconds(), 0.f, 0.05f) : 0.f;
+    const float ClosingSpeed = FMath::Max(0.f, FVector::DotProduct(GetVelocity(), Direction));
+    if (Remaining <= 6.f || (Remaining <= 6.f + ClosingSpeed * StepTime && Distance < 220.f))
+    {
+        Movement->StopMovementImmediately();
+        SetActorRotation(KickDirection.Rotation());
+        return;
+    }
+    AddMovementInput(Direction, 1.0f);
+    SetActorRotation(Direction.Rotation());
 }
 
 void AThirdPersonCppCharacter::MoveTowardAerialPreparation()
@@ -2345,29 +2600,139 @@ void AThirdPersonCppCharacter::MoveTowardAerialPreparation()
 	SetActorRotation(TargetRotation);
 }
 
-bool AThirdPersonCppCharacter::TryStartHumanAerialApproach(
-	ESoccerAerialActionIntent Intent
-)
+bool AThirdPersonCppCharacter::HasPendingHumanAerialPass6AO1() const
 {
-	if (!IsValid(ControlledBall) || IsAerialActionLocked())
-	{
-		return false;
-	}
+    const ASoccerTrainingMovementGameMode6B* Training = GetWorld()
+        ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
+    if (Training) return Training->HasPendingAerialPass6AO1();
+    if (!IsValid(MatchManager) || MatchManager->GetActiveHumanPassRequestType() != ESoccerHumanPassRequestType::AerialHeader)
+        return false;
+    const ASoccerCharacterBase* Possessor = MatchManager->GetPossessingCharacter();
+    return IsValid(Possessor) && Possessor != this && Possessor->GetTeam() == GetTeam();
+}
 
-	if (IsAerialActionApproaching() || IsAerialActionWaitingToStart())
-	{
-		if (Intent == ESoccerAerialActionIntent::Automatic)
-		{
-			return true;
-		}
+bool AThirdPersonCppCharacter::HasHumanAirborneBall6AO1() const
+{
+    if (!IsValid(ControlledBall)) return false;
+    const UCapsuleComponent* Capsule = GetCapsuleComponent();
+    const float GroundZ = GetActorLocation().Z - (Capsule ? Capsule->GetScaledCapsuleHalfHeight() : 96.f);
+    const FVector BallVelocity = ControlledBall->GetBallPhysicsVelocity();
+    return ControlledBall->GetActorLocation().Z - GroundZ >= FMath::Max(0.f, HumanJumpHeaderArmMinimumBallHeight) ||
+        FMath::Abs(BallVelocity.Z) >= FMath::Max(0.f, HumanJumpHeaderArmMinimumVerticalSpeed);
+}
 
-		return TryChangeQueuedAerialActionIntent(Intent);
-	}
+void AThirdPersonCppCharacter::RetryHumanAerialReception6AO1()
+{
+    // Only an existing user request may initiate an aerial action. Ordinary
+    // autopass recovery and ground movement must not trigger automatic headers.
+    if (bHumanJumpHeaderRequestActive || bIsChargingKickRelease || bIsAutoPassFollowActive ||
+        bIsHumanStealAttemptActive || IsAerialActionQueuedOrPlaying() || !GetWorld() ||
+        !HasHumanAirborneBall6AO1() || !IsHumanBallActionAllowedNow()) return;
+    const bool bControlRequested = bInitialClickControlledReceptionPending && PendingKickMode == ESoccerPendingKickMode::None;
+    const bool bRedirectRequested = PendingKickMode == ESoccerPendingKickMode::KickAndFollow;
+    if (!bControlRequested && !bRedirectRequested) return;
+    const float Now = GetWorld()->GetTimeSeconds();
+    if (Now < HumanAerialNextRetry6AO1) return;
+    HumanAerialNextRetry6AO1 = Now + FMath::Max(0.02f, HumanAerialReceptionRetryInterval6AO1);
+    if (bControlRequested)
+    {
+        if (!TryStartHumanAerialApproach(ESoccerAerialActionIntent::Control))
+            TryStartHumanAerialApproach(ESoccerAerialActionIntent::Automatic);
+    }
+    else if (!TryStartHumanAerialApproach(ESoccerAerialActionIntent::StandingHeaderRedirect))
+        TryStartHumanAerialApproach(ESoccerAerialActionIntent::ActiveHeader);
+}
 
-	return TryStartBestAerialActionApproach(
-		ControlledBall,
-		Intent
-	);
+void AThirdPersonCppCharacter::LogHumanAerialPhase6AO1()
+{
+    if (!bHumanAerialCalibrationLog6AO1 || !GetWorld()) return;
+    const ESoccerAerialActionPhase Phase = GetAerialActionPhase();
+    if (Phase != HumanAerialLastPhase6AO1)
+    {
+        if (Phase == ESoccerAerialActionPhase::None)
+        {
+            UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] END previousPhase=%d contact=%d"), int32(HumanAerialLastPhase6AO1), bHumanAerialContactSeen6AO1);
+        }
+        else
+        {
+            const FSoccerAerialInterceptionPlan& Plan = GetQueuedAerialPlan();
+            UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] PHASE from=%d to=%d action=%d surface=%d prepDist=%.1f arrival=%.3f startDelay=%.3f margin=%.3f"),
+                int32(HumanAerialLastPhase6AO1), int32(Phase), int32(Plan.ActionType), int32(Plan.PlannedContactSurface),
+                FVector::Dist2D(GetActorLocation(), Plan.PreparationLocation), Plan.BallArrivalTime, Plan.MontageStartDelay, Plan.PreparationArrivalMargin);
+        }
+        HumanAerialLastPhase6AO1 = Phase;
+    }
+    if (Phase != ESoccerAerialActionPhase::Playing || bHumanAerialContactSeen6AO1) return;
+    FSoccerAerialDebugSnapshot Snapshot;
+    const float Now = GetWorld()->GetTimeSeconds();
+    if (Now >= HumanAerialNextContactLog6AO1 && GetAerialDebugSnapshot(Snapshot))
+    {
+        HumanAerialNextContactLog6AO1 = Now + 0.08f;
+        UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] MONTAGE action=%d pos=%.3f window=%d headDist=%.1f chestDist=%.1f ballRadius=%.1f headRadius=%.1f chestRadius=%.1f tolerance=%.1f playDuration=%.3f"),
+            int32(Snapshot.ActionType), Snapshot.MontagePosition, Snapshot.bContactWindowActive,
+            Snapshot.BallToHeadDistance, Snapshot.BallToChestDistance, Snapshot.BallRadius,
+            Snapshot.HeadContactRadius, Snapshot.ChestContactRadius, Snapshot.ExtraTolerance, Snapshot.MontagePlayReturnedDuration);
+    }
+}
+
+bool AThirdPersonCppCharacter::TryStartHumanAerialApproach(ESoccerAerialActionIntent Intent)
+{
+    if (!IsValid(ControlledBall) || IsAerialActionLocked() || IsTackleActive() || IsTackleFallReactionActive()) return false;
+    if (HasPendingHumanAerialPass6AO1()) return false;
+    if (IsAerialActionApproaching() || IsAerialActionWaitingToStart())
+    {
+        if (Intent == ESoccerAerialActionIntent::Automatic) return true;
+        return TryChangeQueuedAerialActionIntent(Intent);
+    }
+    // Expose planning failure separately from queue rejection; use exactly the
+    // shared planner and queue used by the original match implementation.
+    FSoccerAerialInterceptionPlan Plan;
+    const bool bPredictable = ControlledBall->IsAvailableForTrajectoryPrediction();
+    const bool bFound = bPredictable && FindBestAerialInterceptionPlan(ControlledBall, Intent, Plan);
+    const bool bQueued = bFound && TryStartAerialActionApproachForPlan(Plan, Intent);
+    if (bQueued)
+    {
+        bHumanAerialContactSeen6AO1 = false;
+        HumanAerialNextContactLog6AO1 = -1.f;
+        if (bHumanAerialCalibrationLog6AO1 && Plan.ActionType == ESoccerAerialActionType::JumpHeaderKick)
+        {
+            const FVector IncomingFacing6AO4 = -Plan.PredictedIncomingBallVelocity.GetSafeNormal2D();
+            const float Turn6AO4 = FMath::FindDeltaAngleDegrees(IncomingFacing6AO4.Rotation().Yaw, Plan.FacingDirection.Rotation().Yaw);
+            UE_LOG(LogTemp, Display, TEXT("[HumanHeader6AO4] PLAN FACING turnFromIncoming=%.1f facing=%s prep=%s margin=%.3f"),
+                Turn6AO4, *Plan.FacingDirection.ToCompactString(), *Plan.PreparationLocation.ToCompactString(), Plan.PreparationArrivalMargin);
+        }
+    }
+    if (bHumanAerialCalibrationLog6AO1 && GetWorld() && (bQueued || GetWorld()->GetTimeSeconds() >= HumanAerialNextLog6AO1))
+    {
+        HumanAerialNextLog6AO1 = GetWorld()->GetTimeSeconds() + 0.30f;
+        const UCapsuleComponent* Capsule = GetCapsuleComponent();
+        const float GroundZ = GetActorLocation().Z - (Capsule ? Capsule->GetScaledCapsuleHalfHeight() : 96.f);
+        UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+        UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] %s intent=%d predictable=%d height=%.1f ballV=%s playerV=%.1f range=%.1f action=%d surface=%d arrival=%.3f prep=%.3f margin=%.3f montage=%s anim=%d busy=%d"),
+            bQueued ? TEXT("PLAN QUEUED") : bFound ? TEXT("QUEUE REJECTED") : TEXT("NO PLAN"), int32(Intent), bPredictable,
+            ControlledBall->GetActorLocation().Z - GroundZ, *ControlledBall->GetBallPhysicsVelocity().ToCompactString(), GetVelocity().Size2D(),
+            FVector::Dist2D(GetActorLocation(), ControlledBall->GetActorLocation()), int32(Plan.ActionType), int32(Plan.PlannedContactSurface),
+            Plan.BallArrivalTime, Plan.PlayerArrivalTime, Plan.PreparationArrivalMargin, *GetNameSafe(GetAerialMontage(Plan.ActionType)), Anim != nullptr, Anim && Anim->IsAnyMontagePlaying());
+        if (!bFound && bPredictable)
+        {
+            TArray<FSoccerBallTrajectorySample> Samples;
+            if (ControlledBall->BuildPredictedTrajectory(AerialPredictionHorizon, AerialPredictionSampleInterval, Samples) && Samples.Num() > 0)
+            {
+                float MaxHeight = 0.f;
+                float LastAboveBody = -1.f;
+                for (const FSoccerBallTrajectorySample& Sample : Samples)
+                {
+                    const float Height = Sample.Location.Z - GroundZ;
+                    MaxHeight = FMath::Max(MaxHeight, Height);
+                    if (Height >= HumanJumpHeaderArmMinimumBallHeight) LastAboveBody = Sample.TimeFromNow;
+                }
+                UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] TRAJECTORY samples=%d maxHeight=%.1f lastAboveBody=%.3f horizon=%.3f"),
+                    Samples.Num(), MaxHeight, LastAboveBody, Samples.Last().TimeFromNow);
+            }
+            else UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] TRAJECTORY unavailable"));
+        }
+    }
+    return bQueued;
 }
 
 bool AThirdPersonCppCharacter::ShouldArmHumanJumpHeaderFromCurrentBall() const
@@ -2397,24 +2762,7 @@ bool AThirdPersonCppCharacter::ShouldArmHumanJumpHeaderFromCurrentBall() const
 		return true;
 	}
 
-	float CharacterGroundZ = GetActorLocation().Z - 96.0f;
-
-	if (const UCapsuleComponent* Capsule = GetCapsuleComponent())
-	{
-		CharacterGroundZ =
-			GetActorLocation().Z - Capsule->GetScaledCapsuleHalfHeight();
-	}
-
-	const float BallHeightAboveGround =
-		ControlledBall->GetActorLocation().Z - CharacterGroundZ;
-	const float BallVerticalSpeed =
-		FMath::Abs(ControlledBall->GetVelocity().Z);
-
-	return
-		BallHeightAboveGround >=
-			FMath::Max(0.0f, HumanJumpHeaderArmMinimumBallHeight) ||
-		BallVerticalSpeed >=
-			FMath::Max(0.0f, HumanJumpHeaderArmMinimumVerticalSpeed);
+	return HasPendingHumanAerialPass6AO1() || HasHumanAirborneBall6AO1();
 }
 
 bool AThirdPersonCppCharacter::ArmHumanJumpHeaderRequestFromCurrentInput()
@@ -2453,7 +2801,10 @@ bool AThirdPersonCppCharacter::ArmHumanJumpHeaderRequestFromCurrentInput()
 	PendingKickHorizontalSpeedOverride = InitialHorizontalSpeed;
 
 	bHumanJumpHeaderRequestActive = true;
+	bHumanStandingHeaderFallback6AO1 = false;
 	bHumanJumpHeaderMontageStarted = false;
+	if (bHumanAerialCalibrationLog6AO1)
+		UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] REQUEST RIGHT pendingPass=%d"), HasPendingHumanAerialPass6AO1());
 	HumanJumpHeaderRequestStartWorldTime = World->GetTimeSeconds();
 	HumanJumpHeaderPlanSearchAccumulator =
 		FMath::Max(0.01f, HumanJumpHeaderPlanSearchInterval);
@@ -2470,11 +2821,14 @@ bool AThirdPersonCppCharacter::ArmHumanJumpHeaderRequestFromCurrentInput()
 		EnterChasingBall();
 	}
 
-	/* Try immediately, then Tick keeps retrying if the trajectory is not ready. */
-	TryStartOrUpdateHumanJumpHeaderRequest(
-		PendingKickTarget,
-		PendingKickHorizontalSpeedOverride
-	);
+	/* Wait for the teammate's delivery, rather than plan from its dribble. */
+	if (!HasPendingHumanAerialPass6AO1())
+	{
+		TryStartOrUpdateHumanJumpHeaderRequest(
+			PendingKickTarget,
+			PendingKickHorizontalSpeedOverride
+		);
+	}
 
 	return true;
 }
@@ -2514,9 +2868,11 @@ bool AThirdPersonCppCharacter::TryStartOrUpdateHumanJumpHeaderRequest(
 	{
 		UWorld* World = GetWorld();
 		bHumanJumpHeaderRequestActive = true;
+		bHumanStandingHeaderFallback6AO1 = false;
 		bHumanJumpHeaderMontageStarted = false;
 		HumanJumpHeaderRequestStartWorldTime =
 			World != nullptr ? World->GetTimeSeconds() : 0.0f;
+		if (SoccerControlState == ESoccerPlayerControlState::Manual) EnterChasingBall();
 	}
 
 	/* Once Playing, only target/power updates are allowed. */
@@ -2526,6 +2882,10 @@ bool AThirdPersonCppCharacter::TryStartOrUpdateHumanJumpHeaderRequest(
 			GetActiveAerialActionType() ==
 				ESoccerAerialActionType::JumpHeaderKick;
 	}
+
+	if ((IsAerialActionApproaching() || IsAerialActionWaitingToStart()) &&
+		GetActiveAerialActionType() == ESoccerAerialActionType::JumpHeaderKick)
+		return true; // live aim/charge changed, not the physical incoming plan
 
 	bool bQueued = false;
 
@@ -2542,13 +2902,18 @@ bool AThirdPersonCppCharacter::TryStartOrUpdateHumanJumpHeaderRequest(
 		);
 	}
 
-	if (
-		!bQueued ||
-		GetActiveAerialActionType() !=
-			ESoccerAerialActionType::JumpHeaderKick
-	)
+	if (!bQueued || GetActiveAerialActionType() != ESoccerAerialActionType::JumpHeaderKick)
 	{
-		return false;
+		// A low or already descending ball may permit a standing header but
+		// not the longer jump montage. Only on button release, keep the same
+		// requested target and use the existing passive standing redirect.
+		if (bIsChargingKickRelease || !HasHumanAirborneBall6AO1() ||
+			!TryStartHumanAerialApproach(ESoccerAerialActionIntent::StandingHeaderRedirect) ||
+			GetActiveAerialActionType() != ESoccerAerialActionType::StandingControl)
+			return false;
+		bHumanStandingHeaderFallback6AO1 = true;
+		if (bHumanAerialCalibrationLog6AO1)
+			UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] STANDING HEADER FALLBACK"));
 	}
 
 	HideAutoPassTargetMarker();
@@ -2571,6 +2936,11 @@ void AThirdPersonCppCharacter::UpdateHumanJumpHeaderRequestLifecycle(
 		return;
 	}
 
+	if (IsTackleActive() || IsTackleFallReactionActive())
+	{
+		ClearHumanJumpHeaderRequest(true, true);
+		return;
+	}
 	const ESoccerAerialActionPhase Phase = GetAerialActionPhase();
 
 	if (Phase == ESoccerAerialActionPhase::Playing)
@@ -2584,10 +2954,10 @@ void AThirdPersonCppCharacter::UpdateHumanJumpHeaderRequestLifecycle(
 		Phase == ESoccerAerialActionPhase::WaitingToStart
 	)
 	{
-		/* An explicit request must remain a jumping active header. */
+		/* Preserve the selected jump or physically viable standing redirect. */
 		if (
-			GetActiveAerialActionType() !=
-				ESoccerAerialActionType::JumpHeaderKick
+			GetActiveAerialActionType() != ESoccerAerialActionType::JumpHeaderKick &&
+			!(bHumanStandingHeaderFallback6AO1 && GetActiveAerialActionType() == ESoccerAerialActionType::StandingControl)
 		)
 		{
 			CancelAerialAction();
@@ -2606,6 +2976,7 @@ void AThirdPersonCppCharacter::UpdateHumanJumpHeaderRequestLifecycle(
 	/* The montage existed and ended without OnAerialBallContactResolved. */
 	if (bHumanJumpHeaderMontageStarted)
 	{
+		if (bHumanAerialCalibrationLog6AO1) UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] MONTAGE ENDED WITHOUT CONTACT"));
 		ClearHumanJumpHeaderRequest(true, true);
 
 		if (
@@ -2631,6 +3002,14 @@ void AThirdPersonCppCharacter::UpdateHumanJumpHeaderRequestLifecycle(
 		return;
 	}
 
+	const bool bWaitingForPass6AO1 = HasPendingHumanAerialPass6AO1();
+	// Training can wait for the requested delivery without using up the flight search time.
+	// In matches, preserve the existing bounded request timeout.
+	if (bWaitingForPass6AO1 && !IsValid(MatchManager))
+	{
+		HumanJumpHeaderRequestStartWorldTime = World->GetTimeSeconds();
+		return;
+	}
 	const float Elapsed =
 		HumanJumpHeaderRequestStartWorldTime >= 0.0f
 		? World->GetTimeSeconds() - HumanJumpHeaderRequestStartWorldTime
@@ -2638,6 +3017,12 @@ void AThirdPersonCppCharacter::UpdateHumanJumpHeaderRequestLifecycle(
 
 	if (Elapsed > FMath::Max(0.1f, HumanJumpHeaderPlanSearchTimeout))
 	{
+		if (bHumanAerialCalibrationLog6AO1) UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] SEARCH TIMEOUT"));
+		if (!bIsChargingKickRelease && PendingKickMode == ESoccerPendingKickMode::KickAndRelease && !HasHumanAirborneBall6AO1())
+		{
+			ClearHumanJumpHeaderRequest(false, false);
+			return;
+		}
 		ClearHumanJumpHeaderRequest(true, true);
 
 		if (
@@ -2650,6 +3035,8 @@ void AThirdPersonCppCharacter::UpdateHumanJumpHeaderRequestLifecycle(
 
 		return;
 	}
+
+	if (bWaitingForPass6AO1) return;
 
 	HumanJumpHeaderPlanSearchAccumulator += DeltaTime;
 
@@ -2667,6 +3054,8 @@ void AThirdPersonCppCharacter::UpdateHumanJumpHeaderRequestLifecycle(
 
 	if (bIsChargingKickRelease)
 	{
+		FVector LiveAim;
+		if (GetMouseFieldLocation(LiveAim)) PendingKickTarget = LiveAim;
 		RequestedSpeed = FMath::Lerp(
 			KickChargeMinHorizontalSpeed,
 			KickChargeMaxHorizontalSpeed,
@@ -2687,6 +3076,7 @@ void AThirdPersonCppCharacter::ClearHumanJumpHeaderRequest(
 )
 {
 	bHumanJumpHeaderRequestActive = false;
+	bHumanStandingHeaderFallback6AO1 = false;
 	bHumanJumpHeaderMontageStarted = false;
 	HumanJumpHeaderRequestStartWorldTime = -1.0f;
 	HumanJumpHeaderPlanSearchAccumulator = 0.0f;
@@ -6387,7 +6777,7 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
     {
         if (Training->IsPassLesson6AO())
         {
-            if (!Training->CanCollectGroundPass6AN()) return;
+            if (!Training->CanCollectGroundPass6AN() && !Training->HasPendingAerialPass6AO1()) return;
             if (!HasHumanLogicalBallControl()) Training->RegisterGroundPassCollect6AN();
         }
     }
@@ -6511,6 +6901,8 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
 		ActivateHumanBallClaim();
 		EnterChasingBall();
 		bInitialClickControlledReceptionPending = true;
+		HumanAerialNextRetry6AO1 = -1.f;
+		if (bHumanAerialCalibrationLog6AO1) UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] REQUEST LEFT control pendingPass=%d"), HasPendingHumanAerialPass6AO1());
 
 		/* First click asks for a controlled reception: chest, then soft head. */
 		if (!TryStartHumanAerialApproach(
@@ -6632,7 +7024,9 @@ void AThirdPersonCppCharacter::StartChargedKickRelease()
 	 * head contact about 1.23 seconds after it begins. Arm and search on press,
 	 * while release remains responsible for final aim and power.
 	 */
-	ArmHumanJumpHeaderRequestFromCurrentInput();
+	const bool bArmedAerial6AO1 = ArmHumanJumpHeaderRequestFromCurrentInput();
+	if (bHumanAerialCalibrationLog6AO1 && !bArmedAerial6AO1 && (HasPendingHumanAerialPass6AO1() || HasHumanAirborneBall6AO1()))
+		UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] RIGHT NOT ARMED state=%d pendingPass=%d"), int32(SoccerControlState), HasPendingHumanAerialPass6AO1());
 }
 
 void AThirdPersonCppCharacter::FinishChargedKickRelease()
@@ -6694,7 +7088,8 @@ void AThirdPersonCppCharacter::FinishChargedKickRelease()
 
 		ArmChaseCancelIgnoreForCurrentMovementInput();
 
-		if (!IsAerialActionLocked())
+		if (!IsAerialActionLocked() &&
+			(!HasPendingHumanAerialPass6AO1()))
 		{
 			TryStartOrUpdateHumanJumpHeaderRequest(
 				PendingKickTarget,
@@ -6856,10 +7251,9 @@ void AThirdPersonCppCharacter::StoreKickTarget(ESoccerPendingKickMode KickMode)
 	}
 
 	/*
-	 * A charged right-button release is the explicit human jump-header input.
-	 * Try only ActiveHeader here. If no synchronized jump solution exists,
-	 * continue with the existing generic chase/ground-kick behavior; never
-	 * silently downgrade this request to a standing header.
+	 * A charged right-button release prefers a synchronized jump header.
+	 * If it is physically unavailable, the shared standing redirect can be
+	 * selected on release; ordinary ground-kick behavior remains the fallback.
 	 */
 	const bool bExplicitJumpHeaderRequest =
 		KickMode == ESoccerPendingKickMode::KickAndRelease &&
@@ -7327,17 +7721,24 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		)
 	)
 	{
+		if (SoccerControlState == ESoccerPlayerControlState::ChasingBall && !HasHumanLogicalBallControl())
+		{
+			// A free ball would leave the foot zone before the authored impact.
+			// Do not start an empty kick. Keep the released aim and power.
+			return;
+		}
 		LogHumanPossessionDebugEvent(
 			TEXT("KICK_RISK"),
 			TEXT("ChargedKickPredictedEscapeStillAttemptingContact")
 		);
-		// This is only a warning: the future ball position is an estimate,
-		// not a reason to block the shot forever. We are currently in a
-		// genuine foot-contact zone, so try the animation. The impact callback
-		// will validate the REAL ball position and can re-arm this shot if
-		// the ball escapes before the striking foot arrives.
 	}
 
+	if (bUseChargedTrajectory && !bHumanRestartExecution && SoccerControlState == ESoccerPlayerControlState::ChasingBall)
+	{
+		UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO2] STRIKE START distance=%.1f ballSpeed=%.1f impactDelay=%.3f"),
+			FVector::Dist2D(GetActorLocation(), ControlledBall->GetActorLocation()),
+			ControlledBall->GetBallPhysicsVelocity().Size2D(), AuthoredImpactDelay / FMath::Max(1.0f, MontagePlayRate));
+	}
 	ActiveKickTarget = PendingKickTarget;
 	ActiveKickHorizontalSpeed = HorizontalSpeedToUse;
 	// Keep the ORIGINAL charging value, not the distance-adjusted speed,
@@ -7478,6 +7879,11 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 		)
 	)
 	{
+		if (bActiveKickUsesChargedTrajectory)
+		{
+			UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO2] CONTACT MISS distance=%.1f ballSpeed=%.1f"),
+				FVector::Dist2D(GetActorLocation(), ControlledBall->GetActorLocation()), ControlledBall->GetBallPhysicsVelocity().Size2D());
+		}
 		// A moving ball may leave the strike zone between the animation
 		// starting and its real impact. Never kick a distant ball, but do NOT
 		// silently discard the charged right-click request either.
@@ -7594,6 +8000,10 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
     {
         MatchManager->RegisterShot5E(this);
     }
+	if (bActiveKickUsesChargedTrajectory && !bActiveKickWasHumanRestartExecution)
+	{
+		UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO2] CONTACT APPLIED speed=%.1f"), ControlledBall->GetBallPhysicsVelocity().Size());
+	}
 	LogHumanPossessionDebugEvent(
 		TEXT("KICK_APPLIED"),
 		bActiveKickWasHumanRestartExecution

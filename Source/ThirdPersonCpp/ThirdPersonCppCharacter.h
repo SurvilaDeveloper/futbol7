@@ -72,6 +72,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Soccer|Control")
 		bool HasActiveHumanBallClaim() const;
 
+	// Only suppress an incidental body deflection in the low-ball strike zone.
+	bool ShouldDeferPassiveBallBodyContact6AO2(const ASoccerBall* Ball) const;
+
 	/** True while the human has an assisted jump-header request armed, queued, or playing. */
 	UFUNCTION(BlueprintPure, Category = "Soccer|Aerial|Human")
 		bool IsHumanJumpHeaderRequestActive() const;
@@ -202,7 +205,7 @@ protected:
 	/** Handler for when a touch input stops. */
 	void TouchStopped(ETouchIndex::Type FingerIndex, FVector Location);
 
-	// Selección de velocidad con teclas 1, 2, 3, 4.
+	// SelecciÃ³n de velocidad con teclas 1, 2, 3, 4.
 	void SelectWalkSpeed();
 	void SelectJogSpeed();
 	void SelectRunSpeed();
@@ -240,6 +243,10 @@ protected:
 		float ChargedHorizontalSpeed
 	);
 
+	bool HasPendingHumanAerialPass6AO1() const;
+	bool HasHumanAirborneBall6AO1() const;
+	void RetryHumanAerialReception6AO1();
+	void LogHumanAerialPhase6AO1();
 	bool ShouldArmHumanJumpHeaderFromCurrentBall() const;
 	bool ArmHumanJumpHeaderRequestFromCurrentInput();
 	void UpdateHumanJumpHeaderRequestLifecycle(float DeltaTime);
@@ -296,6 +303,10 @@ protected:
 
 	void PerformPendingKickImpact();
 	void FinishPendingKickAnimation();
+	// Approach a free ground ball without running through its center.
+	void MoveTowardFreeChargedShot6AO2(const FVector& PursuitLocation, bool bCanKick);
+	bool bFreeChargedShotFastRun6AO3 = false;
+	float HumanShotNextSpeedLog6AO4 = -1.f;
 	bool IsBallWithinHumanFootPhysicalContact(
 		const ASoccerBall* SoccerBall
 	) const;
@@ -1185,6 +1196,18 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Human Running Jump|Threat", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float HumanRunningJumpMaximumTacklerNormalizedTime = 0.72f;
+
+	// Shared by matches and training. No changes to collision radii or tracks.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Aerial|Human|Calibration")
+	bool bHumanAerialCalibrationLog6AO1 = true;
+	UPROPERTY(EditAnywhere, Category = "Soccer|Aerial|Human|Calibration", meta = (ClampMin = "0.02"))
+	float HumanAerialReceptionRetryInterval6AO1 = 0.08f;
+	float HumanAerialNextRetry6AO1 = -1.f;
+	float HumanAerialNextLog6AO1 = -1.f;
+	float HumanAerialNextContactLog6AO1 = -1.f;
+	ESoccerAerialActionPhase HumanAerialLastPhase6AO1 = ESoccerAerialActionPhase::None;
+	bool bHumanAerialContactSeen6AO1 = false;
+	bool bHumanStandingHeaderFallback6AO1 = false;
 
 	bool bHumanJumpHeaderRequestActive = false;
 	bool bHumanJumpHeaderMontageStarted = false;
