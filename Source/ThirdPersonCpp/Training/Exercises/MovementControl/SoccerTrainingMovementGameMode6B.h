@@ -46,7 +46,10 @@ public:
     // 6H: pre-start instructions, active time trial and finish summary.
     UFUNCTION(BlueprintCallable, Category="Training|Exercise")
     void BeginExercise6H();
-    bool IsGroundPassLesson6AN() const { return bGroundPassLesson6AN; }
+    bool IsGroundPassLesson6AN() const { return bGroundPassLesson6AN && !bAerialPassLesson6AO; }
+    bool IsAerialPassLesson6AO() const { return bAerialPassLesson6AO; }
+    bool IsPassLesson6AO() const { return bGroundPassLesson6AN; }
+    void RegisterAerialPassContact6AO(bool bHead, bool bShot, bool bJump);
     void RequestGroundPass6AN();
     bool CanCollectGroundPass6AN() const { return GroundPassState6AN == 3 && IsExerciseRunning6H(); }
     void RegisterGroundPassCollect6AN() { bGroundPassCollectRequested6AN = true; }
@@ -99,7 +102,14 @@ public:
 private:
     // 6AN: standalone pass request, real animated contact and real possession.
     // 0 preparing, 1 dribbling / waiting F, 2 pass montage, 3 receive and shoot, 4 feedback, 5 technical error.
-    bool bGroundPassLesson6AN = false;
+    bool bGroundPassLesson6AN = false; // Shared pass lesson runtime, 6AN or 6AO.
+    bool bAerialPassLesson6AO = false;
+    int32 AerialPassChestContacts6AO = 0;
+    int32 AerialPassHeadControls6AO = 0;
+    int32 AerialPassStandingShots6AO = 0;
+    int32 AerialPassJumpShots6AO = 0;
+    UPROPERTY(EditAnywhere, Category="Training|Aerial Pass|6AO", meta=(ClampMin="100.0", ClampMax="5000.0"))
+    float AerialPassSpeed6AO = 1800.f;
     int32 GroundPassState6AN = 0;
     int32 GroundPassCompleted6AN = 0;
     int32 GroundPassSuccesses6AN = 0;

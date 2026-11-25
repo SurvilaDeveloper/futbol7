@@ -1785,6 +1785,25 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
         return;
     }
 
+    // 6AO: count physical aerial contacts, not button presses. Standing head
+    // redirects also count as shots when the charged release intent was set.
+    if (ContactResult.bContactResolved)
+    {
+        if (ASoccerTrainingMovementGameMode6B* Training6AO = GetWorld()
+            ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr)
+        {
+            if (Training6AO->IsAerialPassLesson6AO())
+            {
+                const bool bJump6AO = ContactResult.ActionType == ESoccerAerialActionType::JumpHeaderKick;
+                const bool bHead6AO = bJump6AO || ContactResult.ContactSurface == ESoccerAerialContactSurface::Head;
+                const bool bChest6AO = ContactResult.ActionType == ESoccerAerialActionType::StandingControl && ContactResult.ContactSurface == ESoccerAerialContactSurface::Chest;
+                if (bHead6AO || bChest6AO)
+                    Training6AO->RegisterAerialPassContact6AO(bHead6AO,
+                        bHead6AO && CompletedKickMode == ESoccerPendingKickMode::KickAndRelease, bJump6AO);
+            }
+        }
+    }
+
     // A charged header is a true shot only if the animation touched the ball.
     if (ContactResult.bContactResolved &&
         CompletedKickMode == ESoccerPendingKickMode::KickAndRelease &&
@@ -1793,7 +1812,7 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
         if (ASoccerTrainingMovementGameMode6B* GroundPassTraining = GetWorld()
             ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr)
         {
-            GroundPassTraining->RegisterGroundPassHumanKick6AN(true);
+            if (!GroundPassTraining->IsAerialPassLesson6AO()) GroundPassTraining->RegisterGroundPassHumanKick6AN(true);
         }
         if (!IsValid(MatchManager))
         {
@@ -6119,7 +6138,7 @@ void AThirdPersonCppCharacter::HandleTackleInput()
             : nullptr;
     if (TrainingMode6AM1 != nullptr &&
         (TrainingMode6AM1->IsWinTackleLesson6AK() ||
-            (TrainingMode6AM1->IsGroundPassLesson6AN() && TrainingMode6AM1->CanCollectGroundPass6AN())) &&
+            (TrainingMode6AM1->IsPassLesson6AO() && TrainingMode6AM1->CanCollectGroundPass6AN())) &&
         TrainingMode6AM1->IsExerciseRunning6H())
     {
         ASoccerBall* TrainingBall6AM1 = ResolveTackleBall();
@@ -6314,9 +6333,11 @@ void AThirdPersonCppCharacter::RequestPassFromTeammate(
     if (ASoccerTrainingMovementGameMode6B* Training = GetWorld()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr)
     {
-        if (Training->IsGroundPassLesson6AN())
+        if (Training->IsPassLesson6AO())
         {
-            if (RequestType == ESoccerHumanPassRequestType::Normal) Training->RequestGroundPass6AN();
+            if ((Training->IsAerialPassLesson6AO() && RequestType == ESoccerHumanPassRequestType::AerialHeader) ||
+                (Training->IsGroundPassLesson6AN() && RequestType == ESoccerHumanPassRequestType::Normal))
+                Training->RequestGroundPass6AN();
             return;
         }
     }
@@ -6364,7 +6385,7 @@ void AThirdPersonCppCharacter::HandleLeftClickTarget()
     if (ASoccerTrainingMovementGameMode6B* Training = GetWorld()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr)
     {
-        if (Training->IsGroundPassLesson6AN())
+        if (Training->IsPassLesson6AO())
         {
             if (!Training->CanCollectGroundPass6AN()) return;
             if (!HasHumanLogicalBallControl()) Training->RegisterGroundPassCollect6AN();

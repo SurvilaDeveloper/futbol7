@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
@@ -40,6 +40,7 @@ private:
     UFUNCTION() void OpenAvoidTackle6AK();
     UFUNCTION() void OpenWinTackle6AK();
     UFUNCTION() void OpenGroundPass6AN();
+    UFUNCTION() void OpenAerialPass6AO();
     UFUNCTION() void Back6B();
 
     UPROPERTY(Transient) UButton* MovementButton6B = nullptr;
@@ -50,6 +51,7 @@ private:
     UPROPERTY(Transient) UButton* AvoidTackleButton6AK = nullptr;
     UPROPERTY(Transient) UButton* WinTackleButton6AK = nullptr;
     UPROPERTY(Transient) UButton* GroundPassButton6AN = nullptr;
+    UPROPERTY(Transient) UButton* AerialPassButton6AO = nullptr;
     UPROPERTY(Transient) UButton* BackButton6B = nullptr;
     double LastAnalogTime6B = -1.0;
 };

@@ -124,7 +124,7 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
     const bool bShot = Mode && Mode->IsChargedShotLesson6M();
-    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsGroundPassLesson6AN() ? TEXT("ENTRENAMIENTO | PASE RASANTE") : Mode && Mode->IsAvoidTackleLesson6AK() ? TEXT("ENTRENAMIENTO | ESQUIVAR TACKLES") : Mode && Mode->IsWinTackleLesson6AK() ? TEXT("ENTRENAMIENTO | RECUPERAR CON TACKLE") : Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("ENTRENAMIENTO | CONDUCCIÓN Y DEFINICIÓN") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("ENTRENAMIENTO | REMATES CONTRA ARQUERO") : bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
+    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsAerialPassLesson6AO() ? TEXT("ENTRENAMIENTO | PASE AÉREO") : Mode && Mode->IsGroundPassLesson6AN() ? TEXT("ENTRENAMIENTO | PASE RASANTE") : Mode && Mode->IsAvoidTackleLesson6AK() ? TEXT("ENTRENAMIENTO | ESQUIVAR TACKLES") : Mode && Mode->IsWinTackleLesson6AK() ? TEXT("ENTRENAMIENTO | RECUPERAR CON TACKLE") : Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("ENTRENAMIENTO | CONDUCCIÓN Y DEFINICIÓN") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("ENTRENAMIENTO | REMATES CONTRA ARQUERO") : bShot ? TEXT("ENTRENAMIENTO | REMATE CON CARGA") : bAutoPass
         ? TEXT("ENTRENAMIENTO | AUTOPASE")
         : TEXT("ENTRENAMIENTO | CONTROL DE PELOTA")));
     if (Body6H)
@@ -133,7 +133,13 @@ void USoccerTrainingExerciseWidget6H::ShowInstructions6H()
         BodyFont6P.Size = 19;
         Body6H->SetFont(BodyFont6P);
     }
-    if (Body6H) Body6H->SetText(FText::FromString((Mode && Mode->IsGroundPassLesson6AN())
+    if (Body6H) Body6H->SetText(FText::FromString((Mode && Mode->IsAerialPassLesson6AO())
+        ? TEXT("PEDIDO DE PASE AÉREO Y DEFINICIÓN — 6AO\n\n"
+               "1. El compañero conduce cerca de la banda y el defensor lo marca sin hacerle tackles. Pulsá R para pedir un pase aéreo; el pedido espera hasta que pueda patear.\n\n"
+               "2. Cuando salga el pase, hacé clic izquierdo para pedir una recepción controlada con el pecho o la cabeza. También podés apuntar al arco, mantener el clic derecho y soltar para intentar un cabezazo dirigido (con salto si el plan lo requiere) o un remate de primera. La IA del personaje selecciona el contacto viable.\n\n"
+               "3. Si recibís, controlá la pelota y definí con clic derecho. El defensor puede interceptar y hacerte tackles. Q permite recuperar una pelota suelta; Espacio permite esquivar.\n\n"
+               "Diez intentos con altura y presión crecientes. Solo cuenta el gol tras un golpeo real del humano. Diez segundos para recibir o rematar, veinte segundos desde la recepción para definir. Las faltas del defensor y fallos técnicos no descuentan intentos.")
+        : (Mode && Mode->IsGroundPassLesson6AN())
         ? TEXT("PEDIDO DE PASE Y DEFINICIÓN BAJO PRESIÓN — 6AN.2\n\n"
                "1. El compañero conduce cerca de una banda mientras un rival lo marca sin hacerle tackles. Empezás más lejos: acercate si hace falta y pulsá F para pedir un pase rasante. El pedido queda pendiente hasta que pueda patear.\n\n"
                "2. Cuando salga el pase, hacé clic izquierdo para ir a recibirlo. También podés rematar de primera con clic derecho. El defensor cambia de objetivo, puede interceptar el pase y hacerte tackles cuando controlás la pelota.\n\n"
@@ -223,7 +229,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     const bool bAutoPass = Mode && Mode->IsAutoPassLesson6J();
     const bool bShot = Mode && Mode->IsChargedShotLesson6M();
-    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsGroundPassLesson6AN() ? TEXT("RESULTADOS | PASE RASANTE") : Mode && Mode->IsAvoidTackleLesson6AK() ? TEXT("RESULTADOS | ESQUIVAR TACKLES") : Mode && Mode->IsWinTackleLesson6AK() ? TEXT("RESULTADOS | RECUPERAR CON TACKLE") : Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("RESULTADOS | DEFINICIÓN POR ZONAS") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("RESULTADOS CONTRA ARQUERO") : bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
+    if (Header6H) Header6H->SetText(FText::FromString(Mode && Mode->IsAerialPassLesson6AO() ? TEXT("RESULTADOS | PASE AÉREO") : Mode && Mode->IsGroundPassLesson6AN() ? TEXT("RESULTADOS | PASE RASANTE") : Mode && Mode->IsAvoidTackleLesson6AK() ? TEXT("RESULTADOS | ESQUIVAR TACKLES") : Mode && Mode->IsWinTackleLesson6AK() ? TEXT("RESULTADOS | RECUPERAR CON TACKLE") : Mode && Mode->IsZoneFinishLesson6AH() ? TEXT("RESULTADOS | DEFINICIÓN POR ZONAS") : Mode && Mode->IsGoalkeeperShotLesson6T() ? TEXT("RESULTADOS CONTRA ARQUERO") : bShot ? TEXT("RESULTADO DEL REMATE") : bAutoPass
         ? TEXT("AUTOPASES COMPLETADOS") : TEXT("RECORRIDO COMPLETADO")));
     if (Mode)
     {
@@ -234,7 +240,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
             FSlateFontInfo BodyFont6P = Body6H->Font;
             BodyFont6P.Size = (bShot || (Mode && Mode->IsTackleLesson6AK())) ? 17 : 19;
             Body6H->SetFont(BodyFont6P);
-            const FString Summary6H = (Mode && Mode->IsGroundPassLesson6AN())
+            const FString Summary6H = (Mode && Mode->IsPassLesson6AO())
                 ? Mode->GetGroundPassReport6AN()
                 : (Mode && Mode->IsAvoidTackleLesson6AK())
                 ? Mode->GetAvoidTackleReport6AL2()
@@ -255,7 +261,7 @@ void USoccerTrainingExerciseWidget6H::ShowResults6H()
         }
         if (Feedback6H)
         {
-            const FString Result = (Mode && Mode->IsGroundPassLesson6AN())
+            const FString Result = (Mode && Mode->IsPassLesson6AO())
                 ? TEXT("Un acierto requiere un gol tras un remate del humano. La recepción y el remate de primera son válidos.")
                 : (Mode && Mode->IsAvoidTackleLesson6AK())
                 ? TEXT("Se evaluaron diez recorridos: entrada al arco rival con la pelota, recuperación y despeje, falta o pelota fuera.")

@@ -18,10 +18,10 @@ void ASoccerTrainingMovementHUD6B::DrawHUD()
 
     const float X = 32.f;
     const float Y = 40.f;
-    if (Mode->IsGroundPassLesson6AN())
+    if (Mode->IsPassLesson6AO())
     {
         DrawRect(FLinearColor(0.015f, 0.025f, 0.035f, 0.78f), X - 12.f, Y - 12.f, 900.f, 150.f);
-        DrawText(TEXT("ENTRENAMIENTO | PASE RASANTE"), FLinearColor::White, X, Y, Font, 1.25f, false);
+        DrawText(Mode->IsAerialPassLesson6AO() ? TEXT("ENTRENAMIENTO | PASE AÉREO") : TEXT("ENTRENAMIENTO | PASE RASANTE"), FLinearColor::White, X, Y, Font, 1.25f, false);
         DrawText(FString::Printf(TEXT("Intento %d/10 | Goles %d"), Mode->GetGroundPassAttempt6AN(), Mode->GetGroundPassSuccesses6AN()), FLinearColor::Yellow, X, Y + 30.f, Font, 1.2f, false);
         DrawText(Mode->GetExerciseMessage6B(), FLinearColor(0.7f, 0.95f, 1.f), X, Y + 60.f, Font, 1.0f, false);
         if (Mode->CanCollectGroundPass6AN())
