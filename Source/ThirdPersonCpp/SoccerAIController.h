@@ -1189,6 +1189,16 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Tackle|Evasion", meta = (ClampMin = "1.0"))
 		float AITackleEvasionThreatHalfWidth = 125.0f;
 
+	// Half-angle of the runner's visual awareness cone, centred on the
+	// direction its body faces. Side challenges remain visible, challenges
+	// from behind cannot trigger a magical jump. Shared by match and 6AM.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Tackle|Evasion", meta = (ClampMin = "0.0", ClampMax = "180.0"))
+		float AITackleEvasionViewHalfAngleDegrees = 95.0f;
+
+	// Throttle rear-threat diagnostics so an active slide does not print
+	// one message for every frame in matches or training.
+	float LastAITackleEvasionUnseenThreatLogAt = -1000.0f;
+
 	// Too little time = surprised; too much time = do not jump prematurely.
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Tackle|Evasion", meta = (ClampMin = "0.0"))
 		float AITackleEvasionMinimumReactionTime = 0.12f;

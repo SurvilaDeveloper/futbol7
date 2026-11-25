@@ -23138,6 +23138,18 @@ bool ASoccerAIController::TryStartAITackleEvasion(
 	float BestLateralDistance = TNumericLimits<float>::Max();
 
 	const FVector VictimLocation = SoccerCharacter->GetActorLocation();
+	// Perception is based on the actual body orientation, not velocity:
+	// running in one direction must not grant 360-degree tackle awareness.
+	const FVector VictimFacing =
+		SoccerCharacter->GetActorForwardVector().GetSafeNormal2D();
+	const float MaximumViewAngle = FMath::Clamp(
+		AITackleEvasionViewHalfAngleDegrees,
+		0.0f,
+		180.0f
+	);
+	const float MinimumVisibleDot = FMath::Cos(
+		FMath::DegreesToRadians(MaximumViewAngle)
+	);
 	const float MinReaction = FMath::Max(
 		0.0f,
 		AITackleEvasionMinimumReactionTime
@@ -23220,6 +23232,36 @@ bool ASoccerAIController::TryStartAITackleEvasion(
 
 		if (LateralDistance > ThreatHalfWidth)
 		{
+			continue;
+		}
+
+		// The threat is physically on course to hit the runner, but the
+		// runner can only react if the tackler is within its field of view.
+		// The check is intentionally AFTER the trajectory/time checks so
+		// rear tackles still hit normally and never become "invisible" to
+		// collision or foul evaluation; only their evasive jump is blocked.
+		const FVector ToTackler =
+			(Tackler->GetActorLocation() - VictimLocation).GetSafeNormal2D();
+		if (ToTackler.IsNearlyZero())
+		{
+			continue;
+		}
+
+		const float FacingDot = FVector::DotProduct(VictimFacing, ToTackler);
+		if (FacingDot < MinimumVisibleDot)
+		{
+			const float Now = World->GetTimeSeconds();
+			if (Now - LastAITackleEvasionUnseenThreatLogAt >= 0.8f)
+			{
+				LastAITackleEvasionUnseenThreatLogAt = Now;
+				const float ThreatAngle = FMath::RadiansToDegrees(
+					FMath::Acos(FMath::Clamp(FacingDot, -1.0f, 1.0f))
+				);
+				UE_LOG(LogTemp, Display,
+					TEXT("[SoccerTackleEvasion] REAR IGNORED victim=%s tackler=%s angle=%.1f max=%.1f t=%.2f"),
+					*SoccerCharacter->GetName(), *Tackler->GetName(),
+					ThreatAngle, MaximumViewAngle, TimeToThreat);
+			}
 			continue;
 		}
 
