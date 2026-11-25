@@ -1,4 +1,4 @@
-// ThirdPersonCppCharacter.cpp
+﻿// ThirdPersonCppCharacter.cpp
 #include "ThirdPersonCppCharacter.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "Camera/CameraComponent.h"
@@ -6156,32 +6156,12 @@ void AThirdPersonCppCharacter::HandleTackleInput()
         // for predictive tackles in 6AL.6.4; do not teleport or steer the
         // player after the montage begins.
         const float RunSpeed6AM1 = GetVelocity().Size2D();
-        const float EstimatedSlideSpeed6AM1 = FMath::Max(350.0f,
-            FMath::Min(900.0f, FMath::Max(RunSpeed6AM1, TackleMinimumInitialSpeed)) * 0.80f);
         const float MinLead6AM1 = 0.14f;
         const float MaxLead6AM1 = 0.55f;
-        float LeadSeconds6AM1 = FMath::Clamp(
-            SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
-                GetActorLocation(), BallNow6AM1, EstimatedSlideSpeed6AM1, 0.03f),
-            MinLead6AM1, MaxLead6AM1);
-
-        FVector PredictedBall6AM1 = BallNow6AM1;
-        for (int32 Iteration = 0; Iteration < 2; ++Iteration)
-        {
-            PredictedBall6AM1 =
-                SoccerTacklePredictionShared::PredictCarriedBallLocation(
-                    BallNow6AM1, EstimatedBallVelocity6AM1, LeadSeconds6AM1);
-            const float NewEstimate =
-                SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
-                    GetActorLocation(), PredictedBall6AM1,
-                    EstimatedSlideSpeed6AM1, 0.03f);
-            LeadSeconds6AM1 = FMath::Clamp(
-                FMath::Lerp(LeadSeconds6AM1, NewEstimate, 0.65f),
-                MinLead6AM1, MaxLead6AM1);
-        }
-        PredictedBall6AM1 =
-            SoccerTacklePredictionShared::PredictCarriedBallLocation(
-                BallNow6AM1, EstimatedBallVelocity6AM1, LeadSeconds6AM1);
+        float LeadSeconds6AM1 = (MinLead6AM1 + MaxLead6AM1) * 0.5f;
+        FVector PredictedBall6AM1 = BallNow6AM1 + EstimatedBallVelocity6AM1 * LeadSeconds6AM1;
+        FindMovingBallTackleContact(BallNow6AM1, EstimatedBallVelocity6AM1,
+            MinLead6AM1, MaxLead6AM1, LeadSeconds6AM1, PredictedBall6AM1, LeadSeconds6AM1);
 
         // For a rolling/free ball, reuse the match's PHYSICAL ground
         // trajectory predictor (friction, bounce and stopping) rather than
@@ -6191,24 +6171,29 @@ void AThirdPersonCppCharacter::HandleTackleInput()
         {
             TArray<FSoccerBallTrajectorySample> Samples6AM1;
             if (TrainingBall6AM1->BuildPredictedGroundTrajectory(
-                LeadSeconds6AM1 + 0.06f, 0.04f, Samples6AM1))
+                MaxLead6AM1 + 0.06f, 0.04f, Samples6AM1))
             {
                 float BestTimeError6AM1 = FLT_MAX;
+                float BestSampleTime6AM1 = LeadSeconds6AM1;
                 for (const FSoccerBallTrajectorySample& Sample : Samples6AM1)
                 {
                     if (!Sample.bNearGround || Sample.bTrajectoryTerminated)
                     {
                         continue;
                     }
-                    const float TimeError =
-                        FMath::Abs(Sample.TimeFromNow - LeadSeconds6AM1);
+                    if (Sample.TimeFromNow < MinLead6AM1 || Sample.TimeFromNow > MaxLead6AM1) continue;
+                    const float Arrival = EstimateTackleContactTime(Sample.Location, Sample.TimeFromNow);
+                    const bool bFeasible = Arrival >= 0.0f && FMath::Abs(Arrival - Sample.TimeFromNow) <= 0.026f;
+                    const float TimeError = FMath::Abs(Sample.TimeFromNow - LeadSeconds6AM1) + (bFeasible ? 0.0f : 10.0f);
                     if (TimeError < BestTimeError6AM1)
                     {
                         BestTimeError6AM1 = TimeError;
+                        BestSampleTime6AM1 = Sample.TimeFromNow;
                         PredictedBall6AM1 = Sample.Location;
                         bPhysicsPrediction6AM1 = true;
                     }
                 }
+                LeadSeconds6AM1 = BestSampleTime6AM1;
             }
         }
 
@@ -6235,7 +6220,7 @@ void AThirdPersonCppCharacter::HandleTackleInput()
         }
 
         const bool bTackleStarted6AM1 =
-            TryStartTackleTowardLocation(PredictedBall6AM1);
+            TryStartTackleTowardPredictedLocation(PredictedBall6AM1, LeadSeconds6AM1);
         UE_LOG(LogTemp, Display,
             TEXT("[Training6AM1] HUMAN TACKLE %s source=%s lead=%.2fs ballSpeed=%.1f ballDist=%.1f leadDist=%.1f turn=%.1f slideDir=(%.2f,%.2f)"),
             bTackleStarted6AM1 ? TEXT("START") : TEXT("FAILED"),
@@ -6249,22 +6234,47 @@ void AThirdPersonCppCharacter::HandleTackleInput()
         return;
     }
 
-    // Match behaviour stays exactly as before: it still resolves the ball
-    // through SoccerMatchManager and calls the shared physical tackle.
-    FVector TackleTarget =
-        GetActorLocation() + GetActorForwardVector() * 500.0f;
-
+    // Match: keep manual tackle available even if the target is not reachable.
+    // Use carried-ball velocity or actual ground-trajectory samples when possible.
+    FVector TackleTarget = GetActorLocation() + GetActorForwardVector() * 500.0f;
+    float TackleContactTime = 0.0f;
     if (IsValid(MatchManager))
     {
         ASoccerBall* SoccerBall = MatchManager->GetSoccerBall();
-
         if (IsValid(SoccerBall))
         {
-            TackleTarget = SoccerBall->GetActorLocation();
+            const FVector BallNow = SoccerBall->GetActorLocation();
+            TackleTarget = BallNow;
+            ASoccerCharacterBase* Carrier = MatchManager->GetPossessingCharacter();
+            if (IsValid(Carrier) && Carrier != this)
+            {
+                FindMovingBallTackleContact(BallNow, Carrier->GetVelocity(),
+                    0.01f, 1.5f, 0.35f, TackleTarget, TackleContactTime);
+            }
+            else
+            {
+                TArray<FSoccerBallTrajectorySample> Samples;
+                if (SoccerBall->BuildPredictedGroundTrajectory(1.5f, 0.04f, Samples))
+                {
+                    float BestScore = FLT_MAX;
+                    for (const FSoccerBallTrajectorySample& Sample : Samples)
+                    {
+                        if (!Sample.bNearGround || Sample.bTrajectoryTerminated || Sample.TimeFromNow <= 0.0f) continue;
+                        const float Arrival = EstimateTackleContactTime(Sample.Location, Sample.TimeFromNow);
+                        if (Arrival < 0.0f || FMath::Abs(Arrival - Sample.TimeFromNow) > 0.026f) continue;
+                        const float TackleCandidateScore = FMath::Abs(Sample.TimeFromNow - 0.35f);
+                        if (TackleCandidateScore < BestScore)
+                        {
+                            BestScore = TackleCandidateScore;
+                            TackleTarget = Sample.Location;
+                            TackleContactTime = Sample.TimeFromNow;
+                        }
+                    }
+                }
+            }
         }
     }
-
-    TryStartTackleTowardLocation(TackleTarget);
+    TryStartTackleTowardPredictedLocation(TackleTarget, TackleContactTime);
 }
 
 void AThirdPersonCppCharacter::RequestNormalPassFromTeammate()

@@ -514,6 +514,13 @@ bool ASoccerCharacterBase::TryStartTackle(
     const FVector& DesiredWorldDirection
 )
 {
+    return StartTackleInternal(TackleSide, DesiredWorldDirection, nullptr, 0.0f);
+}
+
+bool ASoccerCharacterBase::StartTackleInternal(
+    ESoccerTackleSide TackleSide, const FVector& DesiredWorldDirection,
+    const FVector* TargetLocation, float PreferredTime)
+{
     if (
         !bEnableTackle ||
         IsTackleActive() ||
@@ -568,13 +575,15 @@ bool ASoccerCharacterBase::TryStartTackle(
         ActiveTackleDirection = GetActorForwardVector().GetSafeNormal2D();
     }
 
-    const float CurrentHorizontalSpeed = GetVelocity().Size2D();
-    ActiveTackleInitialSpeed = FMath::Clamp(
-        FMath::Max(CurrentHorizontalSpeed, TackleMinimumInitialSpeed) *
-            FMath::Max(0.0f, TackleInitialSpeedScale),
-        0.0f,
-        FMath::Max(TackleMinimumInitialSpeed, TackleMaximumInitialSpeed)
-    );
+    // Capture inertia before StopMovement clears the path-following velocity.
+    ActiveTackleInitialSpeed = GetTackleLaunchSpeed();
+    ActiveTackleSlideDuration = GetTackleMontageDuration(TackleSide);
+    ActiveTackleLastSpeed = ActiveTackleInitialSpeed;
+    ActiveTackleStartLocation = GetActorLocation();
+    float PlannedContactTime = 0.0f;
+    const bool bReachable = BuildTackleSlidePlan(
+        ActiveTackleInitialSpeed, ActiveTackleSlideDuration, ActiveTackleDirection,
+        TargetLocation, PreferredTime, ActiveTackleSlideDeceleration, PlannedContactTime);
 
     if (Controller != nullptr)
     {
@@ -585,10 +594,12 @@ bool ASoccerCharacterBase::TryStartTackle(
     SavedTackleBrakingDecelerationWalking =
         Movement->BrakingDecelerationWalking;
     SavedTackleMaxWalkSpeed = Movement->MaxWalkSpeed;
+    SavedTackleBrakingFrictionFactor = Movement->BrakingFrictionFactor;
     bTackleMovementSettingsSaved = true;
 
     Movement->GroundFriction = 0.0f;
     Movement->BrakingDecelerationWalking = 0.0f;
+    Movement->BrakingFrictionFactor = 0.0f;
     Movement->MaxWalkSpeed = FMath::Max(
         Movement->MaxWalkSpeed,
         ActiveTackleInitialSpeed
@@ -616,6 +627,14 @@ bool ASoccerCharacterBase::TryStartTackle(
     NewVelocity.Z = Movement->Velocity.Z;
     Movement->Velocity = NewVelocity;
 
+    const float PlannedStopDistance = FMath::Square(ActiveTackleInitialSpeed) /
+        (2.0f * FMath::Max(1.0f, ActiveTackleSlideDeceleration));
+    const FString SlideDebug = FString::Printf(
+        TEXT("[Tackle6AM11] START %s v0=%.0f brake=%.0f stop=%.0fcm contact=%.2fs reachable=%d"),
+        *GetName(), ActiveTackleInitialSpeed, ActiveTackleSlideDeceleration,
+        PlannedStopDistance, PlannedContactTime, bReachable ? 1 : 0);
+    UE_LOG(LogTemp, Display, TEXT("%s"), *SlideDebug);
+    ASoccerDebugManager::Message(this, ESoccerDebugCategory::Tackle, SlideDebug, FColor::Cyan);
     return true;
 }
 
@@ -623,13 +642,153 @@ bool ASoccerCharacterBase::TryStartTackleTowardLocation(
     const FVector& TargetLocation
 )
 {
-    FVector DesiredDirection = TargetLocation - GetActorLocation();
-    DesiredDirection.Z = 0.0f;
+    return TryStartTackleTowardPredictedLocation(TargetLocation, 0.0f);
+}
 
-    return TryStartTackle(
-        ChooseTackleSideForTarget(TargetLocation),
-        DesiredDirection
-    );
+bool ASoccerCharacterBase::TryStartTackleTowardPredictedLocation(
+    const FVector& TargetLocation, float TimeFromNow)
+{
+    return StartTackleInternal(ChooseTackleSideForTarget(TargetLocation),
+        TargetLocation - GetActorLocation(), &TargetLocation, TimeFromNow);
+}
+
+float ASoccerCharacterBase::GetTackleLaunchSpeed() const
+{
+    const float Impulse = FMath::Max(0.0f, TackleMinimumInitialSpeed);
+    const float Run = GetVelocity().Size2D();
+    // Legacy scale can reduce inertia but never add speed beyond the impulse/run.
+    const float Scale = FMath::Clamp(TackleInitialSpeedScale, 0.0f, 1.0f);
+    return FMath::Min(FMath::Max(Impulse, Run * Scale),
+        FMath::Max(Impulse, TackleMaximumInitialSpeed));
+}
+
+float ASoccerCharacterBase::GetTackleMontageDuration(ESoccerTackleSide TackleSide) const
+{
+    UAnimMontage* Montage = GetTackleMontage(TackleSide);
+    return Montage != nullptr ? Montage->GetPlayLength() / FMath::Max(0.01f, Montage->RateScale) : 0.0f;
+}
+
+bool ASoccerCharacterBase::BuildTackleSlidePlan(
+    float InitialSpeed, float Duration, const FVector& Direction,
+    const FVector* TargetLocation, float PreferredTime, float& OutDeceleration,
+    float& OutContactTime) const
+{
+    const float StopTime = FMath::Max(0.01f, Duration *
+        FMath::Clamp(TackleMovementStopNormalizedTime, 0.20f, 1.0f));
+    const float MaxBrake = FMath::Max(1.0f, TackleMaximumSlideDeceleration);
+    const float MinBrake = FMath::Min(MaxBrake,
+        FMath::Max(FMath::Max(1.0f, TackleMinimumSlideDeceleration), InitialSpeed / StopTime));
+    OutDeceleration = MinBrake;
+    OutContactTime = 0.0f;
+    if (Duration <= KINDA_SMALL_NUMBER || InitialSpeed <= KINDA_SMALL_NUMBER || TargetLocation == nullptr)
+    {
+        return false;
+    }
+
+    const float Start = Duration * FMath::Clamp(TackleContactWindowStartNormalizedTime, 0.0f, 1.0f);
+    const float End = FMath::Min(StopTime, Duration * FMath::Clamp(TackleContactWindowEndNormalizedTime, 0.0f, 1.0f));
+    if (End < Start || End <= KINDA_SMALL_NUMBER)
+    {
+        return false;
+    }
+
+    const FVector Offset = *TargetLocation - GetActorLocation();
+    const FVector FlatOffset(Offset.X, Offset.Y, 0.0f);
+    const float Along = FVector::DotProduct(FlatOffset, Direction);
+    const float Lateral = (FlatOffset - Direction * Along).Size();
+    const float Reach = FMath::Max(0.0f, TacklePlanningFootReach);
+    const float Tolerance = FMath::Max(0.0f, TacklePlanningContactTolerance);
+    const float ForwardReach = FMath::Sqrt(FMath::Max(0.0f, FMath::Square(Reach) - FMath::Square(Lateral)));
+    const float Distance = FMath::Max(0.0f, Along - ForwardReach);
+    const bool bDirectionReachable = Along >= -Tolerance && Lateral <= Reach + Tolerance;
+    const float Preferred = FMath::Clamp(PreferredTime > 0.0f ? PreferredTime : (Start + End) * 0.5f, Start, End);
+
+    // At t, x = v0*t - a*t^2/2 until v=0; afterwards x is the stopping distance.
+    // Solve for the required braking at the predicted contact instant. A near
+    // target may be reached before that instant and remain within foot reach.
+    const auto DistanceAt = [InitialSpeed](float Brake, float Time)
+    {
+        const float MovingTime = FMath::Min(Time, InitialSpeed / Brake);
+        return InitialSpeed * MovingTime - 0.5f * Brake * FMath::Square(MovingTime);
+    };
+    const auto BrakeAt = [InitialSpeed, Distance, MinBrake, MaxBrake](float Time)
+    {
+        const float SafeTime = FMath::Max(0.001f, Time);
+        const float Required = Distance <= KINDA_SMALL_NUMBER ? MaxBrake :
+            (Distance <= InitialSpeed * SafeTime * 0.5f
+                ? FMath::Square(InitialSpeed) / (2.0f * Distance)
+                : 2.0f * (InitialSpeed * SafeTime - Distance) / FMath::Square(SafeTime));
+        return FMath::Clamp(Required, MinBrake, MaxBrake);
+    };
+
+    // Try the exact time first, then the closest feasible point in the contact
+    // window. The fallback minimizes spatial error without exceeding limits.
+    float BestCost = TNumericLimits<float>::Max();
+    bool bFound = false;
+    for (int32 Index = -1; Index <= 32; ++Index)
+    {
+        const float Time = Index < 0 ? Preferred : FMath::Lerp(Start, End, float(Index) / 32.0f);
+        const float Brake = BrakeAt(Time);
+        const float Error = FMath::Abs(DistanceAt(Brake, Time) - Distance);
+        const bool bFeasible = bDirectionReachable && Error <= Tolerance;
+        const float Cost = bFeasible ? FMath::Abs(Time - Preferred) : 10000.0f + Error;
+        if (Cost < BestCost)
+        {
+            BestCost = Cost;
+            bFound = bFeasible;
+            OutDeceleration = Brake;
+            OutContactTime = Time;
+        }
+        if (Index < 0 && bFeasible) break;
+    }
+    return bFound;
+}
+
+float ASoccerCharacterBase::EstimateTackleContactTime(
+    const FVector& TargetLocation, float PreferredTime) const
+{
+    const ESoccerTackleSide Side = ChooseTackleSideForTarget(TargetLocation);
+    FVector Desired = (TargetLocation - GetActorLocation()).GetSafeNormal2D();
+    if (Desired.IsNearlyZero()) Desired = GetVelocity().GetSafeNormal2D();
+    if (Desired.IsNearlyZero()) Desired = GetActorForwardVector().GetSafeNormal2D();
+    FVector Direction = SoccerClampHorizontalDirectionToYaw(
+        GetActorForwardVector(), Desired, TackleMaximumStartTurnAngle);
+    if (Direction.IsNearlyZero()) Direction = GetActorForwardVector().GetSafeNormal2D();
+    float Brake = 0.0f, ContactTime = 0.0f;
+    return BuildTackleSlidePlan(GetTackleLaunchSpeed(), GetTackleMontageDuration(Side),
+        Direction.GetSafeNormal2D(), &TargetLocation, PreferredTime, Brake, ContactTime)
+        ? ContactTime : -1.0f;
+}
+
+bool ASoccerCharacterBase::FindMovingBallTackleContact(
+    const FVector& BallLocation, const FVector& BallVelocity,
+    float MinTime, float MaxTime, float PreferredTime, FVector& OutTarget, float& OutTime) const
+{
+    const float Duration = FMath::Max(GetTackleMontageDuration(ESoccerTackleSide::LeftLeg),
+        GetTackleMontageDuration(ESoccerTackleSide::RightLeg));
+    const float Start = FMath::Max(0.01f, MinTime);
+    const float End = FMath::Min(MaxTime, Duration);
+    if (End < Start) return false;
+    const FVector HorizontalVelocity(BallVelocity.X, BallVelocity.Y, 0.0f);
+    const int32 Steps = FMath::Clamp(FMath::CeilToInt((End - Start) / 0.025f), 1, 100);
+    float BestError = TNumericLimits<float>::Max();
+    bool bFound = false;
+    for (int32 Index = 0; Index <= Steps; ++Index)
+    {
+        const float Time = FMath::Lerp(Start, End, float(Index) / float(Steps));
+        const FVector Target = BallLocation + HorizontalVelocity * Time;
+        const float Arrival = EstimateTackleContactTime(Target, Time);
+        if (Arrival < 0.0f || FMath::Abs(Arrival - Time) > 0.026f) continue;
+        const float Score = FMath::Abs(Time - PreferredTime);
+        if (Score < BestError)
+        {
+            BestError = Score;
+            OutTarget = Target;
+            OutTime = Time;
+            bFound = true;
+        }
+    }
+    return bFound;
 }
 
 void ASoccerCharacterBase::CancelTackle()
@@ -681,8 +840,8 @@ float ASoccerCharacterBase::GetCurrentTackleHorizontalSpeed() const
         return 0.0f;
     }
 
-    return ActiveTackleInitialSpeed *
-        EvaluateTackleSpeedAlpha(ActiveTackleNormalizedTime);
+    return FMath::Min(ActiveTackleLastSpeed, ActiveTackleInitialSpeed *
+        EvaluateTackleSpeedAlpha(ActiveTackleNormalizedTime));
 }
 
 bool ASoccerCharacterBase::TryStartRunningJump(
@@ -1406,36 +1565,14 @@ float ASoccerCharacterBase::EvaluateTackleSpeedAlpha(
     float NormalizedTime
 ) const
 {
-    const float StopTime = FMath::Clamp(
-        TackleMovementStopNormalizedTime,
-        0.20f,
-        1.0f
-    );
-
-    if (NormalizedTime >= StopTime)
+    if (ActiveTackleInitialSpeed <= KINDA_SMALL_NUMBER ||
+        NormalizedTime >= FMath::Clamp(TackleMovementStopNormalizedTime, 0.20f, 1.0f))
     {
         return 0.0f;
     }
-
-    if (TackleSpeedProfile != nullptr)
-    {
-        return FMath::Clamp(
-            TackleSpeedProfile->GetFloatValue(NormalizedTime),
-            0.0f,
-            1.5f
-        );
-    }
-
-    const float MovementAlpha = FMath::Clamp(
-        NormalizedTime / StopTime,
-        0.0f,
-        1.0f
-    );
-
-    return FMath::Pow(
-        1.0f - MovementAlpha,
-        FMath::Max(0.15f, TackleFallbackDecelerationExponent)
-    );
+    const float Elapsed = FMath::Max(0.0f, NormalizedTime) * ActiveTackleSlideDuration;
+    return FMath::Clamp(1.0f - ActiveTackleSlideDeceleration * Elapsed /
+        ActiveTackleInitialSpeed, 0.0f, 1.0f);
 }
 
 void ASoccerCharacterBase::UpdateTackle()
@@ -1496,7 +1633,12 @@ void ASoccerCharacterBase::UpdateTackle()
     const float SpeedAlpha = EvaluateTackleSpeedAlpha(
         ActiveTackleNormalizedTime
     );
-    const float CurrentSlideSpeed = ActiveTackleInitialSpeed * SpeedAlpha;
+    // Never re-inject momentum lost to a collision or a previous braking step.
+    const float ActualForwardSpeed = FMath::Max(0.0f,
+        FVector::DotProduct(Movement->Velocity, ActiveTackleDirection));
+    const float CurrentSlideSpeed = FMath::Min(ActiveTackleLastSpeed,
+        FMath::Min(ActualForwardSpeed, ActiveTackleInitialSpeed * SpeedAlpha));
+    ActiveTackleLastSpeed = CurrentSlideSpeed;
 
     FVector NewVelocity = ActiveTackleDirection * CurrentSlideSpeed;
     NewVelocity.Z = Movement->Velocity.Z;
@@ -1515,6 +1657,7 @@ void ASoccerCharacterBase::FinishTackle()
             Movement->BrakingDecelerationWalking =
                 SavedTackleBrakingDecelerationWalking;
             Movement->MaxWalkSpeed = SavedTackleMaxWalkSpeed;
+            Movement->BrakingFrictionFactor = SavedTackleBrakingFrictionFactor;
         }
 
         FVector FinalVelocity = Movement->Velocity;
@@ -1526,10 +1669,18 @@ void ASoccerCharacterBase::FinishTackle()
     if (IsTackleActive())
     {
         FinalizeTackleContactTracking();
+        UE_LOG(LogTemp, Display,
+            TEXT("[Tackle6AM11] END %s distance=%.0fcm lastSpeed=%.0f normalized=%.2f"),
+            *GetName(), FVector::Dist2D(ActiveTackleStartLocation, GetActorLocation()),
+            ActiveTackleLastSpeed, ActiveTackleNormalizedTime);
     }
 
     bTackleMovementSettingsSaved = false;
     ActiveTackleInitialSpeed = 0.0f;
+    ActiveTackleSlideDeceleration = 0.0f;
+    ActiveTackleSlideDuration = 0.0f;
+    ActiveTackleLastSpeed = 0.0f;
+    ActiveTackleStartLocation = FVector::ZeroVector;
     ActiveTackleNormalizedTime = 0.0f;
     TacklePhase = ESoccerTacklePhase::Inactive;
 }
@@ -1782,7 +1933,8 @@ bool ASoccerCharacterBase::ResolveTackleBallContactVelocity(
         FMath::Clamp(ContactNormalizedTime, 0.0f, 1.0f)
     );
     const float SlideSpeedAtContact =
-        FMath::Max(0.0f, ActiveTackleInitialSpeed) * ContactSpeedAlpha;
+        FMath::Min(ActiveTackleLastSpeed,
+            FMath::Max(0.0f, ActiveTackleInitialSpeed) * ContactSpeedAlpha);
 
     const float TransferSpeed =
         SlideSpeedAtContact * FMath::Max(0.0f, TackleBallSlideSpeedTransfer);
@@ -2598,6 +2750,15 @@ void ASoccerCharacterBase::TrySubmitCurrentTackleFoulEvaluation(
 ESoccerTeam ASoccerCharacterBase::GetTeam() const
 {
 	return Team;
+}
+
+void ASoccerCharacterBase::SetTeamForTraining(ESoccerTeam NewTeam)
+{
+	if (Team != NewTeam)
+	{
+		Team = NewTeam;
+		ApplyTeamUniform();
+	}
 }
 
 ESoccerPlayerRole ASoccerCharacterBase::GetPlayerRole() const

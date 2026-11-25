@@ -23012,11 +23012,7 @@ bool ASoccerAIController::TryStartBasicAITackleInterception(
 		MinSampleTime,
 		AITackleMaximumSampleTime * AnticipationHorizonMultiplier
 	);
-	const float EstimatedSlideSpeed = FMath::Max(
-		1.0f,
-		AITackleEstimatedAverageSlideSpeed
-	);
-	const float LaunchDelay = FMath::Max(0.0f, AITackleEstimatedLaunchDelay);
+	// Arrival is now computed from actual speed, montage and braking limits.
 	const float RunLateMargin = FMath::Max(0.0f, AITackleRequiredRunLateMargin);
 	const float TackleSafetyMargin = FMath::Max(0.0f, AITackleArrivalSafetyMargin);
 	const float MaximumTurnCos = FMath::Cos(
@@ -23078,12 +23074,12 @@ bool ASoccerAIController::TryStartBasicAITackleInterception(
 			continue;
 		}
 
-		const float TackleArrivalTime =
-			LaunchDelay + TargetDistance / EstimatedSlideSpeed;
-
+		const float TackleArrivalTime = SoccerCharacter->EstimateTackleContactTime(
+			Sample.Location, Sample.TimeFromNow);
+		const float ContactTimeTolerance = FMath::Max(TackleSafetyMargin, 0.025f);
 		if (
-			TackleArrivalTime + TackleSafetyMargin >
-			Sample.TimeFromNow
+			TackleArrivalTime < 0.0f ||
+			FMath::Abs(TackleArrivalTime - Sample.TimeFromNow) > ContactTimeTolerance
 		)
 		{
 			continue;
@@ -23114,7 +23110,7 @@ bool ASoccerAIController::TryStartBasicAITackleInterception(
 	ClearFilteredMoveRequest();
 	ClearFilteredDefenseMoveRequest();
 
-	if (!SoccerCharacter->TryStartTackleTowardLocation(SelectedTarget))
+	if (!SoccerCharacter->TryStartTackleTowardPredictedLocation(SelectedTarget, SelectedSampleTime))
 	{
 		return false;
 	}
@@ -23432,9 +23428,13 @@ bool ASoccerAIController::TryStartContestedAITackle(
 	FVector CarrierVelocity = Carrier->GetVelocity();
 	CarrierVelocity.Z = 0.0f;
 
-	const FVector TargetLocation =
-		SoccerTacklePredictionShared::PredictCarriedBallLocation(
-			BallLocation, CarrierVelocity, LeadTime);
+	FVector TargetLocation = BallLocation;
+	float PlannedContactTime = LeadTime;
+	if (!SoccerCharacter->FindMovingBallTackleContact(BallLocation, CarrierVelocity,
+		0.01f, 1.5f, LeadTime, TargetLocation, PlannedContactTime))
+	{
+		return false;
+	}
 
 	FVector ToTarget = TargetLocation - CharacterLocation;
 	ToTarget.Z = 0.0f;
@@ -23594,14 +23594,7 @@ bool ASoccerAIController::TryStartContestedAITackle(
 		return false;
 	}
 
-	const float EstimatedSlideSpeed = FMath::Max(
-		1.0f,
-		AIContestedTackleEstimatedAverageSlideSpeed
-	);
-	const float EstimatedArrivalTime =
-		SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
-			CharacterLocation, TargetLocation,
-			EstimatedSlideSpeed, AIContestedTackleEstimatedLaunchDelay);
+	const float EstimatedArrivalTime = PlannedContactTime;
 
 	LastContestedAITackleAttemptTime = CurrentTime;
 
@@ -23611,7 +23604,7 @@ bool ASoccerAIController::TryStartContestedAITackle(
 	ClearFilteredMoveRequest();
 	ClearFilteredDefenseMoveRequest();
 
-	if (!SoccerCharacter->TryStartTackleTowardLocation(TargetLocation))
+	if (!SoccerCharacter->TryStartTackleTowardPredictedLocation(TargetLocation, PlannedContactTime))
 	{
 		return false;
 	}

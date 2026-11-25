@@ -27,9 +27,6 @@ class THIRDPERSONCPP_API ASoccerCharacterBase : public ACharacter
 	GENERATED_BODY()
 
 	friend class ASoccerMatchManager;
-	// 6AL.1: allow the standalone training GameMode to set opposing teams.
-	// No match logic, tackle physics or rules are changed.
-	friend class ASoccerTrainingMovementGameMode6B;
 
 public:
 	ASoccerCharacterBase();
@@ -43,6 +40,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Team")
 		ESoccerTeam GetTeam() const;
+
+	// Training scenarios assign teams without exposing the private Team member.
+	void SetTeamForTraining(ESoccerTeam NewTeam);
 
 	UFUNCTION(BlueprintPure, Category = "Soccer|Team")
 		ESoccerPlayerRole GetPlayerRole() const;
@@ -414,6 +414,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Tackle")
 	bool TryStartTackleTowardLocation(const FVector& TargetLocation);
 
+	// Native timed variant: TimeFromNow is the predicted instant of ball contact.
+	bool TryStartTackleTowardPredictedLocation(const FVector& TargetLocation, float TimeFromNow);
+	// Returns -1 if this target cannot be reached within the contact window.
+	float EstimateTackleContactTime(const FVector& TargetLocation, float PreferredTime = 0.0f) const;
+	bool FindMovingBallTackleContact(const FVector& BallLocation, const FVector& BallVelocity,
+		float MinTime, float MaxTime, float PreferredTime, FVector& OutTarget, float& OutTime) const;
+
 	UFUNCTION(BlueprintCallable, Category = "Soccer|Tackle")
 	void CancelTackle();
 
@@ -631,6 +638,13 @@ protected:
 	UAnimMontage* GetTackleMontage(ESoccerTackleSide TackleSide) const;
 	ESoccerTackleSide ChooseTackleSideForTarget(const FVector& TargetLocation) const;
 	float EvaluateTackleSpeedAlpha(float NormalizedTime) const;
+	bool StartTackleInternal(ESoccerTackleSide TackleSide, const FVector& DesiredWorldDirection,
+		const FVector* TargetLocation, float PreferredTime);
+	float GetTackleLaunchSpeed() const;
+	float GetTackleMontageDuration(ESoccerTackleSide TackleSide) const;
+	bool BuildTackleSlidePlan(float InitialSpeed, float Duration, const FVector& Direction,
+		const FVector* TargetLocation, float PreferredTime, float& OutDeceleration,
+		float& OutContactTime) const;
 	void FinishTackle();
 
 	void UpdateTackleFallReaction();
@@ -1250,6 +1264,7 @@ protected:
 	 * Optional normalized speed profile. X=montage normalized time, Y=speed
 	 * multiplier. When empty, a built-in progressive deceleration is used.
 	 */
+	// Legacy asset retained for Blueprint compatibility; 6AM.11 uses physical braking.
 	UPROPERTY(EditAnywhere, Category = "Soccer|Tackle|Movement")
 	UCurveFloat* TackleSpeedProfile = nullptr;
 
@@ -1273,6 +1288,22 @@ protected:
 	/* Fallback profile exponent. Values below 1 retain speed longer. */
 	UPROPERTY(EditAnywhere, Category = "Soccer|Tackle|Movement", meta = (ClampMin = "0.15", ClampMax = "3.0"))
 	float TackleFallbackDecelerationExponent = 0.65f;
+
+	// 6AM.11: bounded voluntary/ground braking (cm/s^2). The minimum may
+	// increase to ensure the slide ends before the montage's movement cutoff.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Tackle|Movement", meta = (ClampMin = "1.0"))
+	float TackleMinimumSlideDeceleration = 350.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Tackle|Movement", meta = (ClampMin = "1.0"))
+	float TackleMaximumSlideDeceleration = 3500.0f;
+
+	// Approximate horizontal center-to-ball reach during the contact window;
+	// real contacts still require the existing animated bone sweeps.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Tackle|Movement", meta = (ClampMin = "0.0"))
+	float TacklePlanningFootReach = 85.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Soccer|Tackle|Movement", meta = (ClampMin = "0.0"))
+	float TacklePlanningContactTolerance = 25.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Tackle|Movement", meta = (ClampMin = "0.0", ClampMax = "180.0"))
 	float TackleMaximumStartTurnAngle = 80.0f;
@@ -1784,6 +1815,11 @@ private:
 	ESoccerTackleSide ActiveTackleSide = ESoccerTackleSide::LeftLeg;
 	FVector ActiveTackleDirection = FVector::ForwardVector;
 	float ActiveTackleInitialSpeed = 0.0f;
+	float ActiveTackleSlideDeceleration = 0.0f;
+	float ActiveTackleSlideDuration = 0.0f;
+	float ActiveTackleLastSpeed = 0.0f;
+	FVector ActiveTackleStartLocation = FVector::ZeroVector;
+	float SavedTackleBrakingFrictionFactor = 0.0f;
 	float ActiveTackleNormalizedTime = 0.0f;
 	float SavedTackleGroundFriction = 0.0f;
 	float SavedTackleBrakingDecelerationWalking = 0.0f;

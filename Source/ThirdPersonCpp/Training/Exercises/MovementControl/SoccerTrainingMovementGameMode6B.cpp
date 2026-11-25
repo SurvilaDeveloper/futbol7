@@ -2709,51 +2709,18 @@ void ASoccerTrainingMovementGameMode6B::TickAvoidTackle6AL(float DeltaSeconds)
             Now - AvoidDefenderLastTackleAt6AL2 >= AvoidDefenderTackleCooldown6AL2 &&
             !Trainee6B->IsTackleFallReactionActive())
         {
-            // 6AL.6.4: the previous tackle always aimed at Ball, its position
-            // NOW, even if the human was sprinting. During a 0.3-0.6s slide
-            // the ball can travel several metres and the tackle arrives late.
-            // Reuse the match's CONTESTED tackle predictor for a carried ball,
-            // but estimate lead time from the current defender-to-interception
-            // distance rather than blindly using a fixed value.
+            // 6AM.11: search the same physical slide/contact window as a match.
             const FVector CarrierVelocity = Trainee6B->GetVelocity();
-            const float EstimatedSlideSpeed = FMath::Max(
-                350.f, AvoidTackleEstimatedSlideSpeed6AL64);
-            const float LaunchDelay = FMath::Max(0.f, AvoidTackleLaunchDelay6AL64);
             const float MinLead = FMath::Max(0.02f, AvoidTackleMinLeadSeconds6AL64);
             const float MaxLead = FMath::Max(MinLead, AvoidTackleMaxLeadSeconds6AL64);
-            float LeadSeconds = FMath::Clamp(
-                SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
-                    Defender, Ball, EstimatedSlideSpeed, LaunchDelay),
-                MinLead, MaxLead);
-
-            // Two estimates stabilize the lead for a ball moving toward or
-            // away from the tackler. No teleportation of the ball or player.
             FVector PredictedBall = Ball;
-            for (int32 EstimateIndex = 0; EstimateIndex < 2; ++EstimateIndex)
+            float LeadSeconds = 0.0f;
+            if (TackleOpponent6AK->FindMovingBallTackleContact(Ball, CarrierVelocity,
+                MinLead, MaxLead, (MinLead + MaxLead) * 0.5f, PredictedBall, LeadSeconds))
             {
-                PredictedBall = SoccerTacklePredictionShared::PredictCarriedBallLocation(
-                    Ball, CarrierVelocity, LeadSeconds);
-                const float Arrival =
-                    SoccerTacklePredictionShared::EstimateSlideArrivalSeconds(
-                        Defender, PredictedBall, EstimatedSlideSpeed, LaunchDelay);
-                LeadSeconds = FMath::Clamp(
-                    FMath::Lerp(LeadSeconds, Arrival, 0.65f), MinLead, MaxLead);
-            }
-            PredictedBall = SoccerTacklePredictionShared::PredictCarriedBallLocation(
-                Ball, CarrierVelocity, LeadSeconds);
-
-            // An unreasonable prediction should not launch a blind tackle.
-            // Keep pursuing and reassess on a later Tick instead.
-            const float AimDistance = FVector::Dist2D(Defender, PredictedBall);
-            const float LeadDistance = FVector::Dist2D(Ball, PredictedBall);
-            const float MaximumViableSlideDistance =
-                EstimatedSlideSpeed * MaxLead + 90.f;
-            if (AimDistance <= MaximumViableSlideDistance)
-            {
-                if (AAIController* AI = Cast<AAIController>(TackleOpponent6AK->GetController()))
-                    AI->StopMovement();
-                TackleOpponent6AK->SetActorRotation((PredictedBall - Defender).Rotation());
-                if (TackleOpponent6AK->TryStartTackleTowardLocation(PredictedBall))
+                const float AimDistance = FVector::Dist2D(Defender, PredictedBall);
+                const float LeadDistance = FVector::Dist2D(Ball, PredictedBall);
+                if (TackleOpponent6AK->TryStartTackleTowardPredictedLocation(PredictedBall, LeadSeconds))
                 {
                     bAvoidDefenderBallDislodgedThisTackle6AL3 = false;
                     AvoidDefenderLastTackleAt6AL2 = Now;
@@ -3001,11 +2968,7 @@ void ASoccerTrainingMovementGameMode6B::EnsureTackleOpponent6AK()
     auto PrepareOpponent = [](ASoccerAICharacter* Rival)
     {
         if (!IsValid(Rival)) return;
-        if (Rival->Team != ESoccerTeam::OpponentTeam)
-        {
-            Rival->Team = ESoccerTeam::OpponentTeam;
-            Rival->ApplyTeamUniform();
-        }
+        Rival->SetTeamForTraining(ESoccerTeam::OpponentTeam);
         // Keep the match tactical Tick disabled. The GameMode controls orders.
         if (AController* AI = Rival->GetController())
         {
@@ -3063,11 +3026,7 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
     if (!IsTackleLesson6AK()) return;
     ASoccerField* Field = FindSharedField6L();
     if (!Field || !IsValid(Trainee6B) || !IsValid(PracticeBall6B)) return;
-    if (Trainee6B->Team != ESoccerTeam::PlayerTeam)
-    {
-        Trainee6B->Team = ESoccerTeam::PlayerTeam;
-        Trainee6B->ApplyTeamUniform();
-    }
+    Trainee6B->SetTeamForTraining(ESoccerTeam::PlayerTeam);
     const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;
     // 6AM.6: start near the halfway line, slightly toward the rival's (+X)
     // goal. Alternate touchlines on EVERY round (1: -Y, 2: +Y, etc.) so
@@ -3111,11 +3070,7 @@ void ASoccerTrainingMovementGameMode6B::PositionTackleScenario6AK()
         {
             ASoccerAICharacter* Rival = AvoidZoneDefenders6AL6[i];
             if (!IsValid(Rival)) continue;
-            if (Rival->Team != ESoccerTeam::OpponentTeam)
-            {
-                Rival->Team = ESoccerTeam::OpponentTeam;
-                Rival->ApplyTeamUniform();
-            }
+            Rival->SetTeamForTraining(ESoccerTeam::OpponentTeam);
             Rival->CancelAIKickMontageBeforeImpact();
             if (Rival->IsTackleActive()) Rival->CancelTackle();
             Rival->ReleaseAIBall(false);
