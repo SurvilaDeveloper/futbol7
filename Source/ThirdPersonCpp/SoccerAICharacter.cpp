@@ -2346,7 +2346,7 @@ float ASoccerAICharacter::GetAIKickImpactDelayForMontage(
 	float MontageDuration
 ) const
 {
-	float DesiredDelay = AIPassKickImpactDelay;
+	float DesiredDelay = bAIImmediatePassKickImpact6AO55 ? 0.f : AIPassKickImpactDelay;
 
 	if (
 		KickMontage == StrikeLeftLegForwardJogMontage ||
@@ -3029,6 +3029,15 @@ bool ASoccerAICharacter::TryStartAIDribbleTurnAutoPassToLocation(
 		DesiredDirection.GetSafeNormal();
 
 	if (DesiredDirection.IsNearlyZero())
+	{
+		return false;
+	}
+
+	// A normal forward/side auto-pass can use the ordinary immediate kick.
+	// Retain the authored turn action for a genuinely rearward target.
+	if (bAIImmediatePassKickImpact6AO55 &&
+		FVector::DotProduct(GetActorForwardVector().GetSafeNormal2D(),
+			(TargetLocation - ControlledBall->GetActorLocation()).GetSafeNormal2D()) >= 0.f)
 	{
 		return false;
 	}

@@ -578,6 +578,11 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
 		float AIPassKickImpactDelay = 0.25f;
 
+	// Ordinary pass montages contact at their start, including ground/air passes.
+	// Disable if the Blueprint still uses assets with an authored wind-up.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
+		bool bAIImmediatePassKickImpact6AO55 = true;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
 		float AIStrikeKickImpactDelay = 0.35f;
 

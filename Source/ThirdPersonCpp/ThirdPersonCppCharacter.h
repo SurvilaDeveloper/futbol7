@@ -308,6 +308,7 @@ protected:
 	// Immediate right-button foot strike: actual live contact, not a prepared pose.
 	void MoveTowardImmediateChargedShot6AO54(const FVector& PursuitLocation, bool bCanKick);
 	bool CanExecuteImmediateChargedFootShot6AO54() const;
+	bool CanExecuteImmediateAutoPass6AO55() const;
 	bool bFreeChargedShotFastRun6AO3 = false;
 	float HumanShotNextSpeedLog6AO4 = -1.f;
 	// Shared open-play charged foot shot: a fixed preparation pose and an
@@ -877,6 +878,10 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
 		float PassKickImpactDelay = 0.25f;
+
+	// Pass assets trimmed to contact at montage start; false restores authored delay.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
+		bool bImmediatePassKickImpact6AO55 = true;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
 		float StrikeKickImpactDelay = 0.35f;

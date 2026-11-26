@@ -2254,6 +2254,18 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 
 	if (bFreeShotPlanValid6AO5 || bFreeShotPrepared6AO5 || FreeShotDetourPhase6AO5 != 0) ResetFreeShotPlan6AO5();
 
+	// 6AO.5.5: a normal left-click auto-pass does not need a preparation pose.
+	// Keep aerial reception, steal, cooldown and restart rules above this gate.
+	if (bCanPossessBall && !bIsHumanStealAttemptActive &&
+		!(IsValid(MatchManager) && MatchManager->CanHumanFootRestartTakerExecuteNow(this)) &&
+		CanExecuteImmediateAutoPass6AO55())
+	{
+		ClearHumanDribbleRepositionState();
+		if (bHumanJumpHeaderRequestActive) ClearHumanJumpHeaderRequest(false, false);
+		ExecutePendingKick();
+		return;
+	}
+
 	// A strong change of direction requested while chasing may need a physical
 	// setup behind the live ball before its montage can start. Keep that setup
 	// authoritative: normal pursuit and kick execution must not overtake it.
@@ -2491,6 +2503,12 @@ bool AThirdPersonCppCharacter::ShouldDeferPassiveBallBodyContact6AO2(const ASocc
     const bool bStrike = SoccerControlState == ESoccerPlayerControlState::Kicking &&
         ActiveKickMode == ESoccerPendingKickMode::KickAndRelease && bActiveKickUsesChargedTrajectory &&
         !bActiveKickHasImpactedBall && !bActiveKickWasHumanRestartExecution;
+    // A forward/side self-pass shares the same narrow passive-contact exception.
+    // The actual kick still requires live foot contact and the normal rules.
+    if (SoccerControlState == ESoccerPlayerControlState::ChasingBall &&
+        !bIsHumanStealAttemptActive && !HasPendingHumanAerialPass6AO1() &&
+        CanExecuteImmediateAutoPass6AO55() && GetWorld() && GetWorld()->GetTimeSeconds() - LastKickTime >= RepossessDelayAfterKick)
+        return true;
     if (!bApproach && !bStrike) return false;
 
     // Only the low ball in the actual strike zone belongs to the intentional
@@ -2647,6 +2665,19 @@ bool AThirdPersonCppCharacter::BuildFreeShotPlan6AO5(float Now)
 		return true;
 	}
 	return false;
+}
+
+bool AThirdPersonCppCharacter::CanExecuteImmediateAutoPass6AO55() const
+{
+	if (!bImmediatePassKickImpact6AO55 ||
+		PendingKickMode != ESoccerPendingKickMode::KickAndFollow ||
+		!IsValid(ControlledBall) || !IsBallWithinHumanFootPhysicalContact(ControlledBall))
+	{
+		return false;
+	}
+	const FVector Aim = (PendingKickTarget - ControlledBall->GetActorLocation()).GetSafeNormal2D();
+	const FVector Forward = GetActorForwardVector().GetSafeNormal2D();
+	return Aim.IsNearlyZero() || FVector::DotProduct(Forward, Aim) >= 0.f;
 }
 
 bool AThirdPersonCppCharacter::CanExecuteImmediateChargedFootShot6AO54() const
@@ -7758,7 +7789,7 @@ void AThirdPersonCppCharacter::StoreKickTarget(ESoccerPendingKickMode KickMode)
 			ControlledBall->GetActorLocation()
 		);
 
-		if (DistanceToBall <= KickExecutionDistance)
+		if (DistanceToBall <= KickExecutionDistance || CanExecuteImmediateAutoPass6AO55())
 		{
 			ExecutePendingKick();
 		}
@@ -7950,10 +7981,22 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		return;
 	}
 
+	const bool bImmediateAutoPass6AO55 = !bHumanRestartExecution && CanExecuteImmediateAutoPass6AO55();
+	if (bImmediateAutoPass6AO55)
+	{
+		ClearHumanDribbleRepositionState();
+		if (bHumanAerialCalibrationLog6AO1)
+		{
+			UE_LOG(LogTemp, Display, TEXT("[KickTiming6AO55] LEFT FIRST CONTACT distance=%.1f playerSpeed=%.1f ballSpeed=%.1f"),
+				FVector::Dist2D(GetActorLocation(), ControlledBall->GetActorLocation()),
+				GetVelocity().Size2D(), ControlledBall->GetBallPhysicsVelocity().Size2D());
+		}
+	}
+
 	// A set piece never starts a dribble-turn carry. The ball must remain on the
 	// restart spot until the actual kick impact.
 	if (
-		!bHumanRestartExecution && !bPlannedFreeShot6AO5 &&
+		!bHumanRestartExecution && !bPlannedFreeShot6AO5 && !bImmediateAutoPass6AO55 &&
 		TryStartStrongRunDribbleTurnForPendingKick()
 	)
 	{
@@ -8140,7 +8183,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		0.05f,
 		KickMontage->GetPlayLength()
 	);
-	const float AuthoredImpactDelay = bImmediateChargedShot6AO54 ? 0.f : GetKickImpactDelayForMontage(
+	const float AuthoredImpactDelay = (bImmediateChargedShot6AO54 || bImmediateAutoPass6AO55) ? 0.f : GetKickImpactDelayForMontage(
 		KickMontage,
 		AuthoredMontageLength
 	);
@@ -8286,7 +8329,7 @@ float AThirdPersonCppCharacter::GetKickImpactDelayForMontage(
 	float MontageDuration
 ) const
 {
-	float DesiredDelay = PassKickImpactDelay;
+	float DesiredDelay = bImmediatePassKickImpact6AO55 ? 0.f : PassKickImpactDelay;
 
 	if (
 		KickMontage == StrikeLeftLegForwardJogMontage ||
