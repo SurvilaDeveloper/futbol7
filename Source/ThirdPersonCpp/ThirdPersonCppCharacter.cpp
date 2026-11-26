@@ -229,7 +229,9 @@ void AThirdPersonCppCharacter::SetupPlayerInputComponent(class UInputComponent* 
     for (const FKey& PauseKey5M : {EKeys::Escape, EKeys::P, EKeys::Gamepad_LeftThumbstick})
     {
         FInputKeyBinding& PauseBinding5M = PlayerInputComponent->BindKey(
-            PauseKey5M, IE_Pressed, this, &AThirdPersonCppCharacter::ToggleMatchPause5M);
+            PauseKey5M, IE_Pressed, this, PauseKey5M == EKeys::P
+                ? &AThirdPersonCppCharacter::HandlePauseKeyP9
+                : &AThirdPersonCppCharacter::ToggleMatchPause5M);
         PauseBinding5M.bExecuteWhenPaused = true;
     }
 	PlayerInputComponent->BindAction("KickToTargetFollow", IE_Pressed, this, &AThirdPersonCppCharacter::HandleLeftClickTarget);
@@ -251,6 +253,16 @@ void AThirdPersonCppCharacter::SetupPlayerInputComponent(class UInputComponent* 
 	);
 }
 
+
+void AThirdPersonCppCharacter::HandlePauseKeyP9()
+{
+    if (auto* Rondo = ASoccerRondoGameMode::Find(this))
+    {
+        Rondo->ReturnToMainMenu9();
+        return;
+    }
+    ToggleMatchPause5M();
+}
 
 void AThirdPersonCppCharacter::ToggleMatchPause5M()
 {
@@ -515,7 +527,8 @@ void AThirdPersonCppCharacter::MoveForward(float Value)
 		return;
 	}
 
-	if (SoccerControlState == ESoccerPlayerControlState::ChasingBall)
+	if (SoccerControlState == ESoccerPlayerControlState::ChasingBall ||
+		(SoccerControlState == ESoccerPlayerControlState::Manual && HasRondoReleasedKick10()))
 	{
 		if (ShouldMovementInputCancelChase())
 		{
@@ -593,7 +606,8 @@ void AThirdPersonCppCharacter::MoveRight(float Value)
 		return;
 	}
 
-	if (SoccerControlState == ESoccerPlayerControlState::ChasingBall)
+	if (SoccerControlState == ESoccerPlayerControlState::ChasingBall ||
+		(SoccerControlState == ESoccerPlayerControlState::Manual && HasRondoReleasedKick10()))
 	{
 		if (ShouldMovementInputCancelChase())
 		{
@@ -822,6 +836,7 @@ void AThirdPersonCppCharacter::Tick(float DeltaTime)
 	 * jump-header solution cannot leave a stale target or charge armed.
 	 */
 	LogHumanAerialPhase6AO1();
+	UpdateRondoReleasedKick10();
 	UpdateHumanJumpHeaderRequestLifecycle(DeltaTime);
 
 	if (IsTackleActive() || IsTackleFallReactionActive())
@@ -1361,6 +1376,12 @@ void AThirdPersonCppCharacter::ShowReleaseTargetMarker(const FVector& TargetLoca
 		return;
 	}
 
+	// A released Rondo shot owns its marker until contact or its deadline.
+	if (HasRondoReleasedKick10())
+	{
+		ActiveReleaseTargetMarker->SetLifeSpan(0.f);
+		return;
+	}
 	GetWorldTimerManager().SetTimer(
 		ReleaseTargetMarkerTimerHandle,
 		this,
@@ -1812,6 +1833,11 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
     bInitialClickControlledReceptionPending = false;
     bHumanStandingHeaderFallback6AO1 = false;
 
+    if (HasRondoReleasedKick10() && ContactResult.bContactResolved)
+    {
+        RondoReleasedKickDeadline10 = -1.f;
+        UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT CONTACT aerial accepted=%d"),ContactResult.bTouchAcceptedByRules?1:0);
+    }
     const ESoccerPendingKickMode CompletedKickMode =
         PendingKickMode;
     const FVector CompletedKickTarget =
@@ -2216,6 +2242,20 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 	RetryHumanAerialReception6AO1();
 	if (IsAerialActionQueuedOrPlaying()) return;
 
+	if (HasRondoReleasedKick10() && GetWorld()->GetTimeSeconds() >= RondoNextStealRetry10)
+	{
+		if (auto* Opponent = GetOpponentPossessingAICharacter())
+		{
+			bIsHumanStealAttemptActive = true;
+			HumanStealTargetAICharacter = Opponent;
+			HumanStealAttemptStartTime = GetWorld()->GetTimeSeconds();
+			ClearBallPursuitTarget();
+			UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT RETARGET carrier=%s"),*GetNameSafe(Opponent));
+			UpdateHumanStealAttempt();
+			return;
+		}
+	}
+
 	FVector ToBall = ControlledBall->GetActorLocation() - GetActorLocation();
 	ToBall.Z = 0.0f;
 
@@ -2234,8 +2274,11 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 
 	const float CurrentTime = GetWorld()->GetTimeSeconds();
 
-	const bool bCanPossessBall =
+	bool bCanPossessBall =
 		CurrentTime - LastKickTime >= RepossessDelayAfterKick;
+	if (HasRondoReleasedKick10())
+		if (auto* Rondo = ASoccerRondoGameMode::Find(this))
+			bCanPossessBall = bCanPossessBall && Rondo->CanHumanClaim(this);
 
 	const bool bHasPendingKick =
 		PendingKickMode != ESoccerPendingKickMode::None;
@@ -3427,6 +3470,14 @@ void AThirdPersonCppCharacter::UpdateHumanJumpHeaderRequestLifecycle(
 	if (bHumanJumpHeaderMontageStarted)
 	{
 		if (bHumanAerialCalibrationLog6AO1) UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] MONTAGE ENDED WITHOUT CONTACT"));
+		if (HasRondoReleasedKick10())
+		{
+			ClearHumanJumpHeaderRequest(false, false);
+			EnterChasingBall();
+			ActivateHumanBallClaim();
+			UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT RESUME aerial montage missed"));
+			return;
+		}
 		ClearHumanJumpHeaderRequest(true, true);
 
 		if (
@@ -3468,6 +3519,14 @@ void AThirdPersonCppCharacter::UpdateHumanJumpHeaderRequestLifecycle(
 	if (Elapsed > FMath::Max(0.1f, HumanJumpHeaderPlanSearchTimeout))
 	{
 		if (bHumanAerialCalibrationLog6AO1) UE_LOG(LogTemp, Display, TEXT("[HumanAerial6AO1] SEARCH TIMEOUT"));
+		if (HasRondoReleasedKick10())
+		{
+			ClearHumanJumpHeaderRequest(false, false);
+			EnterChasingBall();
+			ActivateHumanBallClaim();
+			UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT RESUME aerial search ended"));
+			return;
+		}
 		if (!bIsChargingKickRelease && PendingKickMode == ESoccerPendingKickMode::KickAndRelease && !HasHumanAirborneBall6AO1())
 		{
 			ClearHumanJumpHeaderRequest(false, false);
@@ -3549,11 +3608,21 @@ void AThirdPersonCppCharacter::ClearHumanJumpHeaderRequest(
 
 void AThirdPersonCppCharacter::CancelBallChaseByManualInput()
 {
-	if (SoccerControlState != ESoccerPlayerControlState::ChasingBall)
+	if (SoccerControlState != ESoccerPlayerControlState::ChasingBall &&
+		!(SoccerControlState == ESoccerPlayerControlState::Manual && HasRondoReleasedKick10()))
 	{
 		return;
 	}
 
+	if (HasRondoReleasedKick10())
+	{
+		UE_LOG(LogTemp, Display, TEXT("[Rondo10] SHOT CANCEL reason=ManualOverride"));
+		// Tick processes an active steal before manual locomotion. Cancel it
+		// together with the shot, so it cannot resume the automatic chase.
+		ClearHumanStealAttemptOnly();
+		RondoNextStealRetry10 = -1.f;
+	}
+	RondoReleasedKickDeadline10 = -1.f;
 	CancelAerialAction();
 	ClearHumanJumpHeaderRequest(true, true);
 	EnterManualControl();
@@ -3602,6 +3671,8 @@ FVector2D AThirdPersonCppCharacter::GetCurrentMovementInputVector() const
 
 bool AThirdPersonCppCharacter::ShouldMovementInputCancelChase()
 {
+	// A new manual movement input can cancel a released Rondo shot too.
+	// Keep the existing protection for input already held at button release.
 	if (!bIgnoreChaseCancelUntilMovementInputChanges)
 	{
 		return true;
@@ -3658,7 +3729,8 @@ void AThirdPersonCppCharacter::UpdateChaseCancelIgnoreAfterInputChanged()
 		return;
 	}
 
-	if (SoccerControlState != ESoccerPlayerControlState::ChasingBall)
+	if (SoccerControlState != ESoccerPlayerControlState::ChasingBall &&
+		!(SoccerControlState == ESoccerPlayerControlState::Manual && HasRondoReleasedKick10()))
 	{
 		return;
 	}
@@ -3761,6 +3833,9 @@ void AThirdPersonCppCharacter::PossessBall()
 
 void AThirdPersonCppCharacter::ReleaseBallForAISteal()
 {
+	const bool bResumeRondoShot = HasRondoReleasedKick10();
+	const FVector SavedRondoTarget = PendingKickTarget;
+	const float SavedRondoPower = PendingKickHorizontalSpeedOverride;
 	LogHumanPossessionDebugEvent(
 		TEXT("RELEASE"),
 		TEXT("AIStealCompleted"),
@@ -3797,6 +3872,17 @@ void AThirdPersonCppCharacter::ReleaseBallForAISteal()
 	SoccerControlState = ESoccerPlayerControlState::Manual;
 
 	UpdateEnergyAdjustedMovementSpeed();
+	if (bResumeRondoShot && IsValid(ControlledBall))
+	{
+		PendingKickMode = ESoccerPendingKickMode::KickAndRelease;
+		PendingKickTarget = SavedRondoTarget;
+		bHasPendingKickHorizontalSpeedOverride = true;
+		PendingKickHorizontalSpeedOverride = SavedRondoPower;
+		EnterChasingBall();
+		ActivateHumanBallClaim();
+		ShowReleaseTargetMarker(PendingKickTarget);
+		UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT RESUME possession lost"));
+	}
 
 	if (GEngine)
 	{
@@ -7479,6 +7565,11 @@ void AThirdPersonCppCharacter::StartChargedKickRelease()
 		return;
 	}
 
+	if (ASoccerRondoGameMode::Find(this))
+	{
+		RondoReleasedKickDeadline10 = -1.f;
+		HideReleaseTargetMarker();
+	}
 	bIsChargingKickRelease = true;
 	KickChargeStartTime = GetWorld()->GetTimeSeconds();
 
@@ -7531,6 +7622,12 @@ void AThirdPersonCppCharacter::FinishChargedKickRelease()
 
 	bHasPendingKickHorizontalSpeedOverride = true;
 	PendingKickHorizontalSpeedOverride = ChargedHorizontalSpeed;
+	if (ASoccerRondoGameMode::Find(this))
+	{
+		RondoReleasedKickDeadline10 = GetWorld()->GetTimeSeconds() + FMath::Max(0.1f, KickTargetMarkerLifeTime);
+		RondoNextStealRetry10 = -1.f;
+		UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT RELEASE timeout=%.2f power=%.1f"),FMath::Max(0.1f,KickTargetMarkerLifeTime),ChargedHorizontalSpeed);
+	}
 
 	/*
 	 * The montage may already be queued or even playing because the request was
@@ -7959,6 +8056,15 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		return;
 	}
 
+	if (HasRondoReleasedKick10())
+		if (auto* Rondo = ASoccerRondoGameMode::Find(this))
+			if (!Rondo->CanHumanClaim(this))
+			{
+				EnterChasingBall();
+				ActivateHumanBallClaim();
+				return;
+			}
+
 	const bool bHumanRestartExecution =
 		IsValid(MatchManager) &&
 		MatchManager->CanHumanFootRestartTakerExecuteNow(this);
@@ -8143,6 +8249,12 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 				ExecutedTarget,
 				HorizontalSpeedToUse
 			);
+			if (RondoReleasedKickDeadline10 >= 0.f)
+			{
+				RondoReleasedKickDeadline10 = -1.f;
+				HideReleaseTargetMarker();
+				UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT CONTACT foot direct"));
+			}
 		}
 		else
 		{
@@ -8453,6 +8565,17 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 				false,
 				TEXT("KickRejectedByMatchRulesAtImpact")
 			);
+			if (RondoReleasedKickDeadline10 >= 0.f && GetWorld()->GetTimeSeconds() < RondoReleasedKickDeadline10 &&
+				ActiveKickMode == ESoccerPendingKickMode::KickAndRelease && bActiveKickUsesChargedTrajectory)
+			{
+				PendingKickMode = ESoccerPendingKickMode::KickAndRelease;
+				PendingKickTarget = ActiveKickTarget;
+				bHasPendingKickHorizontalSpeedOverride = true;
+				PendingKickHorizontalSpeedOverride = ActiveKickRawChargedHorizontalSpeed;
+				ActivateHumanBallClaim();
+				ShowReleaseTargetMarker(PendingKickTarget);
+				UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT RESUME impact blocked"));
+			}
 		}
 		return;
 	}
@@ -8503,6 +8626,12 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 			ExecutedKickTarget,
 			ExecutedKickHorizontalSpeed
 		);
+		if (RondoReleasedKickDeadline10 >= 0.f)
+		{
+			RondoReleasedKickDeadline10 = -1.f;
+			HideReleaseTargetMarker();
+			UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT CONTACT foot montage"));
+		}
 	}
 	else
 	{
@@ -9258,25 +9387,25 @@ void AThirdPersonCppCharacter::UpdateHumanStealAttempt()
 
 	if (!IsValid(HumanStealTargetAICharacter))
 	{
-		FailHumanStealAttempt();
+		FailHumanStealAttempt(TEXT("TargetInvalid"));
 		return;
 	}
 
 	if (!HumanStealTargetAICharacter->IsAIPossessingBall())
 	{
-		FailHumanStealAttempt();
+		FailHumanStealAttempt(TEXT("TargetReleasedBall"));
 		return;
 	}
 
 	if (HumanStealTargetAICharacter->IsGoalkeeperHoldingBall())
 	{
-		FailHumanStealAttempt();
+		FailHumanStealAttempt(TEXT("GoalkeeperHolding"));
 		return;
 	}
 
 	if (HumanStealTargetAICharacter->GetTeam() == GetTeam())
 	{
-		FailHumanStealAttempt();
+		FailHumanStealAttempt(TEXT("TargetChangedTeam"));
 		return;
 	}
 
@@ -9287,7 +9416,7 @@ void AThirdPersonCppCharacter::UpdateHumanStealAttempt()
 
 	if (!IsValid(MatchManager) && !Rondo)
 	{
-		FailHumanStealAttempt();
+		FailHumanStealAttempt(TEXT("NoGameMode"));
 		return;
 	}
 
@@ -9295,7 +9424,7 @@ void AThirdPersonCppCharacter::UpdateHumanStealAttempt()
 
 	if (!IsValid(SoccerBall))
 	{
-		FailHumanStealAttempt();
+		FailHumanStealAttempt(TEXT("BallInvalid"));
 		return;
 	}
 
@@ -9308,9 +9437,9 @@ void AThirdPersonCppCharacter::UpdateHumanStealAttempt()
 
 	const float ElapsedTime = CurrentTime - HumanStealAttemptStartTime;
 
-	if (ElapsedTime > HumanStealMaxAttemptTime)
+	if (!HasRondoReleasedKick10() && ElapsedTime > HumanStealMaxAttemptTime)
 	{
-		FailHumanStealAttempt();
+		FailHumanStealAttempt(TEXT("StealTimeout"));
 		return;
 	}
 
@@ -9332,7 +9461,8 @@ void AThirdPersonCppCharacter::UpdateHumanStealAttempt()
 
 	if (!bStealSucceeded)
 	{
-		FailHumanStealAttempt();
+		if (HasRondoReleasedKick10()) RondoNextStealRetry10 = CurrentTime + 0.5f;
+		FailHumanStealAttempt(TEXT("StealRollFailed"));
 		return;
 	}
 
@@ -9471,10 +9601,19 @@ void AThirdPersonCppCharacter::CompleteHumanStealAttempt(
 	}
 }
 
-void AThirdPersonCppCharacter::FailHumanStealAttempt()
+void AThirdPersonCppCharacter::FailHumanStealAttempt(const TCHAR* Reason)
 {
 	ClearHumanStealAttemptOnly();
 
+	if (HasRondoReleasedKick10() && IsValid(ControlledBall) &&
+		GetWorld()->GetTimeSeconds() < RondoReleasedKickDeadline10)
+	{
+		EnterChasingBall();
+		ActivateHumanBallClaim();
+		UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT RESUME reason=%s remaining=%.2f"),Reason,
+			RondoReleasedKickDeadline10-GetWorld()->GetTimeSeconds());
+		return;
+	}
 	ClearPendingKickAfterFailedSteal();
 
 	EnterManualControl();
@@ -9496,6 +9635,49 @@ void AThirdPersonCppCharacter::ClearHumanStealAttemptOnly()
 	HumanStealTargetAICharacter = nullptr;
 	HumanStealAttemptStartTime = 0.0f;
 	ClearBallPursuitTarget();
+}
+
+bool AThirdPersonCppCharacter::HasRondoReleasedKick10() const
+{
+	return RondoReleasedKickDeadline10 >= 0.f && !bIsChargingKickRelease &&
+		PendingKickMode == ESoccerPendingKickMode::KickAndRelease &&
+		bHasPendingKickHorizontalSpeedOverride;
+}
+
+void AThirdPersonCppCharacter::UpdateRondoReleasedKick10()
+{
+	if (RondoReleasedKickDeadline10 < 0.f || !GetWorld()) return;
+	if (!HasRondoReleasedKick10())
+	{
+		// PendingKickMode is transferred to ActiveKickMode before the montage
+		// actually touches the ball. Keep the deadline for a possible retry.
+		if (SoccerControlState == ESoccerPlayerControlState::Kicking &&
+			ActiveKickMode == ESoccerPendingKickMode::KickAndRelease) return;
+		RondoReleasedKickDeadline10 = -1.f;
+		HideReleaseTargetMarker();
+		return;
+	}
+	if (GetWorld()->GetTimeSeconds() < RondoReleasedKickDeadline10 && IsValid(ControlledBall))
+	{
+		// A temporary loss of logical possession may have returned the pawn
+		// to manual control without consuming its released shot.
+		if (SoccerControlState == ESoccerPlayerControlState::Manual &&
+			!IsTackleActive() && !IsTackleFallReactionActive() && !IsAerialActionLocked())
+		{
+			EnterChasingBall();
+			ActivateHumanBallClaim();
+			UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT RESUME manual state"));
+		}
+		return;
+	}
+	// Do not interrupt a header already playing; it may still touch the ball.
+	if (IsAerialActionLocked()) return;
+	UE_LOG(LogTemp,Display,TEXT("[Rondo10] SHOT CANCEL reason=%s"),IsValid(ControlledBall)?TEXT("Timeout"):TEXT("BallMissing"));
+	RondoReleasedKickDeadline10 = -1.f;
+	ClearHumanStealAttemptOnly();
+	ClearHumanJumpHeaderRequest(true,true);
+	ClearPendingKickAfterFailedSteal();
+	if (SoccerControlState == ESoccerPlayerControlState::ChasingBall) EnterManualControl();
 }
 
 void AThirdPersonCppCharacter::ClearPendingKickAfterFailedSteal()

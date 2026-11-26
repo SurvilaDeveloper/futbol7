@@ -63,6 +63,9 @@ public:
     int32 GetTouches(const ASoccerCharacterBase* Player) const;
     TArray<ASoccerCharacterBase*> GetRankedPlayers() const;
     int32 GetRemainingSeconds() const;
+    bool IsStartCountdownActive() const { return bStartCountdownActive9; }
+    int32 GetStartCountdownSeconds() const;
+    void ReturnToMainMenu9();
     USkeletalMesh* ResolvePlayerBodyVariantMesh(FName BodyVariantId) const;
     static FString GetParticipantName(const ASoccerCharacterBase* Player);
 private:
@@ -80,6 +83,8 @@ private:
     UPROPERTY(EditDefaultsOnly, Category="Rondo", meta=(ClampMin="0.2", ClampMax="1.0")) float CircleDiameterWidthFraction = 0.60f;
     UPROPERTY(EditDefaultsOnly, Category="Rondo") bool bHumanStartsAsLoco = false;
     UPROPERTY(EditDefaultsOnly, Category="Rondo|Session", meta=(ClampMin="1.0")) float SessionDurationSeconds = 300.f;
+    // Real-time preparation before the session clock and physical play start.
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Session", meta=(ClampMin="0.0", UIMax="10.0")) float StartDelaySeconds = 4.f;
     // 6G training parity (1.0), but isolated to dribble impulses so Rondo.4 passes stay calibrated.
     UPROPERTY(EditDefaultsOnly, Category="Rondo|Session", meta=(ClampMin="0.1", ClampMax="2.0")) float DribbleHorizontalScale = 1.f;
     UPROPERTY(EditDefaultsOnly, Category="Rondo|Audio") USoundBase* RondoShortKickSound = nullptr;
@@ -112,6 +117,11 @@ private:
     bool bReady = false;
     bool bFinished = false;
     bool bScoringActive = false;
+    bool bStartCountdownActive9 = false;
+    bool bExitRequested9 = false;
+    double CountdownEndRealTime9 = 0.0;
+    void BeginStartCountdown9();
+    void StartSession9();
     // Score identity is permanent, independent of the temporary logical team.
     TMap<FName, int32> TouchScores;
     // Body+control of the same continuous contact is one touch. Intentional

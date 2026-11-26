@@ -174,6 +174,7 @@ protected:
 	/** Opens the coach menu from gameplay. Bound to M and Gamepad Menu/Options. */
 	void ToggleFormationMenu();
     void ToggleMatchPause5M();
+    void HandlePauseKeyP9();
 
 	/** Opens the four-slot quick tactics selector. Bound to Tab and Gamepad View/Back. */
 	void ToggleQuickTacticsMenu();
@@ -1369,7 +1370,14 @@ private:
 
 	void CompleteHumanStealAttempt(ASoccerAICharacter* TargetAICharacter, ASoccerBall* SoccerBall);
 
-	void FailHumanStealAttempt();
+	void FailHumanStealAttempt(const TCHAR* Reason = TEXT("StealFailed"));
+
+	// Rondo: one deadline for the released shot, independent of any carrier
+	// or aerial-plan changes. Reuse the configured target marker lifetime.
+	bool HasRondoReleasedKick10() const;
+	void UpdateRondoReleasedKick10();
+	float RondoReleasedKickDeadline10 = -1.f;
+	float RondoNextStealRetry10 = -1.f;
 
 	void ClearHumanStealAttemptOnly();
 

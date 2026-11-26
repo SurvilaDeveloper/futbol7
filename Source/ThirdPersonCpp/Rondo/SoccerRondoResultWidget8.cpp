@@ -221,6 +221,11 @@ FReply USoccerRondoResultWidget8::NativeOnPreviewKeyDown(
     const FGeometry& Geometry,const FKeyEvent& KeyEvent)
 {
     const FKey Key = KeyEvent.GetKey();
+    if (Key == EKeys::P)
+    {
+        MainMenu();
+        return FReply::Handled();
+    }
     if (Key == EKeys::F11)
     {
         if (APlayerController* PC = GetOwningPlayer()) PC->ConsoleCommand(TEXT("fullscreen"),true);

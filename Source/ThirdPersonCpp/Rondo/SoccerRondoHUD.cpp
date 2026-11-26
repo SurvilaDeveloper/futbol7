@@ -80,6 +80,19 @@ void ASoccerRondoHUD::DrawHUD()
             }
         }
     }
+    if (Mode->IsStartCountdownActive())
+    {
+        const FString Caption=TEXT("PREPARADOS");
+        const FString Count=FString::FromInt(Mode->GetStartCountdownSeconds());
+        float Width=0.f,Height=0.f;
+        const float CX=Canvas->ClipX*0.5f,CY=Canvas->ClipY*0.5f;
+        DrawRect(FLinearColor(0.015f,0.035f,0.03f,0.85f),CX-110.f,CY-68.f,220.f,136.f);
+        GetTextSize(Caption,Width,Height,GEngine->GetSmallFont(),1.4f);
+        DrawText(Caption,FLinearColor::White,CX-Width*0.5f,CY-48.f,GEngine->GetSmallFont(),1.4f);
+        GetTextSize(Count,Width,Height,GEngine->GetSmallFont(),4.f);
+        DrawText(Count,FLinearColor::Yellow,CX-Width*0.5f,CY-Height*0.5f+10.f,GEngine->GetSmallFont(),4.f);
+        return;
+    }
     if (auto* Human = Cast<AThirdPersonCppCharacter>(PlayerOwner->GetPawn()))
     {
         float X=0,Y=0,Charge=0;
