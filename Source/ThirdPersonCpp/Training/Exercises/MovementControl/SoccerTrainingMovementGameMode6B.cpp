@@ -3501,6 +3501,8 @@ void ASoccerTrainingMovementGameMode6B::PrepareGroundPass6AN()
     GroundPassLastDribble6AN1 = GroundPassLastMateMove6AN1 = GroundPassLastDefenderMove6AN1 = -100.f;
     GroundPassLastDefenderTackle6AN1 = GroundPassStateAt6AN;
     GroundPassDefenderControlSince6AN1 = -1.f;
+    GroundPassStalledSince6AO51 = -1.f;
+    GroundPassRequestedAt6AO51 = -1.f;
     GroundPassTouches6AN1 = 0;
     bGroundPassCollectRequested6AN = bGroundPassRequested6AN1 = bGroundPassReceived6AN1 = false;
     bGroundPassShotInFlight6AN1 = bGroundPassDefenderWasTackling6AN1 = bGroundPassDefenderTouched6AN1 = false;
@@ -3516,6 +3518,7 @@ void ASoccerTrainingMovementGameMode6B::RequestGroundPass6AN()
 {
     if (!bGroundPassLesson6AN || !IsExerciseRunning6H() || GroundPassState6AN != 1 || bGroundPassRequested6AN1) return;
     bGroundPassRequested6AN1 = true;
+    GroundPassRequestedAt6AO51 = GetWorld()->GetTimeSeconds();
     ++GroundPassRequests6AN1;
     GroundPassFeedback6AN = bAerialPassLesson6AO ? TEXT("Pedido R pendiente: el companero busca el momento de pasar.") : TEXT("Pedido F pendiente: el companero busca el momento de pasar.");
     UE_LOG(LogTemp, Display, TEXT("[%s] REQUEST attempt=%d"), bAerialPassLesson6AO ? TEXT("Training6AO") : TEXT("Training6AN2"), GetGroundPassAttempt6AN());
@@ -3889,6 +3892,29 @@ void ASoccerTrainingMovementGameMode6B::TickGroundPass6AN()
     TickGroundPassDefender6AN1(Field, Now);
     if (GroundPassState6AN != 1) return;
     if (TryLaunchGroundPass6AN1()) return;
+    // Scenario watchdog: before the pass the trainee cannot take over the ball.
+    // A failed dribble/claim must not leave both bots idle indefinitely.
+    // Do not interrupt ordinary dribbling, an autopass, turn or a 3 s deep hold.
+    const bool bMateBusy6AO51 = Mate->IsAIAutoPassActive() || Mate->IsAIDribbleTurnAutoPassActive() ||
+        Mate->IsAIKickMontageActive() || Mate->IsTackleActive() || Mate->IsTackleFallReactionActive() || Mate->IsTackleEvasionActive();
+    const bool bIdle6AO51 = !bMateBusy6AO51 && Mate->GetVelocity().Size2D() < 35.f &&
+        PracticeBall6B->GetBallPhysicsVelocity().Size() < 35.f;
+    if (bIdle6AO51)
+    {
+        if (GroundPassStalledSince6AO51 < 0.f) GroundPassStalledSince6AO51 = Now;
+    }
+    else GroundPassStalledSince6AO51 = -1.f;
+    const bool bStalled6AO51 = GroundPassStalledSince6AO51 >= 0.f && Now - GroundPassStalledSince6AO51 >= 6.f;
+    const bool bRequestExpired6AO51 = bGroundPassRequested6AN1 && GroundPassRequestedAt6AO51 >= 0.f &&
+        Now - GroundPassRequestedAt6AO51 >= 18.f;
+    if (bStalled6AO51 || bRequestExpired6AO51)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Training6AO51] WATCHDOG phase=%d attempt=%d requested=%d matePossession=%d mateBusy=%d mateSpeed=%.1f ballSpeed=%.1f reason=%s"),
+            GroundPassState6AN, GetGroundPassAttempt6AN(), bGroundPassRequested6AN1, Mate->IsAIPossessingBall(), bMateBusy6AO51,
+            Mate->GetVelocity().Size2D(), PracticeBall6B->GetBallPhysicsVelocity().Size(), bStalled6AO51 ? TEXT("idle") : TEXT("request timeout"));
+        RetryGroundPass6AN1(TEXT("Situacion sin progreso antes del pase"));
+        return;
+    }
     // 6AM shared continuous dribbling + animated turns + real tackle evasion.
     // Alternate longitudinal endpoints in a band corridor, not the goal.
     const float HalfLength = SoccerFieldDimensions::HalfPitchLengthCm;

@@ -307,6 +307,44 @@ protected:
 	void MoveTowardFreeChargedShot6AO2(const FVector& PursuitLocation, bool bCanKick);
 	bool bFreeChargedShotFastRun6AO3 = false;
 	float HumanShotNextSpeedLog6AO4 = -1.f;
+	// Shared open-play charged foot shot: a fixed preparation pose and an
+	// absolute predicted impact time, independent of the exercise GameMode.
+	void ResetFreeShotPlan6AO5(bool bResetAttempt = true);
+	bool BuildFreeShotPlan6AO5(float Now);
+	bool PredictFreeShotBall6AO5(float Seconds, FVector& OutLocation) const;
+	bool IsFreeShotContactAtPose6AO5(const FVector& BallLocation, const FVector& Pose,
+		const FVector& Aim, float Margin) const;
+	UAnimMontage* SelectKickMontageForPose6AO5(const FVector& TargetLocation,
+		const FVector& BallLocation, const FVector& Forward, bool bMoving, float& OutHorizontalSpeed) const;
+	float ResolveKickImpactDelay6AO5(float AuthoredDelay, float AuthoredLength, float PlayRate) const;
+	bool bFreeShotPlanValid6AO5 = false;
+	bool bFreeShotPrepared6AO5 = false;
+	bool bFreeShotCommit6AO5 = false;
+	int32 FreeShotDetourPhase6AO5 = 0;
+	FVector FreeShotDetourAnchor6AO5 = FVector::ZeroVector;
+	FVector FreeShotDetourBehind6AO5 = FVector::ZeroVector;
+	int32 FreeShotBallRevision6AO5 = 0;
+	int32 FreeShotSide6AO5 = 0;
+	int32 FreeShotPlans6AO5 = 0;
+	int32 FreeShotStops6AO5 = 0;
+	FVector FreeShotAim6AO5 = FVector::ZeroVector;
+	FVector FreeShotPose6AO5 = FVector::ZeroVector;
+	FVector FreeShotFacing6AO5 = FVector::ZeroVector;
+	FVector FreeShotContact6AO5 = FVector::ZeroVector;
+	FVector FreeShotDetour6AO5 = FVector::ZeroVector;
+	float FreeShotImpactTime6AO5 = 0.f;
+	float FreeShotDelay6AO5 = 0.f;
+	float FreeShotNextCheck6AO5 = -1.f;
+	float FreeShotNextPlan6AO5 = -1.f;
+	UAnimMontage* FreeShotMontage6AO5 = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Free Shot Planning", meta = (ClampMin = "2.0"))
+	float FreeShotPreparationEnterCm6AO5 = 8.f;
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Free Shot Planning", meta = (ClampMin = "5.0"))
+	float FreeShotPreparationExitCm6AO5 = 20.f;
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Free Shot Planning", meta = (ClampMin = "5.0"))
+	float FreeShotPredictionDriftCm6AO5 = 24.f;
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing|Free Shot Planning", meta = (ClampMin = "0.05", ClampMax = "0.5"))
+	float FreeShotRecheckSeconds6AO5 = 0.12f;
 	bool IsBallWithinHumanFootPhysicalContact(
 		const ASoccerBall* SoccerBall
 	) const;

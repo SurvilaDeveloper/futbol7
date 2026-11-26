@@ -149,6 +149,8 @@ private:
     float GroundPassLastDefenderMove6AN1 = -100.f;
     float GroundPassLastDefenderTackle6AN1 = -100.f;
     float GroundPassDefenderControlSince6AN1 = -1.f;
+    float GroundPassStalledSince6AO51 = -1.f;
+    float GroundPassRequestedAt6AO51 = -1.f;
     float GroundPassFinishAt6AN1 = 0.f;
     FVector GroundPassPreviousBallLocal6AN1 = FVector::ZeroVector;
     int32 GroundPassTouches6AN1 = 0;

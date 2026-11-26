@@ -784,6 +784,14 @@ bool AThirdPersonCppCharacter::GetHumanJumpHeaderHUDStatus(
 void AThirdPersonCppCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if ((bFreeShotPlanValid6AO5 || bFreeShotPrepared6AO5 || FreeShotDetourPhase6AO5 != 0) &&
+		(SoccerControlState != ESoccerPlayerControlState::ChasingBall ||
+		 PendingKickMode != ESoccerPendingKickMode::KickAndRelease ||
+		 bIsChargingKickRelease || IsTackleActive() || IsTackleFallReactionActive() ||
+		 IsAerialActionQueuedOrPlaying() || bIsHumanStealAttemptActive))
+	{
+		ResetFreeShotPlan6AO5();
+	}
 	bFreeChargedShotFastRun6AO3 = false;
 	UpdateDribbleComparison6F(DeltaTime);
 
@@ -2031,6 +2039,7 @@ void AThirdPersonCppCharacter::OnAerialBallContactResolved(
 
 void AThirdPersonCppCharacter::EnterManualControl()
 {
+	ResetFreeShotPlan6AO5();
 	bFreeChargedShotFastRun6AO3 = false;
 	if (
 		SoccerControlState == ESoccerPlayerControlState::PossessingBall ||
@@ -2068,6 +2077,7 @@ void AThirdPersonCppCharacter::EnterManualControl()
 
 void AThirdPersonCppCharacter::EnterChasingBall()
 {
+	ResetFreeShotPlan6AO5();
 	bFreeChargedShotFastRun6AO3 = false;
 	if (
 		SoccerControlState == ESoccerPlayerControlState::PossessingBall ||
@@ -2197,6 +2207,7 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 	// Never turn that anticipation into a ground kick against the teammate.
 	if (HasPendingHumanAerialPass6AO1())
 	{
+		ResetFreeShotPlan6AO5();
 		if (UCharacterMovementComponent* Movement = GetCharacterMovement())
 			Movement->StopMovementImmediately();
 		return;
@@ -2240,6 +2251,8 @@ void AThirdPersonCppCharacter::MoveTowardBall()
 		MoveTowardFreeChargedShot6AO2(PursuitLocation, bCanPossessBall);
 		return;
 	}
+
+	if (bFreeShotPlanValid6AO5 || bFreeShotPrepared6AO5 || FreeShotDetourPhase6AO5 != 0) ResetFreeShotPlan6AO5();
 
 	// A strong change of direction requested while chasing may need a physical
 	// setup behind the live ball before its montage can start. Keep that setup
@@ -2486,71 +2499,379 @@ bool AThirdPersonCppCharacter::ShouldDeferPassiveBallBodyContact6AO2(const ASocc
     return IsChargedKickBallPositionAligned(Ball->GetActorLocation(), Target);
 }
 
+void AThirdPersonCppCharacter::ResetFreeShotPlan6AO5(bool bResetAttempt)
+{
+	bFreeShotPlanValid6AO5 = false;
+	bFreeShotPrepared6AO5 = false;
+	bFreeShotCommit6AO5 = false;
+	FreeShotMontage6AO5 = nullptr;
+	FreeShotNextCheck6AO5 = -1.f;
+	FreeShotNextPlan6AO5 = -1.f;
+	if (bResetAttempt)
+	{
+		FreeShotSide6AO5 = 0;
+		FreeShotDetourPhase6AO5 = 0;
+		FreeShotPlans6AO5 = 0;
+		FreeShotStops6AO5 = 0;
+	}
+}
+
+bool AThirdPersonCppCharacter::PredictFreeShotBall6AO5(float Seconds, FVector& OutLocation) const
+{
+	if (!IsValid(ControlledBall)) return false;
+	if (Seconds <= 0.f)
+	{
+		OutLocation = ControlledBall->GetActorLocation();
+		return true;
+	}
+	TArray<FSoccerBallTrajectorySample> Samples;
+	if (!ControlledBall->BuildPredictedTrajectory(FMath::Max(0.04f, Seconds), 0.04f, Samples)) return false;
+	for (int32 Index = 1; Index < Samples.Num(); ++Index)
+	{
+		const FSoccerBallTrajectorySample& Next = Samples[Index];
+		if (Next.bTrajectoryTerminated) return false;
+		if (Next.TimeFromNow + KINDA_SMALL_NUMBER >= Seconds)
+		{
+			const FSoccerBallTrajectorySample& Prev = Samples[Index - 1];
+			const float Alpha = FMath::Clamp((Seconds - Prev.TimeFromNow) /
+				FMath::Max(KINDA_SMALL_NUMBER, Next.TimeFromNow - Prev.TimeFromNow), 0.f, 1.f);
+			OutLocation = FMath::Lerp(Prev.Location, Next.Location, Alpha);
+			return true;
+		}
+	}
+	return false;
+}
+
+float AThirdPersonCppCharacter::ResolveKickImpactDelay6AO5(float AuthoredDelay, float AuthoredLength, float PlayRate) const
+{
+	const float Rate = FMath::Max(1.f, PlayRate);
+	return FMath::Clamp(AuthoredDelay / Rate,
+		FMath::Max(0.01f, HumanKickMontageMinimumPhysicalImpactDelay),
+		FMath::Max(0.05f, AuthoredLength / Rate - 0.05f));
+}
+
+bool AThirdPersonCppCharacter::BuildFreeShotPlan6AO5(float Now)
+{
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	if (!Movement || !Capsule || !IsValid(ControlledBall)) return false;
+	TArray<FSoccerBallTrajectorySample> Samples;
+	if (!ControlledBall->BuildPredictedTrajectory(2.5f, 0.05f, Samples)) return false;
+	const FVector Player = GetActorLocation();
+	const float GroundZ = Player.Z - Capsule->GetScaledCapsuleHalfHeight();
+	const float Reach = FMath::Max(1.f, FMath::Min(HumanFootContactMaxDistance, ChargedKickAlignedMaxDistance));
+	const float StandOff = FMath::Min(Reach * 0.80f, FMath::Max(1.f, HumanDribbleRepositionBehindDistance));
+	const float Speed = FMath::Max(1.f, GetEnergyAdjustedFastRunSpeed());
+	const float Enter = FMath::Max(2.f, FreeShotPreparationEnterCm6AO5);
+	for (const FSoccerBallTrajectorySample& Sample : Samples)
+	{
+		if (Sample.bTrajectoryTerminated) break;
+		const float Height = Sample.Location.Z - GroundZ;
+		if (Height < HumanFootContactMinimumHeight || Height > HumanFootContactMaximumHeight) continue;
+		FVector Facing = (PendingKickTarget - Sample.Location).GetSafeNormal2D();
+		if (Facing.IsNearlyZero()) Facing = GetActorForwardVector().GetSafeNormal2D();
+		if (Facing.IsNearlyZero()) continue;
+		const float Reserve = FMath::Max(ChargedKickPredictionSafetyMargin, 14.f + FMath::Min(8.f, Sample.Velocity.Size2D() * 0.04f));
+		// Select a pose INSIDE the conservative zone rather than rejecting all
+		// moving-ball samples when the configured stand-off is near max reach.
+		const float PlannedStandOff = FMath::Min(StandOff, FMath::Max(1.f, Reach - Reserve - 4.f));
+		// Use the existing charged-kick contact envelope, not a single ideal point.
+		// Prefer the current pose, then the closest safe pose approached directly.
+		const FVector Right = FVector::CrossProduct(FVector::UpVector, Facing).GetSafeNormal();
+		const FVector FromBall = Player - Sample.Location;
+		const float LateralLimit = FMath::Max(1.f,
+			FMath::Min(ChargedKickAlignedMaxLateralOffset, FMath::Max(1.f, Reach - Reserve)) - Reserve);
+		const float MinForward = PlannedStandOff * 0.50f;
+		const float Lateral = FMath::Clamp(FVector::DotProduct(FromBall, Right),
+			-FMath::Min(LateralLimit, PlannedStandOff * 0.80f), FMath::Min(LateralLimit, PlannedStandOff * 0.80f));
+		const float MaxForward = FMath::Sqrt(FMath::Max(0.f, FMath::Square(PlannedStandOff) - FMath::Square(Lateral)));
+		const float Forward = FMath::Clamp(FVector::DotProduct(FromBall, -Facing),
+			FMath::Min(MinForward, MaxForward), MaxForward);
+		FVector Pose = Sample.Location - Facing * Forward + Right * Lateral;
+		Pose.Z = Player.Z;
+		const bool bCurrentPoseValid = IsFreeShotContactAtPose6AO5(Sample.Location, Player, PendingKickTarget, Reserve);
+		if (bCurrentPoseValid)
+		{
+			Pose = Player;
+		}
+		float UnusedSpeed = TargetKickHorizontalSpeed;
+		UAnimMontage* Montage = SelectKickMontageForPose6AO5(PendingKickTarget, Sample.Location, Facing, false, UnusedSpeed);
+		// A charged first-time shot should have an authored contact time even at
+		// short range. Leave ordinary short passes / possession kicks unchanged.
+		if (!Montage)
+		{
+			Montage = StandLeftLegPassMontage ? StandLeftLegPassMontage : StandRightLegPassMontage;
+		}
+		// The planned free strike uses authored timing, not a speed-up that
+		// depends on transient running velocity. Both planning and execution use it.
+		float Delay = 0.f;
+		if (Montage)
+		{
+			const float Length = FMath::Max(0.05f, Montage->GetPlayLength());
+			Delay = ResolveKickImpactDelay6AO5(GetKickImpactDelayForMontage(Montage, Length), Length, 1.f);
+		}
+		const FVector ToPose = Pose - Player;
+		const float Distance = ToPose.Size2D();
+		const FVector Direction = ToPose.GetSafeNormal2D();
+		const float InitialSpeed = FMath::Clamp(FVector::DotProduct(GetVelocity(), Direction), 0.f, Speed);
+		const float Accel = FMath::Max(1.f, Movement->MaxAcceleration);
+		const float AccelTime = (Speed - InitialSpeed) / Accel;
+		const float AccelDistance = (InitialSpeed + Speed) * 0.5f * AccelTime;
+		const float TravelDistance = FMath::Max(0.f, Distance - Enter);
+		float TravelTime = TravelDistance <= AccelDistance
+			? (FMath::Sqrt(InitialSpeed * InitialSpeed + 2.f * Accel * TravelDistance) - InitialSpeed) / Accel
+			: AccelTime + (TravelDistance - AccelDistance) / Speed;
+		const float StartYaw = Distance > Enter ? Direction.Rotation().Yaw : GetActorRotation().Yaw;
+		const float TurnTime = FMath::Abs(FMath::FindDeltaAngleDegrees(StartYaw, Facing.Rotation().Yaw)) /
+			FMath::Max(90.f, FMath::Abs(Movement->RotationRate.Yaw));
+		TravelTime += TurnTime + 0.10f;
+		if (Sample.TimeFromNow + 0.025f < TravelTime + Delay) continue;
+		if (!IsFreeShotContactAtPose6AO5(Sample.Location, Pose, PendingKickTarget, Reserve)) continue;
+		FreeShotPose6AO5 = Pose;
+		FreeShotFacing6AO5 = Facing;
+		FreeShotContact6AO5 = Sample.Location;
+		FreeShotAim6AO5 = PendingKickTarget;
+		FreeShotImpactTime6AO5 = Now + Sample.TimeFromNow;
+		FreeShotDelay6AO5 = Delay;
+		FreeShotMontage6AO5 = Montage;
+		FreeShotBallRevision6AO5 = ControlledBall->GetTrajectoryRevision();
+		FreeShotNextCheck6AO5 = Now + FMath::Max(0.05f, FreeShotRecheckSeconds6AO5);
+		bFreeShotPlanValid6AO5 = true;
+		++FreeShotPlans6AO5;
+		if (bHumanAerialCalibrationLog6AO1)
+		{
+			UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO52] PLAN n=%d mode=%s pose=%s impact=%s eta=%.3f delay=%.3f montage=%s"),
+				FreeShotPlans6AO5, bCurrentPoseValid ? TEXT("CURRENT") : TEXT("DIRECT"), *Pose.ToCompactString(), *Sample.Location.ToCompactString(), Sample.TimeFromNow, Delay, *GetNameSafe(Montage));
+		}
+		return true;
+	}
+	return false;
+}
+
 void AThirdPersonCppCharacter::MoveTowardFreeChargedShot6AO2(const FVector& PursuitLocation, bool bCanKick)
 {
-    UCharacterMovementComponent* Movement = GetCharacterMovement();
-    if (!Movement || !IsValid(ControlledBall)) return;
-    // Keep the full energy-adjusted FastRun during this assisted approach.
-    // The selected manual speed is not overwritten.
-    bFreeChargedShotFastRun6AO3 = true;
-    Movement->MaxWalkSpeed = GetEnergyAdjustedFastRunSpeed();
-    const FVector BallLocation = ControlledBall->GetActorLocation();
-    FVector KickDirection = (PendingKickTarget - BallLocation).GetSafeNormal2D();
-    if (KickDirection.IsNearlyZero()) KickDirection = GetActorForwardVector().GetSafeNormal2D();
-    if (KickDirection.IsNearlyZero()) return;
-    const float Distance = FVector::Dist2D(GetActorLocation(), BallLocation);
-    if (bHumanAerialCalibrationLog6AO1 && GetWorld() && GetWorld()->GetTimeSeconds() >= HumanShotNextSpeedLog6AO4)
-    {
-        HumanShotNextSpeedLog6AO4 = GetWorld()->GetTimeSeconds() + 0.25f;
-        UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO4] APPROACH distance=%.1f actual=%.1f max=%.1f fastRun=%.1f"),
-            Distance, GetVelocity().Size2D(), Movement->MaxWalkSpeed, GetEnergyAdjustedFastRunSpeed());
-    }
-    const float Reach = FMath::Max(1.0f, FMath::Min(HumanFootContactMaxDistance, ChargedKickAlignedMaxDistance));
-    const float StandOff = FMath::Min(Reach * 0.85f, FMath::Max(1.0f, HumanDribbleRepositionBehindDistance));
-    const float Forward = FVector::DotProduct(BallLocation - GetActorLocation(), KickDirection);
-    if (bCanKick && Forward >= StandOff * 0.55f &&
-        CanHumanChargedKickContactBallAtImpact(ControlledBall, PendingKickTarget, 0.12f))
-    {
-        Movement->StopMovementImmediately();
-        SetActorRotation(KickDirection.Rotation());
-        ExecutePendingKick();
-        if (SoccerControlState != ESoccerPlayerControlState::ChasingBall) return;
-        // A longer montage may still have rejected the predicted contact.
-        // Keep the request and continue to its preparation point.
-    }
-
-    FVector SetupBall = PursuitLocation;
-    if (Distance < 350.0f)
-    {
-        // Short forecast while closing the final metres; no ball relocation.
-        SetupBall = BallLocation + ControlledBall->GetBallPhysicsVelocity() * 0.18f;
-    }
-    FVector Setup = SetupBall - KickDirection * StandOff;
-    if (Distance < 220.0f && Forward < StandOff * 0.45f)
-    {
-        // Do not run through the ball when approaching from the wrong side.
-        const FVector Right = FVector::CrossProduct(FVector::UpVector, KickDirection).GetSafeNormal();
-        const float Lateral = FVector::DotProduct(GetActorLocation() - BallLocation, Right);
-        const float Side = Lateral >= 0.0f ? 1.0f : -1.0f;
-        const float Clearance = StandOff + ControlledBall->GetBallRadiusCm() + 15.0f;
-        Setup += Right * Side * Clearance;
-    }
-    FVector ToSetup = Setup - GetActorLocation();
-    ToSetup.Z = 0.0f;
-    const float Remaining = ToSetup.Size();
-    const FVector Direction = ToSetup.GetSafeNormal();
-    // Only stop at the final preparation point (or when the next movement
-    // step would overshoot it). Do not introduce a jog/walk approach phase.
-    const float StepTime = GetWorld() ? FMath::Clamp(GetWorld()->GetDeltaSeconds(), 0.f, 0.05f) : 0.f;
-    const float ClosingSpeed = FMath::Max(0.f, FVector::DotProduct(GetVelocity(), Direction));
-    if (Remaining <= 6.f || (Remaining <= 6.f + ClosingSpeed * StepTime && Distance < 220.f))
-    {
-        Movement->StopMovementImmediately();
-        SetActorRotation(KickDirection.Rotation());
-        return;
-    }
-    AddMovementInput(Direction, 1.0f);
-    SetActorRotation(Direction.Rotation());
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	if (!Movement || !Capsule || !IsValid(ControlledBall) || !GetWorld()) return;
+	bFreeChargedShotFastRun6AO3 = true;
+	Movement->MaxWalkSpeed = GetEnergyAdjustedFastRunSpeed();
+	const float Now = GetWorld()->GetTimeSeconds();
+	const FVector Player = GetActorLocation();
+	const FVector Ball = ControlledBall->GetActorLocation();
+	const float Distance = FVector::Dist2D(Player, Ball);
+	const float Enter = FMath::Max(2.f, FreeShotPreparationEnterCm6AO5);
+	const float Exit = FMath::Max(Enter + 2.f, FreeShotPreparationExitCm6AO5);
+	const float Step = FMath::Clamp(GetWorld()->GetDeltaSeconds(), 0.f, 0.05f);
+	const float BallSpeed = ControlledBall->GetBallPhysicsVelocity().Size2D();
+	const float Reserve = FMath::Max(ChargedKickPredictionSafetyMargin, 14.f + FMath::Min(8.f, BallSpeed * 0.04f));
+	// Keep a detour as a single movement transaction, not a new route each tick.
+	const bool bFollowingDetour = FreeShotDetourPhase6AO5 == 1 || FreeShotDetourPhase6AO5 == 2;
+	if (bHumanAerialCalibrationLog6AO1 && Now >= HumanShotNextSpeedLog6AO4)
+	{
+		HumanShotNextSpeedLog6AO4 = Now + 0.25f;
+		UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO4] APPROACH distance=%.1f actual=%.1f max=%.1f fastRun=%.1f"),
+			Distance, GetVelocity().Size2D(), Movement->MaxWalkSpeed, GetEnergyAdjustedFastRunSpeed());
+	}
+	if (bFreeShotPlanValid6AO5 && !FreeShotAim6AO5.Equals(PendingKickTarget, 1.f)) ResetFreeShotPlan6AO5();
+	if (bFreeShotPlanValid6AO5 && !bFollowingDetour && Now >= FreeShotNextCheck6AO5)
+	{
+		FreeShotBallRevision6AO5 = ControlledBall->GetTrajectoryRevision();
+		FreeShotNextCheck6AO5 = Now + FMath::Max(0.05f, FreeShotRecheckSeconds6AO5);
+		FVector Updated;
+		const float RemainingImpact = FMath::Max(0.f, FreeShotImpactTime6AO5 - Now);
+		const bool bPredicted = PredictFreeShotBall6AO5(RemainingImpact, Updated);
+		const bool bDrifted = !bPredicted || FVector::Dist(Updated, FreeShotContact6AO5) > FMath::Max(5.f, FreeShotPredictionDriftCm6AO5);
+		bool bExpired = Now > FreeShotImpactTime6AO5 - FreeShotDelay6AO5 + 0.15f;
+		if (bExpired && !bDrifted && !bFreeShotPrepared6AO5 && BallSpeed < 35.f)
+		{
+			// The same stationary opportunity remains valid after its estimated ETA.
+			FreeShotImpactTime6AO5 = Now + FreeShotDelay6AO5 + 0.20f;
+			bExpired = false;
+		}
+		FVector LiveImpact;
+		const float GroundZ = Player.Z - Capsule->GetScaledCapsuleHalfHeight();
+		const bool bStillViable = bFreeShotPrepared6AO5 &&
+			PredictFreeShotBall6AO5(FreeShotDelay6AO5, LiveImpact) &&
+			LiveImpact.Z - GroundZ >= HumanFootContactMinimumHeight &&
+			LiveImpact.Z - GroundZ <= HumanFootContactMaximumHeight &&
+			IsFreeShotContactAtPose6AO5(LiveImpact, Player, PendingKickTarget, Reserve);
+		if ((bDrifted || bExpired) && !bStillViable)
+		{
+			if (bHumanAerialCalibrationLog6AO1)
+			{
+				UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO5] REPLAN reason=%s plans=%d stops=%d"),
+					bDrifted ? TEXT("trajectory") : TEXT("time"), FreeShotPlans6AO5, FreeShotStops6AO5);
+			}
+			ResetFreeShotPlan6AO5(false);
+			// Do not discard the selected side / completed route on small drift.
+			FreeShotNextPlan6AO5 = Now + FMath::Max(0.05f, FreeShotRecheckSeconds6AO5);
+		}
+	}
+	if (!bFreeShotPlanValid6AO5 && !bFollowingDetour && Now >= FreeShotNextPlan6AO5)
+	{
+		FreeShotNextPlan6AO5 = Now + FMath::Max(0.05f, FreeShotRecheckSeconds6AO5);
+		BuildFreeShotPlan6AO5(Now);
+	}
+	FVector Facing = bFreeShotPlanValid6AO5 ? FreeShotFacing6AO5 : (PendingKickTarget - Ball).GetSafeNormal2D();
+	if (Facing.IsNearlyZero()) Facing = GetActorForwardVector().GetSafeNormal2D();
+	const float Reach = FMath::Max(1.f, FMath::Min(HumanFootContactMaxDistance, ChargedKickAlignedMaxDistance));
+	const float StandOff = FMath::Min(Reach * 0.80f, FMath::Max(1.f, HumanDribbleRepositionBehindDistance));
+	// Until a real plan is available, approach from our own side of the ball.
+	// Do not chase an invented point on the opposite side of the live ball.
+	FVector FallbackSide = (Player - PursuitLocation).GetSafeNormal2D();
+	if (FallbackSide.IsNearlyZero()) FallbackSide = -Facing;
+	const float FallbackClearance = Capsule->GetScaledCapsuleRadius() + ControlledBall->GetBallRadiusCm() + 12.f;
+	FVector Setup = bFreeShotPlanValid6AO5 ? FreeShotPose6AO5 : PursuitLocation + FallbackSide * FMath::Max(StandOff, FallbackClearance);
+	if (!bFreeShotPlanValid6AO5 && FVector::Dist2D(Player, PursuitLocation) <= FMath::Max(StandOff, FallbackClearance)) Setup = Player;
+	Setup.Z = Player.Z;
+	const float Remaining = FVector::Dist2D(Player, Setup);
+	const FVector ToSetup = (Setup - Player).GetSafeNormal2D();
+	const float Closing = FMath::Max(0.f, FVector::DotProduct(GetVelocity(), ToSetup));
+	const float CaptureRadius = FMath::Min(FMath::Max(Exit, 32.f), Enter + Closing * FMath::Max(Step, 0.035f));
+	FVector ImmediateImpact;
+	const float PreparationGroundZ = Player.Z - Capsule->GetScaledCapsuleHalfHeight();
+	const bool bImmediateContact = bFreeShotPlanValid6AO5 &&
+		PredictFreeShotBall6AO5(FreeShotDelay6AO5, ImmediateImpact) &&
+		ImmediateImpact.Z - PreparationGroundZ >= HumanFootContactMinimumHeight &&
+		ImmediateImpact.Z - PreparationGroundZ <= HumanFootContactMaximumHeight &&
+		IsFreeShotContactAtPose6AO5(ImmediateImpact, Player, PendingKickTarget, Reserve);
+	const bool bPlannedContact = bFreeShotPlanValid6AO5 &&
+		IsFreeShotContactAtPose6AO5(FreeShotContact6AO5, Player, PendingKickTarget, Reserve);
+	if (bFreeShotPrepared6AO5 && Remaining > FMath::Max(Exit, 32.f) && !bImmediateContact && !bPlannedContact)
+	{
+		bFreeShotPrepared6AO5 = false;
+	}
+	// A valid actual pose wins even if it is not the preferred planned point.
+	// This also allows an already viable shot to end a previously necessary route.
+	if (bFreeShotPlanValid6AO5 && !bFreeShotPrepared6AO5 &&
+		(bImmediateContact || (bPlannedContact && Remaining <= CaptureRadius)))
+	{
+		bFreeShotPrepared6AO5 = true;
+		if (FreeShotDetourPhase6AO5 == 1 || FreeShotDetourPhase6AO5 == 2) FreeShotDetourPhase6AO5 = 3;
+		++FreeShotStops6AO5;
+		ConsumeMovementInputVector();
+		Movement->StopMovementImmediately();
+		if (bHumanAerialCalibrationLog6AO1)
+		{
+			UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO5] PREPARED distance=%.1f plans=%d stops=%d"), Remaining, FreeShotPlans6AO5, FreeShotStops6AO5);
+		}
+	}
+	if (bFreeShotPrepared6AO5)
+	{
+		ConsumeMovementInputVector();
+		const float DesiredYaw = Facing.Rotation().Yaw;
+		const float NewYaw = FMath::FixedTurn(GetActorRotation().Yaw, DesiredYaw, FMath::Max(90.f, FMath::Abs(Movement->RotationRate.Yaw)) * Step);
+		SetActorRotation(FRotator(0.f, NewYaw, 0.f));
+		const float GroundZ = Player.Z - Capsule->GetScaledCapsuleHalfHeight();
+		FVector Impact;
+		if (bCanKick && FMath::Abs(FMath::FindDeltaAngleDegrees(NewYaw, DesiredYaw)) <= 8.f &&
+			PredictFreeShotBall6AO5(FreeShotDelay6AO5, Impact) &&
+			Impact.Z - GroundZ >= HumanFootContactMinimumHeight && Impact.Z - GroundZ <= HumanFootContactMaximumHeight &&
+			IsFreeShotContactAtPose6AO5(Impact, Player, PendingKickTarget, Reserve) &&
+			(FreeShotMontage6AO5 || IsBallWithinHumanFootPhysicalContact(ControlledBall)))
+		{
+			// The predicted contact is viable at the exact authored timer delay.
+			// Do not require current contact for a montage: the impact itself
+			// must still pass the original live physical and match-rule checks.
+			bFreeShotCommit6AO5 = true;
+			if (bHumanAerialCalibrationLog6AO1)
+			{
+				UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO51] COMMIT plans=%d stops=%d delay=%.3f predictedDist=%.1f reserve=%.1f impact=%s montage=%s"),
+					FreeShotPlans6AO5, FreeShotStops6AO5, FreeShotDelay6AO5, FVector::Dist2D(Player, Impact), Reserve,
+					*Impact.ToCompactString(), *GetNameSafe(FreeShotMontage6AO5));
+			}
+			ExecutePendingKick();
+			ResetFreeShotPlan6AO5();
+		}
+		return;
+	}
+	// Full detour is exceptional: the player must be on the outgoing side of
+	// the LIVE ball (approach and strike point in opposing half planes), and
+	// the segment toward the actual planned pose must cross the ball corridor.
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, Facing).GetSafeNormal();
+	const float Clearance = Capsule->GetScaledCapsuleRadius() + ControlledBall->GetBallRadiusCm() + 12.f;
+	const FVector Segment(Setup.X - Player.X, Setup.Y - Player.Y, 0.f);
+	const FVector RelativeBall(Ball.X - Player.X, Ball.Y - Player.Y, 0.f);
+	const float Along = FVector::DotProduct(RelativeBall, Segment) / FMath::Max(1.f, Segment.SizeSquared());
+	const float SegmentGap = (RelativeBall - Segment * FMath::Clamp(Along, 0.f, 1.f)).Size();
+	const float PlayerAhead = FVector::DotProduct(Player - Ball, Facing);
+	const float SetupBehind = FVector::DotProduct(Ball - Setup, Facing);
+	const bool bOpposite = PlayerAhead > FMath::Max(0.f, ChargedKickAlignedRearTolerance) && SetupBehind > 0.f;
+	const bool bBlocked = Along > 0.f && Along < 1.f && SegmentGap < Clearance;
+	const bool bNeedsDetour = bFreeShotPlanValid6AO5 && bOpposite && bBlocked;
+	const float BallShift = FVector::Dist2D(Ball, FreeShotDetourAnchor6AO5);
+	if (FreeShotDetourPhase6AO5 != 0 && BallShift > FMath::Max(120.f, Clearance * 1.5f))
+	{
+		FreeShotDetourPhase6AO5 = 0;
+		ResetFreeShotPlan6AO5(false);
+		FreeShotNextPlan6AO5 = Now;
+		return;
+	}
+	if (FreeShotDetourPhase6AO5 == 0 && bNeedsDetour && Distance < 300.f)
+	{
+		if (FreeShotSide6AO5 == 0) FreeShotSide6AO5 = FVector::DotProduct(Player - Ball, Right) >= 0.f ? 1 : -1;
+		const FVector SideOffset = Right * float(FreeShotSide6AO5) * (Clearance + 35.f);
+		FreeShotDetourAnchor6AO5 = Ball;
+		FreeShotDetour6AO5 = Ball + Facing * FMath::Max(0.f, PlayerAhead) + SideOffset;
+		FreeShotDetourBehind6AO5 = Ball - Facing * (Clearance + 20.f) + SideOffset;
+		FreeShotDetour6AO5.Z = Player.Z;
+		FreeShotDetourBehind6AO5.Z = Player.Z;
+		FreeShotDetourPhase6AO5 = 1;
+		if (bHumanAerialCalibrationLog6AO1)
+		{
+			UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO52] ROUTE START opposite=1 side=%d ahead=%.1f gap=%.1f"), FreeShotSide6AO5, PlayerAhead, SegmentGap);
+		}
+	}
+	if (FreeShotDetourPhase6AO5 == 1 || FreeShotDetourPhase6AO5 == 2)
+	{
+		// Fixed geometric gates: do not turn back to touch an overshot waypoint.
+		FVector Back = (FreeShotDetourBehind6AO5 - FreeShotDetour6AO5).GetSafeNormal2D();
+		if (Back.IsNearlyZero()) Back = -Facing;
+		const FVector Side = FVector::CrossProduct(FVector::UpVector, -Back).GetSafeNormal() * float(FreeShotSide6AO5);
+		const FVector FromAnchor = Player - FreeShotDetourAnchor6AO5;
+		const float LateralProgress = FVector::DotProduct(FromAnchor, Side);
+		const float BackProgress = FVector::DotProduct(FromAnchor, Back);
+		// Leave the route as soon as a direct approach is safe; no compulsory
+		// second waypoint or full arc if the ball has moved out of the way.
+		if (!bBlocked || PlayerAhead <= -Clearance || (FreeShotDetourPhase6AO5 == 2 && BackProgress >= Clearance))
+		{
+			FreeShotDetourPhase6AO5 = 3;
+			ResetFreeShotPlan6AO5(false);
+			FreeShotNextPlan6AO5 = Now;
+			if (bHumanAerialCalibrationLog6AO1)
+			{
+				UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO52] ROUTE COMPLETE side=%d ahead=%.1f"), FreeShotSide6AO5, PlayerAhead);
+			}
+			return;
+		}
+		if (FreeShotDetourPhase6AO5 == 1 && LateralProgress >= Clearance + 15.f)
+		{
+			FreeShotDetourPhase6AO5 = 2;
+			if (bHumanAerialCalibrationLog6AO1)
+			{
+				UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO52] ROUTE SIDE CLEARED lateral=%.1f"), LateralProgress);
+			}
+		}
+		const float Correction = FMath::Clamp((Clearance + 35.f - LateralProgress) / 120.f, -0.25f, 0.60f);
+		const FVector RouteDirection = FreeShotDetourPhase6AO5 == 1 ? Side : (Back + Side * Correction).GetSafeNormal2D();
+		AddMovementInput(RouteDirection, 1.f);
+		return;
+	}
+	// The planned pose itself already accounts for lateral approach. Do not
+	// manufacture a tangent around the ball for ordinary forward/diagonal kicks.
+	const FVector Direction = (Setup - Player).GetSafeNormal2D();
+	if (!Direction.IsNearlyZero() && Remaining > (bFreeShotPlanValid6AO5 ? 2.f : Enter))
+	{
+		const FVector Velocity2D(GetVelocity().X, GetVelocity().Y, 0.f);
+		const FVector LateralVelocity = Velocity2D - Direction * FVector::DotProduct(Velocity2D, Direction);
+		const float SteeringScale = FMath::Clamp(1.f - Remaining / 350.f, 0.f, 1.f);
+		const FVector Steering = (Direction - LateralVelocity * (SteeringScale * 0.8f / FMath::Max(1.f, Movement->MaxWalkSpeed))).GetSafeNormal2D();
+		AddMovementInput(Steering.IsNearlyZero() ? Direction : Steering, 1.f);
+	}
+	else if (!bFreeShotPlanValid6AO5)
+	{
+		Movement->StopMovementImmediately();
+	}
 }
 
 void AThirdPersonCppCharacter::MoveTowardAerialPreparation()
@@ -3378,6 +3699,7 @@ void AThirdPersonCppCharacter::ReleaseBallForMatchRestart(bool bShowFeedback)
 
 void AThirdPersonCppCharacter::ClearBallActionsForMatchRestriction()
 {
+	ResetFreeShotPlan6AO5();
 	const bool bWasKickOrDribbleTurn =
 		SoccerControlState == ESoccerPlayerControlState::Kicking ||
 		SoccerControlState == ESoccerPlayerControlState::DribbleTurning;
@@ -7209,6 +7531,8 @@ void AThirdPersonCppCharacter::StoreKickTarget(ESoccerPendingKickMode KickMode)
 		MatchManager->CommitActiveRestartLivePositioningForHumanAction();
 	}
 
+	ResetFreeShotPlan6AO5();
+
 	// A valid follow-up click replaces the first-click reception with the
 	// requested kick/pass action.
 	bInitialClickControlledReceptionPending = false;
@@ -7498,12 +7822,17 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		IsValid(MatchManager) &&
 		MatchManager->CanHumanFootRestartTakerExecuteNow(this);
 
+	const bool bPlannedFreeShot6AO5 = bFreeShotCommit6AO5 && bFreeShotPlanValid6AO5 &&
+		bFreeShotPrepared6AO5 && !bHumanRestartExecution &&
+		SoccerControlState == ESoccerPlayerControlState::ChasingBall &&
+		PendingKickMode == ESoccerPendingKickMode::KickAndRelease && bHasPendingKickHorizontalSpeedOverride;
+
 	// DistanceToBall is intentionally evaluated in 2D while chasing. Therefore
 	// ExecutePendingKick must independently reject a foot action when the ball
 	// is still overhead. Preserve the pending intent so it can be reconsidered
 	// when the physical ball returns to a playable height.
 	if (
-		!bHumanRestartExecution &&
+		!bHumanRestartExecution && !(bPlannedFreeShot6AO5 && FreeShotMontage6AO5) &&
 		!IsBallWithinHumanFootPhysicalContact(ControlledBall)
 	)
 	{
@@ -7518,7 +7847,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 	// A set piece never starts a dribble-turn carry. The ball must remain on the
 	// restart spot until the actual kick impact.
 	if (
-		!bHumanRestartExecution &&
+		!bHumanRestartExecution && !bPlannedFreeShot6AO5 &&
 		TryStartStrongRunDribbleTurnForPendingKick()
 	)
 	{
@@ -7533,7 +7862,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 
 	if (
 		bUseChargedTrajectory &&
-		!bHumanRestartExecution &&
+		!bHumanRestartExecution && !(bPlannedFreeShot6AO5 && FreeShotMontage6AO5) &&
 		!IsChargedKickBallPositionAligned(
 			ControlledBall->GetActorLocation(), PendingKickTarget
 		)
@@ -7563,7 +7892,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		return;
 	}
 
-	UAnimMontage* KickMontage = SelectKickMontageForTarget(
+	UAnimMontage* KickMontage = bPlannedFreeShot6AO5 ? FreeShotMontage6AO5 : SelectKickMontageForTarget(
 		PendingKickTarget,
 		HorizontalSpeedToUse
 	);
@@ -7705,15 +8034,16 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		KickMontage,
 		AuthoredMontageLength
 	);
-	const float MontagePlayRate = BuildHumanKickMontagePhysicalPlayRate(
+	const float MontagePlayRate = bPlannedFreeShot6AO5 ? 1.f : BuildHumanKickMontagePhysicalPlayRate(
 		ControlledBall,
 		AuthoredImpactDelay,
 		bHumanRestartExecution
 	);
+	const float ImpactDelay = ResolveKickImpactDelay6AO5(AuthoredImpactDelay, AuthoredMontageLength, MontagePlayRate);
 
 	if (
 		bUseChargedTrajectory &&
-		!bHumanRestartExecution &&
+		!bHumanRestartExecution && !bPlannedFreeShot6AO5 &&
 		!CanHumanChargedKickContactBallAtImpact(
 			ControlledBall,
 			PendingKickTarget,
@@ -7737,7 +8067,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 	{
 		UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO2] STRIKE START distance=%.1f ballSpeed=%.1f impactDelay=%.3f"),
 			FVector::Dist2D(GetActorLocation(), ControlledBall->GetActorLocation()),
-			ControlledBall->GetBallPhysicsVelocity().Size2D(), AuthoredImpactDelay / FMath::Max(1.0f, MontagePlayRate));
+			ControlledBall->GetBallPhysicsVelocity().Size2D(), ImpactDelay);
 	}
 	ActiveKickTarget = PendingKickTarget;
 	ActiveKickHorizontalSpeed = HorizontalSpeedToUse;
@@ -7791,18 +8121,24 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 
 	if (MontagePlayResult <= 0.0f)
 	{
-		PerformPendingKickImpact();
+		if (bPlannedFreeShot6AO5)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[HumanShot6AO5] MONTAGE FAILED; cancelling planned strike"));
+			bActiveKickHasImpactedBall = true;
+			bActiveKickPhysicalContactMissed = true;
+			ReleaseHumanPhysicalPossession(false, TEXT("PlannedFreeShotMontageFailed"));
+		}
+		else
+		{
+			PerformPendingKickImpact();
+		}
 		FinishPendingKickAnimation();
 		return;
 	}
 
 	const float MontageDuration =
 		AuthoredMontageLength / FMath::Max(1.0f, MontagePlayRate);
-	const float ImpactDelay = FMath::Clamp(
-		AuthoredImpactDelay / FMath::Max(1.0f, MontagePlayRate),
-		FMath::Max(0.01f, HumanKickMontageMinimumPhysicalImpactDelay),
-		FMath::Max(0.05f, MontageDuration - 0.05f)
-	);
+
 
 	GetWorldTimerManager().ClearTimer(KickImpactTimerHandle);
 	GetWorldTimerManager().ClearTimer(KickFinishTimerHandle);
@@ -7881,8 +8217,11 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 	{
 		if (bActiveKickUsesChargedTrajectory)
 		{
-			UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO2] CONTACT MISS distance=%.1f ballSpeed=%.1f"),
-				FVector::Dist2D(GetActorLocation(), ControlledBall->GetActorLocation()), ControlledBall->GetBallPhysicsVelocity().Size2D());
+			UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO2] CONTACT MISS distance=%.1f ballSpeed=%.1f ball=%s player=%s foot=%d aligned=%d"),
+				FVector::Dist2D(GetActorLocation(), ControlledBall->GetActorLocation()), ControlledBall->GetBallPhysicsVelocity().Size2D(),
+				*ControlledBall->GetActorLocation().ToCompactString(), *GetActorLocation().ToCompactString(),
+				IsBallWithinHumanFootPhysicalContact(ControlledBall) ? 1 : 0,
+				IsChargedKickBallPositionAligned(ControlledBall->GetActorLocation(), ActiveKickTarget) ? 1 : 0);
 		}
 		// A moving ball may leave the strike zone between the animation
 		// starting and its real impact. Never kick a distant ball, but do NOT
@@ -8271,17 +8610,17 @@ void AThirdPersonCppCharacter::UpdateCameraQuickView(float DeltaTime)
 }
 
 UAnimMontage* AThirdPersonCppCharacter::SelectKickMontageForTarget(
-	const FVector& TargetLocation,
-	float& OutHorizontalSpeed
-) const
+	const FVector& TargetLocation, float& OutHorizontalSpeed) const
 {
-	if (ControlledBall == nullptr)
-	{
-		return nullptr;
-	}
+	if (ControlledBall == nullptr) return nullptr;
+	return SelectKickMontageForPose6AO5(TargetLocation, ControlledBall->GetActorLocation(),
+		GetActorForwardVector(), GetVelocity().Size2D() >= RunningKickMinSpeed, OutHorizontalSpeed);
+}
 
-	const FVector BallLocation = ControlledBall->GetActorLocation();
-
+UAnimMontage* AThirdPersonCppCharacter::SelectKickMontageForPose6AO5(
+	const FVector& TargetLocation, const FVector& BallLocation,
+	const FVector& Forward, bool bMoving, float& OutHorizontalSpeed) const
+{
 	const float Distance2D = FVector::Dist2D(BallLocation, TargetLocation);
 
 	// Distancia corta: no usamos animaciï¿½n especial.
@@ -8290,7 +8629,7 @@ UAnimMontage* AThirdPersonCppCharacter::SelectKickMontageForTarget(
 		return nullptr;
 	}
 
-	FVector PlayerForward = GetActorForwardVector();
+	FVector PlayerForward = Forward;
 	PlayerForward.Z = 0.0f;
 	PlayerForward.Normalize();
 
@@ -8315,7 +8654,7 @@ UAnimMontage* AThirdPersonCppCharacter::SelectKickMontageForTarget(
 	const bool bSideKick = AngleDegrees > SideKickMinAngleDegrees;
 
 	const bool bPlayerIsMoving =
-		GetVelocity().Size2D() >= RunningKickMinSpeed;
+		bMoving;
 
 	const bool bLongDistance =
 		Distance2D >= LongKickMinDistance;
@@ -9318,14 +9657,17 @@ bool AThirdPersonCppCharacter::CanHumanDribbleTurnMaintainContactAtImpact(
 }
 
 bool AThirdPersonCppCharacter::IsChargedKickBallPositionAligned(
-	const FVector& BallLocation,
-	const FVector& KickTarget,
-	float SafetyMarginCm
-) const
+	const FVector& BallLocation, const FVector& KickTarget, float SafetyMarginCm) const
+{
+	return IsFreeShotContactAtPose6AO5(BallLocation, GetActorLocation(), KickTarget, SafetyMarginCm);
+}
+
+bool AThirdPersonCppCharacter::IsFreeShotContactAtPose6AO5(
+	const FVector& BallLocation, const FVector& Pose, const FVector& Aim, float MarginCm) const
 {
 	// Keep the ball ahead of the striking body and within a compact foot zone.
 	// Checking distance alone allowed balls behind the human to be kicked.
-	FVector KickDirection = KickTarget - BallLocation;
+	FVector KickDirection = Aim - BallLocation;
 	KickDirection.Z = 0.0f;
 	KickDirection = KickDirection.GetSafeNormal();
 	if (KickDirection.IsNearlyZero())
@@ -9339,9 +9681,9 @@ bool AThirdPersonCppCharacter::IsChargedKickBallPositionAligned(
 		return false;
 	}
 
-	FVector ToBall = BallLocation - GetActorLocation();
+	FVector ToBall = BallLocation - Pose;
 	ToBall.Z = 0.0f;
-	const float Margin = FMath::Max(0.0f, SafetyMarginCm);
+	const float Margin = FMath::Max(0.0f, MarginCm);
 	const float MaxDistance = FMath::Max(
 		1.0f,
 		FMath::Min(HumanFootContactMaxDistance, ChargedKickAlignedMaxDistance) - Margin
