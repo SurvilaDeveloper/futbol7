@@ -8,6 +8,14 @@
 #include "SoccerAICharacter.h"
 #include "SoccerAIController.h"
 #include "SoccerMatchManager.h"
+#include "SoccerGameInstance.h"
+#include "SoccerSquadCatalog.h"
+#include "SoccerClubProfile.h"
+#include "SoccerPlayerProfile.h"
+#include "SoccerPlayerAppearanceCatalog.h"
+#include "AssetRegistryModule.h"
+#include "Modules/ModuleManager.h"
+#include "Materials/MaterialInterface.h"
 #include "ThirdPersonCppCharacter.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -23,6 +31,7 @@ ASoccerRondoGameMode::ASoccerRondoGameMode()
 {
     PrimaryActorTick.bCanEverTick = true;
     HUDClass = ASoccerRondoHUD::StaticClass();
+    ParticipantKits.SetNum(7);
     PlayerControllerClass = APlayerController::StaticClass();
     DefaultPawnClass = AThirdPersonCppCharacter::StaticClass();
     static ConstructorHelpers::FClassFinder<APawn> HumanBP(TEXT("/Game/ThirdPersonCPP/Blueprints/ThirdPersonCharacter"));
@@ -39,6 +48,111 @@ void ASoccerRondoGameMode::StartPlay()
     FTimerDelegate Init; Init.BindUObject(this,&ASoccerRondoGameMode::InitializeRondo);
     GetWorldTimerManager().SetTimerForNextTick(Init);
 }
+bool ASoccerRondoGameMode::BuildClubRoster(TArray<USoccerPlayerProfile*>& OutRoster)
+{
+    OutRoster.Reset();
+    auto* GI=Cast<USoccerGameInstance>(GetWorld()->GetGameInstance());
+    if (!IsValid(GI))
+    {
+        UE_LOG(LogTemp,Error,TEXT("[Rondo5] SoccerGameInstance required to resolve club players."));
+        return false;
+    }
+    auto* Squad=GI->FindSquadCatalogByClubId(RondoClubId);
+    // The source documents CLUB_BLUE as an example. Some assets may instead
+    // use CLUB_AZUL or another ID; accept only an unambiguous exact Azul name
+    // when the default ID is missing, never an arbitrary opponent catalog.
+    if (!IsValid(Squad) && RondoClubId==FName(TEXT("CLUB_BLUE")))
+    {
+        for (const FName Id:GI->GetAvailableClubIds())
+        {
+            auto* Candidate=GI->FindSquadCatalogByClubId(Id);
+            if (!IsValid(Candidate) || !IsValid(Candidate->ClubProfile)) continue;
+            const FString Name=Candidate->ClubProfile->DisplayName.ToString();
+            const FString Short=Candidate->ClubProfile->ShortName.ToString();
+            if (Id!=FName(TEXT("CLUB_AZUL")) && !Name.Equals(TEXT("Azul"),ESearchCase::IgnoreCase) &&
+                !Name.Equals(TEXT("Club Azul"),ESearchCase::IgnoreCase) && !Short.Equals(TEXT("Azul"),ESearchCase::IgnoreCase)) continue;
+            if (IsValid(Squad))
+            {
+                UE_LOG(LogTemp,Error,TEXT("[Rondo5] Multiple Azul catalogs; set RondoClubId explicitly."));
+                return false;
+            }
+            Squad=Candidate;
+        }
+    }
+    if (!IsValid(Squad) || !IsValid(Squad->ClubProfile))
+    {
+        UE_LOG(LogTemp,Error,TEXT("[Rondo5] Club %s not found. Set RondoClubId to the Azul ClubId."),*RondoClubId.ToString());
+        return false;
+    }
+    RondoClub=Squad->ClubProfile;
+    if (!RondoClub->HasCompleteKit(ESoccerClubKitType::Home))
+        UE_LOG(LogTemp,Warning,TEXT("[Rondo5] Club home kit incomplete; missing slots retain existing materials."));
+    TMap<FName,USoccerPlayerProfile*> Eligible;
+    for (auto* Profile:Squad->PlayerProfiles)
+    {
+        if (!IsValid(Profile) || !Profile->HasValidPlayerId()) continue;
+        const FName Id=Profile->Identity.PlayerId;
+        // Use the same canonical registry as the match. Reject ambiguous IDs.
+        if (GI->FindPlayerProfileById(Id)!=Profile || GI->GetInitialClubIdForPlayer(Id)!=Squad->GetClubId()) continue;
+        Eligible.Add(Id,Profile);
+    }
+    if (Eligible.Num()<7)
+    {
+        UE_LOG(LogTemp,Error,TEXT("[Rondo5] Club=%s requires 7 distinct profiles, found=%d."),*Squad->GetClubId().ToString(),Eligible.Num());
+        return false;
+    }
+    TArray<USoccerPlayerProfile*> Ordered;
+    auto AddId=[&](FName Id)
+    {
+        if (auto* Found=Eligible.Find(Id)) Ordered.AddUnique(*Found);
+    };
+    // Prefer the selected lineup/bench when its IDs belong to this club.
+    for (const FName Id:GI->GetStartingPlayerIdsInFormationOrder()) AddId(Id);
+    for (const FName Id:GI->GetBenchPlayerIds()) AddId(Id);
+    for (auto* Profile:Squad->PlayerProfiles) if (IsValid(Profile)) AddId(Profile->Identity.PlayerId);
+    // Keep the human's current profile if it belongs to Azul. Otherwise choose
+    // a field profile. Prefer field players for all slots; use the remaining
+    // club players only if there are fewer than seven field profiles.
+    if (auto* Existing=Eligible.Find(Human->GetPlayerProfileId())) OutRoster.Add(*Existing);
+    auto IsGoalkeeper=[](const USoccerPlayerProfile* Profile)
+    {
+        const int32 GK=Profile->GetPositionFamiliarity(ESoccerPlayerNaturalPosition::Goalkeeper);
+        if (GK<=0) return false;
+        for (const auto& Preference:Profile->PositionPreferences)
+            if (Preference.Position!=ESoccerPlayerNaturalPosition::Goalkeeper && Preference.Familiarity>=GK) return false;
+        return true;
+    };
+    for (auto* Profile:Ordered)
+        if (OutRoster.Num()<7 && !IsGoalkeeper(Profile)) OutRoster.AddUnique(Profile);
+    for (auto* Profile:Ordered)
+        if (OutRoster.Num()<7) OutRoster.AddUnique(Profile);
+    return OutRoster.Num()==7;
+}
+
+void ASoccerRondoGameMode::ResolveAppearanceCatalog()
+{
+    if (IsValid(PlayerAppearanceCatalog)) return;
+    FAssetRegistryModule& Registry=FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+    TArray<FAssetData> Assets;
+    Registry.Get().GetAssetsByClass(USoccerPlayerAppearanceCatalog::StaticClass()->GetFName(),Assets,true);
+    if (Assets.Num()==1) PlayerAppearanceCatalog=Cast<USoccerPlayerAppearanceCatalog>(Assets[0].GetAsset());
+    if (!IsValid(PlayerAppearanceCatalog))
+        UE_LOG(LogTemp,Warning,TEXT("[Rondo5] Appearance catalogs=%d; assign PlayerAppearanceCatalog in GameMode for BodyVariantId meshes."),Assets.Num());
+}
+
+USkeletalMesh* ASoccerRondoGameMode::ResolvePlayerBodyVariantMesh(FName BodyVariantId) const
+{
+    return IsValid(PlayerAppearanceCatalog)?PlayerAppearanceCatalog->LoadBodyVariantMesh(BodyVariantId):nullptr;
+}
+
+FString ASoccerRondoGameMode::GetParticipantName(const ASoccerCharacterBase* Player)
+{
+    if (!IsValid(Player)) return TEXT("-");
+    const auto* Profile=Player->GetPlayerProfile();
+    if (!IsValid(Profile)) return GetNameSafe(Player);
+    return Profile->Identity.DisplayName.IsEmpty()?Profile->Identity.PlayerId.ToString():Profile->Identity.DisplayName.ToString();
+}
+
 void ASoccerRondoGameMode::InitializeRondo()
 {
     UWorld* World = GetWorld();
@@ -57,6 +171,9 @@ void ASoccerRondoGameMode::InitializeRondo()
     { UE_LOG(LogTemp,Error,TEXT("[Rondo1] Missing field, human or FieldPlayerClass.")); return; }
     for (TActorIterator<ASoccerAICharacter> It(World); It; ++It)
     { UE_LOG(LogTemp,Error,TEXT("[Rondo1] Remove preplaced AI characters; mode spawns six.")); return; }
+    TArray<USoccerPlayerProfile*> Roster;
+    if (!BuildClubRoster(Roster)) return;
+    ResolveAppearanceCatalog();
     Radius=SoccerFieldDimensions::PitchWidthCm*FMath::Clamp(CircleDiameterWidthFraction,0.2f,1.f)*0.5f;
     FActorSpawnParameters Params;
     Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
@@ -78,6 +195,15 @@ void ASoccerRondoGameMode::InitializeRondo()
         AI->SetActorTickEnabled(false);
         Players.Add(Bot);
     }
+    // Use the existing match profile setter once per actor, never on role changes.
+    for (int32 Index=0;Index<Players.Num();++Index)
+    {
+        auto* P=Players[Index];
+        P->SetPlayerProfileForMatch(Roster[Index]);
+        UE_LOG(LogTemp,Display,TEXT("[Rondo5] PLAYER club=%s id=%s name=%s number=%d actor=%s human=%d"),
+            *RondoClub->ClubId.ToString(),*P->GetPlayerProfileId().ToString(),*GetParticipantName(P),
+            Roster[Index]->Identity.ShirtNumber,*GetNameSafe(P),Index==0?1:0);
+    }
     Loco=bHumanStartsAsLoco?static_cast<ASoccerCharacterBase*>(Human):Players.Last();
     Loco->SetActorLocation(Field->GetPitchCenterWorldLocation(Loco->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()+2.f),false,nullptr,ETeleportType::TeleportPhysics);
     auto* InitialCarrier=Cast<ASoccerAICharacter>(Players[1]);
@@ -93,6 +219,7 @@ void ASoccerRondoGameMode::InitializeRondo()
     // The ball starts at the feet of a non-loco; use the existing logical possession.
     InitialCarrier->PossessAIBall(Ball);
     UE_LOG(LogTemp,Display,TEXT("[Rondo1] READY players=%d radius=%.1f loco=%s"),Players.Num(),Radius,*GetNameSafe(Loco));
+    UE_LOG(LogTemp,Display,TEXT("[Rondo5] READY club=%s participants=%d locoId=%s"),*RondoClub->ClubId.ToString(),Players.Num(),*Loco->GetPlayerProfileId().ToString());
 }
 bool ASoccerRondoGameMode::ContainsPlayer(const ASoccerCharacterBase* Player) const
 { return bReady && IsValid(Player) && Players.Contains(const_cast<ASoccerCharacterBase*>(Player)); }
@@ -227,6 +354,7 @@ void ASoccerRondoGameMode::SwapLoco(ASoccerCharacterBase* NewLoco)
 {
     if (!ContainsPlayer(NewLoco)||NewLoco==Loco) return;
     UE_LOG(LogTemp,Display,TEXT("[Rondo1] SWAP old=%s new=%s"),*GetNameSafe(Loco),*GetNameSafe(NewLoco));
+    UE_LOG(LogTemp,Display,TEXT("[Rondo5] ROLE oldId=%s newId=%s"),*Loco->GetPlayerProfileId().ToString(),*NewLoco->GetPlayerProfileId().ToString());
     Loco=NewLoco; ++RoleChanges; PassRequest=ESoccerHumanPassRequestType::None; UpdateTeams();
 }
 void ASoccerRondoGameMode::FinishChallenge(bool bLocoWins)
@@ -236,7 +364,38 @@ void ASoccerRondoGameMode::FinishChallenge(bool bLocoWins)
     bChallenge=false; AtRisk=nullptr; ChallengePasser=nullptr; ChallengeReceiverCandidate=nullptr; bChallengePassEntered=false; LastNormalPasser=nullptr; PassStreak=0;
 }
 void ASoccerRondoGameMode::UpdateTeams()
-{ for(auto* P:Players) if(IsValid(P)) P->SetTeamForTraining(P==Loco?ESoccerTeam::OpponentTeam:ESoccerTeam::PlayerTeam); }
+{
+    const FSoccerClubKitDefinition* Kit=IsValid(RondoClub)?&RondoClub->GetKit(ESoccerClubKitType::Home):nullptr;
+    auto* Socks=Kit?Kit->SocksMaterial.LoadSynchronous():nullptr;
+    auto* Shirt=Kit?Kit->ShirtMaterial.LoadSynchronous():nullptr;
+    auto* Shorts=Kit?Kit->ShortsMaterial.LoadSynchronous():nullptr;
+    for (int32 Index=0; Index<Players.Num(); ++Index)
+    {
+        auto* P=Players[Index];
+        if (!IsValid(P)) continue;
+        P->SetTeamForTraining(P==Loco?ESoccerTeam::OpponentTeam:ESoccerTeam::PlayerTeam);
+
+        // SetTeamForTraining may reset the shirt/shorts to team materials.
+        // Reapply the participant's visual kit AFTER the logical team change.
+        // Players keeps its original order throughout the session; role changes
+        // never move an entry or change the selected player's profile.
+        const FSoccerRondoParticipantKit* Override=ParticipantKits.IsValidIndex(Index)
+            ? &ParticipantKits[Index] : nullptr;
+        UMaterialInterface* ParticipantShirt=Override && IsValid(Override->ShirtMaterial)
+            ? Override->ShirtMaterial : Shirt;
+        UMaterialInterface* ParticipantShorts=Override && IsValid(Override->ShortsMaterial)
+            ? Override->ShortsMaterial : Shorts;
+        P->ApplyClubKitMaterials(Socks,ParticipantShirt,ParticipantShorts);
+
+        // Initial assignment only: bReady becomes true after initialization.
+        if (!bReady)
+        {
+            UE_LOG(LogTemp,Display,TEXT("[Rondo6] KIT slot=%d id=%s human=%d shirt=%s shorts=%s"),
+                Index,*P->GetPlayerProfileId().ToString(),Index==0?1:0,
+                *GetNameSafe(ParticipantShirt),*GetNameSafe(ParticipantShorts));
+        }
+    }
+}
 bool ASoccerRondoGameMode::IsNearBodyContact(const ASoccerCharacterBase* Player, const FVector& BallLocation) const
 {
     if (!IsValid(Player) || !IsValid(Ball)) return false;
@@ -507,6 +666,6 @@ FString ASoccerRondoGameMode::GetStatus() const
 {
     if(!bReady) return TEXT("EL LOCO | Preparacion: revisar Output Log [Rondo1]");
     const FString RoleLabel=Human==Loco?TEXT("SOS EL LOCO"):Human==AtRisk?TEXT("ESTAS EN RIESGO"):TEXT("NO LOCO");
-    const FString Phase=bChallenge?FString::Printf(TEXT("Disputa: %s"),*GetNameSafe(AtRisk)):TEXT("Juego normal");
+    const FString Phase=bChallenge?FString::Printf(TEXT("Disputa: %s"),*GetParticipantName(AtRisk)):TEXT("Juego normal");
     return FString::Printf(TEXT("EL LOCO | %s | %s\nPases: %d | Record: %d | Cambios: %d | %.0f s"),*RoleLabel,*Phase,PassStreak,BestStreak,RoleChanges,GetWorld()->GetTimeSeconds()-StartTime);
 }

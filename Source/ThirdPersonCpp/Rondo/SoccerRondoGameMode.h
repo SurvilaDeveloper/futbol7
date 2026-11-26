@@ -10,8 +10,26 @@ class ASoccerField;
 class ASoccerAICharacter;
 class ASoccerCharacterBase;
 class AThirdPersonCppCharacter;
+class USoccerPlayerProfile;
+class USoccerPlayerAppearanceCatalog;
+class USoccerClubProfile;
+class USkeletalMesh;
+class UMaterialInterface;
 
 enum class ERondoContact : uint8 { Body, Control, Kick, Dribble, Aerial, Tackle };
+
+/** Optional per-participant material overrides, exclusive to Rondo. */
+USTRUCT(BlueprintType)
+struct FSoccerRondoParticipantKit
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, Category="Rondo Kit")
+    UMaterialInterface* ShirtMaterial = nullptr;
+
+    UPROPERTY(EditAnywhere, Category="Rondo Kit")
+    UMaterialInterface* ShortsMaterial = nullptr;
+};
 
 /** Standalone rules and tactical orchestration; characters and ball remain shared. */
 UCLASS()
@@ -38,9 +56,20 @@ public:
     ASoccerCharacterBase* GetAtRisk() const { return AtRisk; }
     const TArray<ASoccerCharacterBase*>& GetPlayers() const { return Players; }
     bool IsReady() const { return bReady; }
+    USkeletalMesh* ResolvePlayerBodyVariantMesh(FName BodyVariantId) const;
+    static FString GetParticipantName(const ASoccerCharacterBase* Player);
 private:
     UPROPERTY(EditDefaultsOnly, Category="Rondo") TSubclassOf<ASoccerAICharacter> FieldPlayerClass;
     UPROPERTY(EditDefaultsOnly, Category="Rondo") TSubclassOf<ASoccerBall> BallClass;
+    // Club membership is independent of the temporary loco/non-loco team.
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Roster") FName RondoClubId = FName(TEXT("CLUB_BLUE"));
+    // Optional explicit override: otherwise use the unique existing appearance catalog.
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Roster") USoccerPlayerAppearanceCatalog* PlayerAppearanceCatalog = nullptr;
+    UPROPERTY(Transient) USoccerClubProfile* RondoClub = nullptr;
+    // Slot 0 is the human; 1-6 are the bots in roster/spawn order.
+    // Null materials preserve the club Home kit independently for each garment.
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Appearance")
+    TArray<FSoccerRondoParticipantKit> ParticipantKits;
     UPROPERTY(EditDefaultsOnly, Category="Rondo", meta=(ClampMin="0.2", ClampMax="1.0")) float CircleDiameterWidthFraction = 0.60f;
     UPROPERTY(EditDefaultsOnly, Category="Rondo") bool bHumanStartsAsLoco = false;
     UPROPERTY(EditDefaultsOnly, Category="Rondo", meta=(ClampMin="0.05")) float DecisionInterval = 0.16f;
@@ -83,6 +112,8 @@ private:
     TMap<ASoccerCharacterBase*, float> LastPassAttempt;
     TMap<ASoccerCharacterBase*, FVector> MoveTargets;
     void InitializeRondo();
+    bool BuildClubRoster(TArray<USoccerPlayerProfile*>& OutRoster);
+    void ResolveAppearanceCatalog();
     bool Inside(const FVector& WorldLocation, float Inset=0.f) const;
     FVector InsideTarget(const FVector& WorldLocation, float Inset=150.f) const;
     void RefreshBoundary(const FVector& BallLocation);

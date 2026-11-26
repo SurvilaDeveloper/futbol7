@@ -17,10 +17,21 @@ void ASoccerRondoHUD::DrawHUD()
         if (!IsValid(Player)) continue;
         const bool bLoco = Player == Mode->GetLoco();
         const bool bRisk = Player == Mode->GetAtRisk();
-        if (!bLoco && !bRisk) continue;
+
         FVector2D Screen;
         if (PlayerOwner->ProjectWorldLocationToScreen(Player->GetActorLocation()+FVector(0,0,125),Screen))
-            DrawText(bLoco?TEXT("LOCO"):TEXT("EN RIESGO"),bLoco?FLinearColor::Red:FLinearColor::Yellow,Screen.X-25,Screen.Y,GEngine->GetSmallFont(),1.1f);
+        {
+            const FString Name=ASoccerRondoGameMode::GetParticipantName(Player);
+            float Width=0.f,Height=0.f;
+            GetTextSize(Name,Width,Height,GEngine->GetSmallFont(),1.f);
+            DrawText(Name,FLinearColor::White,Screen.X-Width*0.5f,Screen.Y,GEngine->GetSmallFont(),1.f);
+            if (bLoco || bRisk)
+            {
+                const FString RoleLabel=bLoco?TEXT("LOCO"):TEXT("EN RIESGO");
+                GetTextSize(RoleLabel,Width,Height,GEngine->GetSmallFont(),1.1f);
+                DrawText(RoleLabel,bLoco?FLinearColor::Red:FLinearColor::Yellow,Screen.X-Width*0.5f,Screen.Y-Height,GEngine->GetSmallFont(),1.1f);
+            }
+        }
     }
     if (auto* Human = Cast<AThirdPersonCppCharacter>(PlayerOwner->GetPawn()))
     {

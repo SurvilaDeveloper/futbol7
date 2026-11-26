@@ -2884,19 +2884,22 @@ void ASoccerCharacterBase::ApplyPlayerProfileAppearance()
 			}
 		}
 
+		const ASoccerRondoGameMode* RondoMode = ASoccerRondoGameMode::Find(this);
 		USkeletalMesh* BodyVariantMesh =
 			ProfileMatchManager != nullptr
 				? ProfileMatchManager->ResolvePlayerBodyVariantMesh(
 					PlayerProfile->Appearance.BodyVariantId
 				)
-				: nullptr;
+				: (RondoMode != nullptr
+					? RondoMode->ResolvePlayerBodyVariantMesh(PlayerProfile->Appearance.BodyVariantId)
+					: nullptr);
 
 		if (BodyVariantMesh != nullptr)
 		{
 			DesiredMesh = BodyVariantMesh;
 			MeshSource = TEXT("BodyVariantId");
 		}
-		else if (ProfileMatchManager == nullptr)
+		else if (ProfileMatchManager == nullptr && RondoMode == nullptr)
 		{
 			UE_LOG(
 				LogTemp,
