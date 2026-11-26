@@ -305,6 +305,9 @@ protected:
 	void FinishPendingKickAnimation();
 	// Approach a free ground ball without running through its center.
 	void MoveTowardFreeChargedShot6AO2(const FVector& PursuitLocation, bool bCanKick);
+	// Immediate right-button foot strike: actual live contact, not a prepared pose.
+	void MoveTowardImmediateChargedShot6AO54(const FVector& PursuitLocation, bool bCanKick);
+	bool CanExecuteImmediateChargedFootShot6AO54() const;
 	bool bFreeChargedShotFastRun6AO3 = false;
 	float HumanShotNextSpeedLog6AO4 = -1.f;
 	// Shared open-play charged foot shot: a fixed preparation pose and an
@@ -877,6 +880,16 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
 		float StrikeKickImpactDelay = 0.35f;
+
+	// The trimmed forward-jog strike assets contact at montage time zero.
+	// Disable for Blueprints that still use the original, untrimmed assets.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
+		bool bStrikeKickImpactAtMontageStart6AO53 = true;
+
+	// Right-button charged foot kicks in open play use contact at montage start.
+	// Disable to compare against the previous 6AO.5.3 preparation planner.
+	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
+		bool bImmediateChargedFootShot6AO54 = true;
 
 	UPROPERTY(EditAnywhere, Category = "Soccer|Kick Timing")
 		float KickAnimationFinishExtraDelay = 0.05f;

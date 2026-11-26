@@ -581,6 +581,10 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
 		float AIStrikeKickImpactDelay = 0.35f;
 
+	// Set false if this AI Blueprint still uses the untrimmed strike assets.
+	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
+		bool bAIStrikeKickImpactAtMontageStart6AO53 = true;
+
 	UPROPERTY(EditAnywhere, Category = "Soccer|AI Kick Timing")
 		float AIKickAnimationFinishExtraDelay = 0.05f;
 

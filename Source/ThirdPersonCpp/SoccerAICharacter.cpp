@@ -2304,7 +2304,7 @@ bool ASoccerAICharacter::StartAIKickMontageWithBall(
 			FMath::Max(0.0f, AIKickAnimationFinishExtraDelay);
 	}
 
-	const float ImpactDelay = FMath::Clamp(
+	const float ImpactDelay = AuthoredImpactDelay <= 0.f ? 0.f : FMath::Clamp(
 		AuthoredImpactDelay / FMath::Max(1.0f, MontagePlayRate),
 		FMath::Max(0.01f, AIKickMontageMinimumPhysicalImpactDelay),
 		FMath::Max(0.05f, MontageDuration - 0.05f)
@@ -2313,13 +2313,22 @@ bool ASoccerAICharacter::StartAIKickMontageWithBall(
 	GetWorldTimerManager().ClearTimer(AIKickImpactTimerHandle);
 	GetWorldTimerManager().ClearTimer(AIKickFinishTimerHandle);
 
-	GetWorldTimerManager().SetTimer(
-		AIKickImpactTimerHandle,
-		this,
-		&ASoccerAICharacter::PerformPendingAIKickImpact,
-		ImpactDelay,
-		false
-	);
+	UE_LOG(LogTemp, Display, TEXT("[KickTiming6AO53] AI actor=%s montage=%s authored=%.3f actual=%.3f rate=%.2f nextTick=%d"),
+		*GetName(), *GetNameSafe(KickMontage), AuthoredImpactDelay, ImpactDelay, MontagePlayRate, ImpactDelay <= 0.f ? 1 : 0);
+	if (ImpactDelay <= 0.f)
+	{
+		// The calling pass/shot functions set ground-pass and statistics
+		// flags AFTER StartAIKickMontage returns. Keep that contract intact.
+		// No authored delay, but dispatch on the next timer tick.
+		AIKickImpactTimerHandle = GetWorldTimerManager().SetTimerForNextTick(
+			this, &ASoccerAICharacter::PerformPendingAIKickImpact);
+	}
+	else
+	{
+		GetWorldTimerManager().SetTimer(
+			AIKickImpactTimerHandle, this,
+			&ASoccerAICharacter::PerformPendingAIKickImpact, ImpactDelay, false);
+	}
 
 	GetWorldTimerManager().SetTimer(
 		AIKickFinishTimerHandle,
@@ -2344,9 +2353,10 @@ float ASoccerAICharacter::GetAIKickImpactDelayForMontage(
 		KickMontage == StrikeRightLegForwardJogMontage
 		)
 	{
-		DesiredDelay = AIStrikeKickImpactDelay;
+		DesiredDelay = bAIStrikeKickImpactAtMontageStart6AO53 ? 0.f : AIStrikeKickImpactDelay;
 	}
 
+	if (DesiredDelay <= 0.f) return 0.f;
 	const float MaxSafeDelay = FMath::Max(
 		0.05f,
 		MontageDuration - 0.05f
@@ -2723,6 +2733,7 @@ float ASoccerAICharacter::BuildAIKickMontagePhysicalPlayRate(
 ) const
 {
 	if (
+		AuthoredImpactDelay <= 0.f ||
 		bTreatAsRestart ||
 		!bUseAIKickMontagePhysicalTiming ||
 		!IsValid(SoccerBall)
