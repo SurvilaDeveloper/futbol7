@@ -1,5 +1,7 @@
 #include "Rondo/SoccerRondoGameMode.h"
 #include "Rondo/SoccerRondoHUD.h"
+#include "Rondo/SoccerRondoResultWidget8.h"
+#include "Blueprint/UserWidget.h"
 #include "SoccerField.h"
 #include "SoccerFieldDimensions.h"
 #include "SoccerBall.h"
@@ -768,10 +770,38 @@ void ASoccerRondoGameMode::FinishSession()
         if (IsValid(Human)) Human->DisableInput(PC);
     }
     // Pause the simulation, including physics, animations and pending kick timers;
-    // Canvas HUD is still drawn by the viewport while paused.
+    // Slate/UMG remains interactive while gameplay is paused.
     bPauseable=true;
     const bool bPaused=UGameplayStatics::SetGamePaused(this,true);
     UE_LOG(LogTemp,Display,TEXT("[Rondo7] FINISH paused=%d"),bPaused?1:0);
+
+    if (auto* PC=GetWorld()->GetFirstPlayerController())
+    {
+        ResultWidget8 = CreateWidget<USoccerRondoResultWidget8>(
+            PC, USoccerRondoResultWidget8::StaticClass());
+        if (IsValid(ResultWidget8))
+        {
+            ResultWidget8->AddToViewport(200);
+            PC->bShowMouseCursor = true;
+            PC->bEnableClickEvents = true;
+            PC->bEnableMouseOverEvents = true;
+            FInputModeUIOnly Mode;
+            Mode.SetWidgetToFocus(ResultWidget8->TakeWidget());
+            Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+            PC->SetInputMode(Mode);
+            ResultWidget8->FocusFirstAction();
+            UE_LOG(LogTemp,Display,TEXT("[Rondo8] RESULTS UI ready"));
+        }
+        else
+        {
+            UE_LOG(LogTemp,Error,TEXT("[Rondo8] Could not create results widget; using Canvas fallback"));
+        }
+    }
+}
+
+bool ASoccerRondoGameMode::HasResultScreen() const
+{
+    return IsValid(ResultWidget8) && ResultWidget8->IsInViewport();
 }
 
 FString ASoccerRondoGameMode::GetStatus() const

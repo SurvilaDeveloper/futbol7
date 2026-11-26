@@ -16,6 +16,7 @@ class USoccerClubProfile;
 class USkeletalMesh;
 class UMaterialInterface;
 class USoundBase;
+class USoccerRondoResultWidget8;
 
 enum class ERondoContact : uint8 { Body, Control, Kick, Dribble, Aerial, Tackle };
 
@@ -58,6 +59,7 @@ public:
     const TArray<ASoccerCharacterBase*>& GetPlayers() const { return Players; }
     bool IsReady() const { return bReady; }
     bool IsFinished() const { return bFinished; }
+    bool HasResultScreen() const;
     int32 GetTouches(const ASoccerCharacterBase* Player) const;
     TArray<ASoccerCharacterBase*> GetRankedPlayers() const;
     int32 GetRemainingSeconds() const;
@@ -118,6 +120,7 @@ private:
     TMap<ASoccerCharacterBase*, float> LastActionContactTime;
     void RecordTouch(ASoccerCharacterBase* Player, ERondoContact Kind);
     void FinishSession();
+    UPROPERTY(Transient) USoccerRondoResultWidget8* ResultWidget8 = nullptr;
     bool bChallenge = false;
     float Radius = 0.f;
     float NextDecision = 0.f;

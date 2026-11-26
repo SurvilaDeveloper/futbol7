@@ -12,6 +12,8 @@ void ASoccerRondoHUD::DrawHUD()
     if (!Mode || !Canvas || !GEngine || !PlayerOwner) return;
     if (Mode->IsFinished())
     {
+        // UMG owns the final ranking and buttons. Keep the old Canvas as fallback.
+        if (Mode->HasResultScreen()) return;
         const auto Ranked=Mode->GetRankedPlayers();
         const float Width=FMath::Min(620.f,Canvas->ClipX-30.f);
         const float Height=FMath::Min(370.f,Canvas->ClipY-30.f);

@@ -18,6 +18,7 @@
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Misc/PackageName.h"
 
 namespace SoccerFrontMenuUI6A
 {
@@ -90,7 +91,7 @@ void USoccerMainMenuWidget6A::BuildMenu6A()
 
     USizeBox* MenuSize = WidgetTree->ConstructWidget<USizeBox>();
     MenuSize->SetWidthOverride(660.0f);
-    MenuSize->SetHeightOverride(640.0f);
+    MenuSize->SetHeightOverride(710.0f);
     Scaler->AddChild(MenuSize);
     if (UScaleBoxSlot* MenuScaleSlot = Cast<UScaleBoxSlot>(MenuSize->Slot))
     {
@@ -107,7 +108,7 @@ void USoccerMainMenuWidget6A::BuildMenu6A()
     Card->SetContent(Content);
     AddRow(Content, Label(WidgetTree, TEXT("FÚTBOL 7"), 46, White), 4.0f);
     AddRow(Content, Label(WidgetTree,
-        TEXT("PARTIDOS  ·  ENTRENAMIENTO  ·  ESTADÍSTICAS"), 15, Muted), 25.0f);
+        TEXT("PARTIDOS  ·  ENTRENAMIENTO  ·  EL LOCO  ·  ESTADÍSTICAS"), 15, Muted), 25.0f);
 
     PlayButton6A = Action(WidgetTree, TEXT("JUGAR PARTIDO"), true);
     PlayButton6A->OnClicked.AddDynamic(this, &USoccerMainMenuWidget6A::HandlePlay6A);
@@ -116,6 +117,10 @@ void USoccerMainMenuWidget6A::BuildMenu6A()
     TrainingButton6B = Action(WidgetTree, TEXT("ENTRENAMIENTO"));
     TrainingButton6B->OnClicked.AddDynamic(this, &USoccerMainMenuWidget6A::HandleTraining6B);
     AddRow(Content, TrainingButton6B, 12.0f);
+
+    RondoButton8 = Action(WidgetTree, TEXT("JUGAR EL LOCO"));
+    RondoButton8->OnClicked.AddDynamic(this, &USoccerMainMenuWidget6A::HandleRondo8);
+    AddRow(Content, RondoButton8, 12.0f);
 
     HistoryButton6A = Action(WidgetTree, TEXT("HISTORIAL DE PARTIDOS"));
     HistoryButton6A->OnClicked.AddDynamic(this, &USoccerMainMenuWidget6A::HandleHistory6A);
@@ -153,6 +158,9 @@ void USoccerMainMenuWidget6A::UpdateFocusColors6A()
     if (IsValid(TrainingButton6B))
         TrainingButton6B->SetBackgroundColor(TrainingButton6B->HasKeyboardFocus()
             ? FLinearColor(0.22f, 0.52f, 0.55f, 1.0f) : Secondary);
+    if (IsValid(RondoButton8))
+        RondoButton8->SetBackgroundColor(RondoButton8->HasKeyboardFocus()
+            ? FLinearColor(0.22f, 0.52f, 0.55f, 1.0f) : Secondary);
     if (IsValid(HistoryButton6A))
         HistoryButton6A->SetBackgroundColor(HistoryButton6A->HasKeyboardFocus()
             ? FLinearColor(0.22f, 0.52f, 0.55f, 1.0f) : Secondary);
@@ -166,6 +174,7 @@ void USoccerMainMenuWidget6A::Navigate6A(int32 Step)
     TArray<UButton*> Choices;
     Choices.Add(PlayButton6A);
     Choices.Add(TrainingButton6B);
+    Choices.Add(RondoButton8);
     Choices.Add(HistoryButton6A);
     Choices.Add(QuitButton6A);
     int32 Current = 0;
@@ -187,6 +196,19 @@ void USoccerMainMenuWidget6A::HandlePlay6A()
     UE_LOG(LogTemp, Display, TEXT("[MainMenu6A] Opening soccer match map"));
     UGameplayStatics::OpenLevel(this,
         FName(TEXT("/Game/ThirdPersonCPP/Maps/SoccerMainMap")), true);
+}
+
+void USoccerMainMenuWidget6A::HandleRondo8()
+{
+    if (!GetWorld()) return;
+    const FString MapPackage = TEXT("/Game/ThirdPersonCPP/Maps/Rondo/SoccerRondoMap");
+    if (!FPackageName::DoesPackageExist(MapPackage))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Rondo8] Map not found: %s"), *MapPackage);
+        return;
+    }
+    UE_LOG(LogTemp, Display, TEXT("[Rondo8] Opening SoccerRondoMap from main menu"));
+    UGameplayStatics::OpenLevel(this, FName(*MapPackage), true);
 }
 
 void USoccerMainMenuWidget6A::HandleTraining6B()
@@ -301,6 +323,8 @@ FReply USoccerMainMenuWidget6A::NativeOnPreviewKeyDown(
     {
         if (IsValid(TrainingButton6B) && TrainingButton6B->HasKeyboardFocus())
             HandleTraining6B();
+        else if (IsValid(RondoButton8) && RondoButton8->HasKeyboardFocus())
+            HandleRondo8();
         else if (IsValid(HistoryButton6A) && HistoryButton6A->HasKeyboardFocus())
             HandleHistory6A();
         else if (IsValid(QuitButton6A) && QuitButton6A->HasKeyboardFocus())

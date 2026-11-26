@@ -34,12 +34,14 @@ private:
     UFUNCTION() void HandlePlay6A();
     UFUNCTION() void HandleTraining6B();
     UFUNCTION() void HandleTrainingClosed6B();
+    UFUNCTION() void HandleRondo8();
     UFUNCTION() void HandleHistory6A();
     UFUNCTION() void HandleHistoryClosed6A();
     UFUNCTION() void HandleQuit6A();
 
     UPROPERTY(Transient) UButton* PlayButton6A = nullptr;
     UPROPERTY(Transient) UButton* TrainingButton6B = nullptr;
+    UPROPERTY(Transient) UButton* RondoButton8 = nullptr;
     UPROPERTY(Transient) UButton* HistoryButton6A = nullptr;
     UPROPERTY(Transient) UButton* QuitButton6A = nullptr;
     UPROPERTY(Transient) USoccerMatchHistoryWidget* HistoryWidget6A = nullptr;
