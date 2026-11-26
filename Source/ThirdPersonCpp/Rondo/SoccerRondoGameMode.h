@@ -15,6 +15,7 @@ class USoccerPlayerAppearanceCatalog;
 class USoccerClubProfile;
 class USkeletalMesh;
 class UMaterialInterface;
+class USoundBase;
 
 enum class ERondoContact : uint8 { Body, Control, Kick, Dribble, Aerial, Tackle };
 
@@ -56,6 +57,10 @@ public:
     ASoccerCharacterBase* GetAtRisk() const { return AtRisk; }
     const TArray<ASoccerCharacterBase*>& GetPlayers() const { return Players; }
     bool IsReady() const { return bReady; }
+    bool IsFinished() const { return bFinished; }
+    int32 GetTouches(const ASoccerCharacterBase* Player) const;
+    TArray<ASoccerCharacterBase*> GetRankedPlayers() const;
+    int32 GetRemainingSeconds() const;
     USkeletalMesh* ResolvePlayerBodyVariantMesh(FName BodyVariantId) const;
     static FString GetParticipantName(const ASoccerCharacterBase* Player);
 private:
@@ -72,6 +77,11 @@ private:
     TArray<FSoccerRondoParticipantKit> ParticipantKits;
     UPROPERTY(EditDefaultsOnly, Category="Rondo", meta=(ClampMin="0.2", ClampMax="1.0")) float CircleDiameterWidthFraction = 0.60f;
     UPROPERTY(EditDefaultsOnly, Category="Rondo") bool bHumanStartsAsLoco = false;
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Session", meta=(ClampMin="1.0")) float SessionDurationSeconds = 300.f;
+    // 6G training parity (1.0), but isolated to dribble impulses so Rondo.4 passes stay calibrated.
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Session", meta=(ClampMin="0.1", ClampMax="2.0")) float DribbleHorizontalScale = 1.f;
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Audio") USoundBase* RondoShortKickSound = nullptr;
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Audio") USoundBase* RondoStrongKickSound = nullptr;
     UPROPERTY(EditDefaultsOnly, Category="Rondo", meta=(ClampMin="0.05")) float DecisionInterval = 0.16f;
     // Same initial pass-intent timing as the match; mode owns its own rules.
     UPROPERTY(EditDefaultsOnly, Category="Rondo|Passing", meta=(ClampMin="0.1")) float PassIntentMaxLifetime = 2.25f;
@@ -98,6 +108,16 @@ private:
 
     UPROPERTY() ASoccerCharacterBase* LastNormalPasser = nullptr;
     bool bReady = false;
+    bool bFinished = false;
+    bool bScoringActive = false;
+    // Score identity is permanent, independent of the temporary logical team.
+    TMap<FName, int32> TouchScores;
+    // Body+control of the same continuous contact is one touch. Intentional
+    // kicks/dribbles/aerial/tackles are separate, but duplicate same-frame reports are not.
+    TSet<ASoccerCharacterBase*> ScoredContactEpisodes;
+    TMap<ASoccerCharacterBase*, float> LastActionContactTime;
+    void RecordTouch(ASoccerCharacterBase* Player, ERondoContact Kind);
+    void FinishSession();
     bool bChallenge = false;
     float Radius = 0.f;
     float NextDecision = 0.f;

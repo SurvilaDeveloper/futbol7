@@ -109,6 +109,12 @@ public:
     // Does not modify the BP_SoccerBall asset or any match instance.
     void ApplyTrainingBallParity6G(float InHorizontalLaunchScale, float InAirLinearDamping);
 
+    // Per-instance mode tuning. Does not alter the calibrated pass/shot scale.
+    void SetSessionDribbleHorizontalScale(float InScale);
+    // Reuse existing kick playback and assets; optional explicit session overrides.
+    void ConfigureSessionKickAudio(USoundBase* InShortSound, USoundBase* InStrongSound,
+        TSubclassOf<ASoccerBall> ReferenceBallClass);
+
     /*
      * Applies a deterministic velocity after a head/chest contact.
      * The ball remains free and its trajectory revision changes immediately.
@@ -313,9 +319,11 @@ private:
         float HorizontalLaunchSpeedScale =
         0.50f;
 
+    float SessionDribbleHorizontalScale = -1.f; // negative: use normal ball scale
     float GetScaledHorizontalLaunchSpeed(
         float UnscaledHorizontalSpeed,
-        float MinimumSpeed = 0.0f
+        float MinimumSpeed = 0.0f,
+        float ScaleOverride = -1.f
     ) const;
 
     /*

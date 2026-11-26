@@ -25,12 +25,15 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "DrawDebugHelpers.h"
 #include "TimerManager.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "UObject/ConstructorHelpers.h"
 
 ASoccerRondoGameMode::ASoccerRondoGameMode()
 {
     PrimaryActorTick.bCanEverTick = true;
     HUDClass = ASoccerRondoHUD::StaticClass();
+    bPauseable = true;
     ParticipantKits.SetNum(7);
     PlayerControllerClass = APlayerController::StaticClass();
     DefaultPawnClass = AThirdPersonCppCharacter::StaticClass();
@@ -179,6 +182,8 @@ void ASoccerRondoGameMode::InitializeRondo()
     Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
     if (!Ball && BallClass) Ball=World->SpawnActor<ASoccerBall>(BallClass,Field->GetPitchCenterWorldLocation(70),Field->GetActorRotation(),Params);
     if (!Ball) { UE_LOG(LogTemp,Error,TEXT("[Rondo1] Place BP_SoccerBall in map or assign BallClass.")); return; }
+    Ball->SetSessionDribbleHorizontalScale(DribbleHorizontalScale);
+    Ball->ConfigureSessionKickAudio(RondoShortKickSound, RondoStrongKickSound, BallClass);
     Human->BindRondoBall(Ball);
     // Initial placements are the only teleports performed by this mode.
     Human->SetActorLocation(Field->PitchLocalToWorld(FVector(Radius*0.58f,0,Human->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()+2.f)),false,nullptr,ETeleportType::TeleportPhysics);
@@ -200,6 +205,7 @@ void ASoccerRondoGameMode::InitializeRondo()
     {
         auto* P=Players[Index];
         P->SetPlayerProfileForMatch(Roster[Index]);
+        TouchScores.Add(P->GetPlayerProfileId(), 0);
         UE_LOG(LogTemp,Display,TEXT("[Rondo5] PLAYER club=%s id=%s name=%s number=%d actor=%s human=%d"),
             *RondoClub->ClubId.ToString(),*P->GetPlayerProfileId().ToString(),*GetParticipantName(P),
             Roster[Index]->Identity.ShirtNumber,*GetNameSafe(P),Index==0?1:0);
@@ -218,12 +224,15 @@ void ASoccerRondoGameMode::InitializeRondo()
     bReady=true;
     // The ball starts at the feet of a non-loco; use the existing logical possession.
     InitialCarrier->PossessAIBall(Ball);
+    // Initial scripted placement is not earned contact.
+    bScoringActive=true;
+    UE_LOG(LogTemp,Display,TEXT("[Rondo7] SESSION duration=%.1f players=%d"),SessionDurationSeconds,Players.Num());
     UE_LOG(LogTemp,Display,TEXT("[Rondo1] READY players=%d radius=%.1f loco=%s"),Players.Num(),Radius,*GetNameSafe(Loco));
     UE_LOG(LogTemp,Display,TEXT("[Rondo5] READY club=%s participants=%d locoId=%s"),*RondoClub->ClubId.ToString(),Players.Num(),*Loco->GetPlayerProfileId().ToString());
 }
 bool ASoccerRondoGameMode::ContainsPlayer(const ASoccerCharacterBase* Player) const
 { return bReady && IsValid(Player) && Players.Contains(const_cast<ASoccerCharacterBase*>(Player)); }
-bool ASoccerRondoGameMode::IsOurBall(const ASoccerBall* Candidate) const { return bReady && IsValid(Ball) && Ball==Candidate; }
+bool ASoccerRondoGameMode::IsOurBall(const ASoccerBall* Candidate) const { return bReady && !bFinished && IsValid(Ball) && Ball==Candidate; }
 bool ASoccerRondoGameMode::Inside(const FVector& WorldLocation,float Inset) const
 { return Field && Field->WorldToPitchLocal(WorldLocation).SizeSquared2D() <= FMath::Square(FMath::Max(0.f,Radius-Inset)); }
 FVector ASoccerRondoGameMode::InsideTarget(const FVector& WorldLocation,float Inset) const
@@ -247,18 +256,18 @@ ASoccerAICharacter* ASoccerRondoGameMode::GetOpponentCarrier(const ASoccerCharac
 }
 bool ASoccerRondoGameMode::CanHumanClaim(const ASoccerCharacterBase* Player) const
 {
-    if (!ContainsPlayer(Player)) return false;
+    if (bFinished || !ContainsPlayer(Player)) return false;
     auto* Carrier=GetCarrier();
     return !Carrier || Carrier==Player; // steals use the existing explicit steal path
 }
 void ASoccerRondoGameMode::TogglePassRequest(AThirdPersonCppCharacter* Player,ESoccerHumanPassRequestType Type)
 {
-    if (!ContainsPlayer(Player)||Player==Loco) return;
+    if (bFinished || !ContainsPlayer(Player)||Player==Loco) return;
     PassRequest=PassRequest==Type?ESoccerHumanPassRequestType::None:Type;
     PassRequestUntil=GetWorld()->GetTimeSeconds()+6.f;
 }
 bool ASoccerRondoGameMode::IsWaitingForAerialPass(const AThirdPersonCppCharacter* Player) const
-{ return bReady && Player==Human && PassRequest==ESoccerHumanPassRequestType::AerialHeader && GetWorld()->GetTimeSeconds()<PassRequestUntil && GetCarrier() && GetCarrier()!=Human && GetCarrier()->GetTeam()==Human->GetTeam(); }
+{ return bReady && !bFinished && Player==Human && PassRequest==ESoccerHumanPassRequestType::AerialHeader && GetWorld()->GetTimeSeconds()<PassRequestUntil && GetCarrier() && GetCarrier()!=Human && GetCarrier()->GetTeam()==Human->GetTeam(); }
 void ASoccerRondoGameMode::Report(ASoccerCharacterBase* Player, ASoccerBall* ContactBall, ERondoContact Kind, const FVector& ContactLocation)
 {
     if (auto* Mode=Find(Player)) if (Mode->ContainsPlayer(Player)&&Mode->IsOurBall(ContactBall)) Mode->OnContact(Player,Kind,ContactLocation);
@@ -278,6 +287,7 @@ void ASoccerRondoGameMode::RefreshBoundary(const FVector& Location)
 }
 void ASoccerRondoGameMode::OnContact(ASoccerCharacterBase* Player, ERondoContact Kind, const FVector& Location)
 {
+    if (bFinished || (bScoringActive && GetWorld()->GetTimeSeconds()-StartTime >= SessionDurationSeconds)) return;
     RefreshBoundary(Location);
     // Do not count repeated reports from the same continuous body contact,
     // even if a second player touched the ball in the meantime. Deliberate
@@ -288,6 +298,8 @@ void ASoccerRondoGameMode::OnContact(ASoccerCharacterBase* Player, ERondoContact
         ActiveBodyContacts.Add(Player);
     }
     else if (IsNearBodyContact(Player, Location)) ActiveBodyContacts.Add(Player);
+    // Score the role at the instant of contact, BEFORE a swap or challenge resolution.
+    RecordTouch(Player, Kind);
     if (FlightReceiver && (Player!=FlightPasser || Kind!=ERondoContact::Body))
         EndPassFlight(TEXT("contact"),Player);
     const bool bReception=Kind==ERondoContact::Control||Kind==ERondoContact::Kick||Kind==ERondoContact::Aerial;
@@ -412,6 +424,14 @@ void ASoccerRondoGameMode::RefreshContactEpisodes(const FVector& BallLocation)
 {
     for (auto It=ActiveBodyContacts.CreateIterator(); It; ++It)
         if (!IsNearBodyContact(*It,BallLocation)) It.RemoveCurrent();
+    // Foot control may extend beyond the capsule; wait for actual separation
+    // before counting a new body/control episode for the same player.
+    for (auto It=ScoredContactEpisodes.CreateIterator(); It; ++It)
+    {
+        const auto* P=*It;
+        if (!IsValid(P) || (FVector::Dist2D(P->GetActorLocation(),BallLocation)>110.f &&
+            !IsNearBodyContact(P,BallLocation))) It.RemoveCurrent();
+    }
 }
 void ASoccerRondoGameMode::EndPassFlight(const TCHAR* Reason, ASoccerCharacterBase* ContactPlayer)
 {
@@ -430,7 +450,12 @@ FVector ASoccerRondoGameMode::PassTarget(const ASoccerCharacterBase* Receiver,bo
 void ASoccerRondoGameMode::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
-    if (!bReady||!IsValid(Ball)||!IsValid(Loco)) return;
+    if (!bReady||bFinished||!IsValid(Ball)||!IsValid(Loco)) return;
+    if (GetWorld()->GetTimeSeconds()-StartTime >= SessionDurationSeconds)
+    {
+        FinishSession();
+        return;
+    }
     RefreshContactEpisodes(Ball->GetActorLocation());
     RefreshBoundary(Ball->GetActorLocation()); DrawBoundary();
     ResolveBotFootContacts();
@@ -662,10 +687,99 @@ void ASoccerRondoGameMode::DrawBoundary() const
         DrawDebugLine(GetWorld(),Field->PitchLocalToWorld(FVector(Radius*FMath::Cos(A),Radius*FMath::Sin(A),4.f)),Field->PitchLocalToWorld(FVector(Radius*FMath::Cos(B),Radius*FMath::Sin(B),4.f)),bChallenge?FColor::Orange:FColor::Yellow,false,0.f,0,5.f);
     }
 }
+int32 ASoccerRondoGameMode::GetTouches(const ASoccerCharacterBase* Player) const
+{
+    if (!IsValid(Player)) return 0;
+    return TouchScores.FindRef(Player->GetPlayerProfileId());
+}
+
+TArray<ASoccerCharacterBase*> ASoccerRondoGameMode::GetRankedPlayers() const
+{
+    TArray<ASoccerCharacterBase*> Ranked;
+    for (auto* P:Players) if (IsValid(P)) Ranked.Add(P);
+    // Stable display order for ties; the actual position is shared.
+    Ranked.StableSort([this](const ASoccerCharacterBase& A,const ASoccerCharacterBase& B)
+    { return GetTouches(&A)>GetTouches(&B); });
+    return Ranked;
+}
+
+int32 ASoccerRondoGameMode::GetRemainingSeconds() const
+{
+    if (bFinished) return 0;
+    const float Elapsed=bReady && GetWorld()?GetWorld()->GetTimeSeconds()-StartTime:0.f;
+    return FMath::Max(0,FMath::CeilToInt(SessionDurationSeconds-Elapsed));
+}
+
+void ASoccerRondoGameMode::RecordTouch(ASoccerCharacterBase* Player, ERondoContact Kind)
+{
+    if (!IsValid(Player)) return;
+    if (Kind==ERondoContact::Body || Kind==ERondoContact::Control)
+    {
+        // Mark the episode even if this contact was made as loco or was the
+        // initial scripted possession: a subsequent role change cannot award it.
+        if (ScoredContactEpisodes.Contains(Player)) return;
+        ScoredContactEpisodes.Add(Player);
+    }
+    else
+    {
+        const float Now=GetWorld()->GetTimeSeconds();
+        const float* Last=LastActionContactTime.Find(Player);
+        if (Last && *Last==Now) return;
+        LastActionContactTime.Add(Player,Now);
+        // A subsequent body/control report in the same contact does not add a point.
+        ScoredContactEpisodes.Add(Player);
+    }
+    if (!bScoringActive || bFinished || Player==Loco) return;
+    int32& Score=TouchScores.FindOrAdd(Player->GetPlayerProfileId());
+    ++Score;
+    UE_LOG(LogTemp,Display,TEXT("[Rondo7] TOUCH id=%s name=%s kind=%d total=%d remaining=%d"),
+        *Player->GetPlayerProfileId().ToString(),*GetParticipantName(Player),static_cast<int32>(Kind),Score,GetRemainingSeconds());
+}
+
+void ASoccerRondoGameMode::FinishSession()
+{
+    if (bFinished) return;
+    bFinished=true;
+    bScoringActive=false;
+    PassRequest=ESoccerHumanPassRequestType::None;
+    EndPassFlight(TEXT("session finished"));
+    for (auto* P:Players)
+    {
+        if (!IsValid(P)) continue;
+        if (auto* C=Cast<ASoccerAIController>(P->GetController())) C->StopMovement();
+        if (auto* Movement=P->GetCharacterMovement()) Movement->StopMovementImmediately();
+    }
+    if (IsValid(Ball)) Ball->StopBallKeepingPhysics();
+    const auto Ranked=GetRankedPlayers();
+    int32 Place=0,PreviousScore=-1;
+    UE_LOG(LogTemp,Display,TEXT("[Rondo7] FINAL duration=%.1f"),SessionDurationSeconds);
+    for (int32 Index=0;Index<Ranked.Num();++Index)
+    {
+        const int32 Score=GetTouches(Ranked[Index]);
+        if (Score!=PreviousScore) Place=Index+1;
+        PreviousScore=Score;
+        UE_LOG(LogTemp,Display,TEXT("[Rondo7] RESULT place=%d id=%s name=%s touches=%d"),
+            Place,*Ranked[Index]->GetPlayerProfileId().ToString(),*GetParticipantName(Ranked[Index]),Score);
+    }
+    if (auto* PC=GetWorld()->GetFirstPlayerController())
+    {
+        PC->SetIgnoreMoveInput(true);
+        PC->SetIgnoreLookInput(true);
+        if (IsValid(Human)) Human->DisableInput(PC);
+    }
+    // Pause the simulation, including physics, animations and pending kick timers;
+    // Canvas HUD is still drawn by the viewport while paused.
+    bPauseable=true;
+    const bool bPaused=UGameplayStatics::SetGamePaused(this,true);
+    UE_LOG(LogTemp,Display,TEXT("[Rondo7] FINISH paused=%d"),bPaused?1:0);
+}
+
 FString ASoccerRondoGameMode::GetStatus() const
 {
     if(!bReady) return TEXT("EL LOCO | Preparacion: revisar Output Log [Rondo1]");
+    if(bFinished) return TEXT("EL LOCO | FIN DEL JUEGO");
     const FString RoleLabel=Human==Loco?TEXT("SOS EL LOCO"):Human==AtRisk?TEXT("ESTAS EN RIESGO"):TEXT("NO LOCO");
     const FString Phase=bChallenge?FString::Printf(TEXT("Disputa: %s"),*GetParticipantName(AtRisk)):TEXT("Juego normal");
-    return FString::Printf(TEXT("EL LOCO | %s | %s\nPases: %d | Record: %d | Cambios: %d | %.0f s"),*RoleLabel,*Phase,PassStreak,BestStreak,RoleChanges,GetWorld()->GetTimeSeconds()-StartTime);
+    const int32 Remaining=GetRemainingSeconds();
+    return FString::Printf(TEXT("EL LOCO | %02d:%02d | %s | %s\nPases: %d | Record: %d | Cambios: %d"),Remaining/60,Remaining%60,*RoleLabel,*Phase,PassStreak,BestStreak,RoleChanges);
 }

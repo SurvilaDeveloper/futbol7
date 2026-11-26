@@ -422,6 +422,12 @@ void ASoccerBall::PlayKickAudio(float LaunchSpeedCmPerSec)
         KickAudioSpatialization
     );
     LastKickAudioWorldTime = WorldTime;
+    if (const auto* Rondo = ASoccerRondoGameMode::Find(this))
+    {
+        if (Rondo->IsOurBall(this))
+            UE_LOG(LogTemp, Display, TEXT("[Rondo7] AUDIO PLAY sound=%s speed=%.1f volume=%.3f distance=%.1f"),
+                *GetNameSafe(SoundToPlay), LaunchSpeedCmPerSec, Volume, DistanceToHuman);
+    }
 }
 
 ASoccerMatchManager* ASoccerBall::ResolveMatchManager()
@@ -2492,6 +2498,37 @@ void ASoccerBall::ApplyTrainingBallParity6G(float InHorizontalLaunchScale, float
         HorizontalLaunchSpeedScale, AirLinearDamping);
 }
 
+void ASoccerBall::SetSessionDribbleHorizontalScale(float InScale)
+{
+    SessionDribbleHorizontalScale = FMath::Clamp(InScale, 0.1f, 2.f);
+    UE_LOG(LogTemp, Display, TEXT("[Rondo7] DRIBBLE scale=%.2f normalLaunchScale=%.2f airDamping=%.2f"),
+        SessionDribbleHorizontalScale, HorizontalLaunchSpeedScale, AirLinearDamping);
+}
+
+void ASoccerBall::ConfigureSessionKickAudio(USoundBase* InShortSound, USoundBase* InStrongSound,
+    TSubclassOf<ASoccerBall> ReferenceBallClass)
+{
+    // Prefer explicit mode overrides, then the placed actor, then the selected
+    // Blueprint's defaults. Never write into the class default object/assets.
+    const ASoccerBall* OwnDefaults = GetClass()->GetDefaultObject<ASoccerBall>();
+    const ASoccerBall* ReferenceDefaults = ReferenceBallClass
+        ? ReferenceBallClass->GetDefaultObject<ASoccerBall>() : nullptr;
+    if (IsValid(InShortSound)) ShortKickSound = InShortSound;
+    if (IsValid(InStrongSound)) StrongKickSound = InStrongSound;
+    if (!IsValid(ShortKickSound) && OwnDefaults) ShortKickSound = OwnDefaults->ShortKickSound;
+    if (!IsValid(StrongKickSound) && OwnDefaults) StrongKickSound = OwnDefaults->StrongKickSound;
+    if (!IsValid(ShortKickSound) && ReferenceDefaults) ShortKickSound = ReferenceDefaults->ShortKickSound;
+    if (!IsValid(StrongKickSound) && ReferenceDefaults) StrongKickSound = ReferenceDefaults->StrongKickSound;
+    bEnableKickAudio = true;
+    if (KickAudioVolume <= 0.f) KickAudioVolume = 0.85f;
+    if (KickAudioMaxDistanceCm <= KickAudioNearDistanceCm) KickAudioMaxDistanceCm = FMath::Max(9000.f, KickAudioNearDistanceCm + 1.f);
+    UE_LOG(LogTemp, Display, TEXT("[Rondo7] AUDIO ball=%s short=%s strong=%s enabled=%d volume=%.2f maxDistance=%.1f"),
+        *GetName(), *GetNameSafe(ShortKickSound), *GetNameSafe(StrongKickSound), bEnableKickAudio ? 1 : 0,
+        KickAudioVolume, KickAudioMaxDistanceCm);
+    if (!IsValid(ShortKickSound) && !IsValid(StrongKickSound))
+        UE_LOG(LogTemp, Warning, TEXT("[Rondo7] AUDIO missing assets: assign Rondo kick sounds or BP_SoccerBall Ball|Audio settings."));
+}
+
 void ASoccerBall::SetPossessed(bool bNewPossessed)
 {
     if (BallMesh == nullptr)
@@ -2538,13 +2575,14 @@ float ASoccerBall::GetPreLaunchSeparationDistance(float LaunchSpeed) const
 float ASoccerBall::
 GetScaledHorizontalLaunchSpeed(
     float UnscaledHorizontalSpeed,
-    float MinimumSpeed
+    float MinimumSpeed,
+    float ScaleOverride
 ) const
 {
     const float SafeScale =
         FMath::Max(
             0.0f,
-            HorizontalLaunchSpeedScale
+            ScaleOverride >= 0.f ? ScaleOverride : HorizontalLaunchSpeedScale
         );
 
     const float ScaledSpeed =
@@ -3226,7 +3264,8 @@ void ASoccerBall::DribbleTouch(
     const float ScaledTouchSpeed =
         GetScaledHorizontalLaunchSpeed(
             TouchSpeed,
-            0.0f
+            0.0f,
+            SessionDribbleHorizontalScale
         );
 
     BallMesh->SetSimulatePhysics(
@@ -3252,4 +3291,10 @@ void ASoccerBall::DribbleTouch(
     );
 
     MarkTrajectoryChanged();
+    if (const auto* Rondo = ASoccerRondoGameMode::Find(this))
+    {
+        if (Rondo->IsOurBall(this))
+            UE_LOG(LogTemp, Display, TEXT("[Rondo7] DRIBBLE TOUCH requested=%.1f actualXY=%.1f actualZ=%.1f"),
+                TouchSpeed, GetBallPhysicsVelocity().Size2D(), GetBallPhysicsVelocity().Z);
+    }
 }
