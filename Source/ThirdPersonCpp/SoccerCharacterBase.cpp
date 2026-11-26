@@ -1,5 +1,6 @@
 //SoccerCharacterBase.cpp
 #include "SoccerCharacterBase.h"
+#include "Rondo/SoccerRondoGameMode.h"
 #include "SoccerFootstepAudioComponent.h"
 #include "SoccerPlayerProfile.h"
 
@@ -2445,6 +2446,7 @@ void ASoccerCharacterBase::UpdateTackleContactTracking(
                 CurrentTackleContactSummary.OutgoingBallVelocity =
                     OutgoingBallVelocity;
 
+                ASoccerRondoGameMode::Report(this, Ball, ERondoContact::Tackle, EarliestBallContactLocation);
                 Ball->ApplyTackleContactAtLocation(
                     EarliestBallContactLocation,
                     OutgoingBallVelocity,
@@ -9700,6 +9702,7 @@ bool ASoccerCharacterBase::TryResolveAerialContact(
 
     if (bTouchAcceptedByRules)
     {
+        ASoccerRondoGameMode::Report(this, Ball, ERondoContact::Aerial, Candidate.ContactLocation);
         Ball->ApplyAerialContactAtLocation(
             Candidate.ContactLocation,
             OutgoingVelocity,

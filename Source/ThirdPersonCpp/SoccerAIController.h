@@ -181,6 +181,21 @@ class THIRDPERSONCPP_API ASoccerAIController : public AAIController
 
 public:
 	ASoccerAIController();
+    void GetSmartAttackPassKickSettings(ESoccerAttackPassType PassType, float& OutSpeed,
+        float& OutMinTime, float& OutMaxTime) const;
+    void GetAutoPassKickSettings(float& OutSpeed, float& OutMinTime, float& OutMaxTime) const;
+    void GetSimplePassKickSettings(float& OutSpeed, float& OutMinTime, float& OutMaxTime) const
+    {
+        OutSpeed = AISimplePassHorizontalSpeed;
+        OutMinTime = AISimplePassMinTravelTime;
+        OutMaxTime = AISimplePassMaxTravelTime;
+    }
+    float GetPassLaneHalfWidth() const { return AIAerialHeaderPassLaneHalfWidth; }
+    bool CanRondoRecoverReleasedBall(const ASoccerAICharacter* Player) const;
+    bool CanRondoFootContact(ASoccerAICharacter* Player, ASoccerBall* Ball) const;
+    bool HasRondoPhysicalControl(ASoccerAICharacter* Player, ASoccerBall* Ball) const;
+    bool TryRondoCollect(ASoccerAICharacter* Player, ASoccerBall* Ball, ASoccerCharacterBase* Carrier);
+
 
 	// 6AL.6.5: match-style lateral overtake with an explicit defended goal;
 	// the training GameMode still owns navigation and zone activation.

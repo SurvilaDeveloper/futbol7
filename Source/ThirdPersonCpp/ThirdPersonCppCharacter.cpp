@@ -1,5 +1,6 @@
 ﻿// ThirdPersonCppCharacter.cpp
 #include "ThirdPersonCppCharacter.h"
+#include "Rondo/SoccerRondoGameMode.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -3049,6 +3050,8 @@ void AThirdPersonCppCharacter::MoveTowardAerialPreparation()
 
 bool AThirdPersonCppCharacter::HasPendingHumanAerialPass6AO1() const
 {
+	if (auto* Rondo = ASoccerRondoGameMode::Find(this)) return Rondo->IsWaitingForAerialPass(this);
+
     const ASoccerTrainingMovementGameMode6B* Training = GetWorld()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr;
     if (Training) return Training->HasPendingAerialPass6AO1();
@@ -3702,6 +3705,8 @@ void AThirdPersonCppCharacter::PossessBall()
 		return;
 	}
 
+	if (auto* Rondo = ASoccerRondoGameMode::Find(this))
+		if (!Rondo->CanHumanClaim(this)) return;
 	ClearAutoPassFollowState();
 	ClearBallPursuitTarget();
 	ClearHumanBallClaim();
@@ -3736,6 +3741,7 @@ void AThirdPersonCppCharacter::PossessBall()
 	// Foot possession is logical only. The ball keeps its rigid-body velocity,
 	// damping and spin; subsequent control comes from real dribble touches.
 	ControlledBall->SetPossessed(false);
+	ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Control, ControlledBall->GetActorLocation());
 	LogHumanPossessionDebugEvent(
 		TEXT("ACQUIRE"),
 		TEXT("FootContactAccepted"),
@@ -4431,6 +4437,7 @@ void AThirdPersonCppCharacter::RedirectAutoPassBallTowardTargetIfNeeded(float Di
 		AutoPassRedirectMaxSpeed
 	);
 
+	ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Dribble, ControlledBall->GetActorLocation());
 	ControlledBall->DribbleTouch(
 		DirectionToTarget,
 		DesiredRedirectSpeed,
@@ -4519,6 +4526,7 @@ void AThirdPersonCppCharacter::StartControlledReceptionCarry(
 
 	// Reception always starts from the ball's real rigid-body location. The
 	// controlled touch changes only its physical velocity; no location is set.
+	ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Dribble, ControlledBall->GetActorLocation());
 	ControlledBall->DribbleTouch(
 		Forward,
 		FMath::Max(0.0f, SoftTouchSpeed),
@@ -5211,6 +5219,7 @@ void AThirdPersonCppCharacter::UpdatePhysicalDribbleControl()
 		);
 
 		LastPhysicalDribbleCommandedSpeed6E = TouchSpeedToUse;
+		ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Dribble, ControlledBall->GetActorLocation());
 		ControlledBall->DribbleTouch(
 			CurrentDribbleDirection,
 			TouchSpeedToUse,
@@ -5661,6 +5670,7 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 
 		if (bActiveStrongRunDribbleTurnUsesChargedTrajectory)
 		{
+			ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Kick, ControlledBall->GetActorLocation());
 			ControlledBall->ChargedKickToTarget(
 				ExecutedKickTarget,
 				ExecutedKickHorizontalSpeed
@@ -5668,6 +5678,7 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 		}
 		else
 		{
+			ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Kick, ControlledBall->GetActorLocation());
 			ControlledBall->KickToTarget(
 				ExecutedKickTarget,
 				ExecutedKickHorizontalSpeed,
@@ -5716,6 +5727,7 @@ void AThirdPersonCppCharacter::PerformStrongRunDribbleTurnImpact()
 	CurrentDribbleDirection = ExecutedTurnDirection;
 	DesiredDribbleDirection = ExecutedTurnDirection;
 
+	ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Dribble, ControlledBall->GetActorLocation());
 	ControlledBall->DribbleTouch(
 		ExecutedTurnDirection,
 		ExecutedTurnTouchSpeed,
@@ -6318,6 +6330,7 @@ void AThirdPersonCppCharacter::PerformNormalRunDribbleTurnImpact()
 	CurrentDribbleDirection = ExecutedTurnDirection;
 	DesiredDribbleDirection = ExecutedTurnDirection;
 
+	ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Dribble, ControlledBall->GetActorLocation());
 	ControlledBall->DribbleTouch(
 		ExecutedTurnDirection,
 		ExecutedTurnTouchSpeed,
@@ -7168,6 +7181,8 @@ void AThirdPersonCppCharacter::RequestPassFromTeammate(
 	ESoccerHumanPassRequestType RequestType
 )
 {
+	if (auto* Rondo = ASoccerRondoGameMode::Find(this)) { Rondo->TogglePassRequest(this, RequestType); return; }
+
     if (ASoccerTrainingMovementGameMode6B* Training = GetWorld()
         ? Cast<ASoccerTrainingMovementGameMode6B>(GetWorld()->GetAuthGameMode()) : nullptr)
     {
@@ -8123,6 +8138,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 			{
 				UE_LOG(LogTemp, Display, TEXT("[HumanShot6AO54] IMMEDIATE montage=None delay=0.000"));
 			}
+			ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Kick, ControlledBall->GetActorLocation());
 			ControlledBall->ChargedKickToTarget(
 				ExecutedTarget,
 				HorizontalSpeedToUse
@@ -8130,6 +8146,7 @@ void AThirdPersonCppCharacter::ExecutePendingKick()
 		}
 		else
 		{
+			ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Kick, ControlledBall->GetActorLocation());
 			ControlledBall->KickToTarget(
 				ExecutedTarget,
 				HorizontalSpeedToUse,
@@ -8481,6 +8498,7 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 
 	if (bActiveKickUsesChargedTrajectory)
 	{
+		ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Kick, ControlledBall->GetActorLocation());
 		ControlledBall->ChargedKickToTarget(
 			ExecutedKickTarget,
 			ExecutedKickHorizontalSpeed
@@ -8488,6 +8506,7 @@ void AThirdPersonCppCharacter::PerformPendingKickImpact()
 	}
 	else
 	{
+		ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Kick, ControlledBall->GetActorLocation());
 		ControlledBall->KickToTarget(
 			ExecutedKickTarget,
 			ExecutedKickHorizontalSpeed,
@@ -9097,6 +9116,8 @@ void AThirdPersonCppCharacter::FindMatchManager()
 
 bool AThirdPersonCppCharacter::TryRegisterHumanKickTouchForRules()
 {
+	if (auto* Rondo = ASoccerRondoGameMode::Find(this)) return Rondo->CanHumanClaim(this);
+
 	if (!IsValid(MatchManager))
 	{
 		FindMatchManager();
@@ -9120,6 +9141,8 @@ bool AThirdPersonCppCharacter::TryRegisterHumanKickTouchForRules()
 
 ASoccerAICharacter* AThirdPersonCppCharacter::GetOpponentPossessingAICharacter()
 {
+	if (auto* Rondo = ASoccerRondoGameMode::Find(this)) return Rondo->GetOpponentCarrier(this);
+
 	if (!IsValid(MatchManager))
 	{
 		FindMatchManager();
@@ -9226,6 +9249,8 @@ void AThirdPersonCppCharacter::StartHumanStealAttempt(
 
 void AThirdPersonCppCharacter::UpdateHumanStealAttempt()
 {
+	auto* Rondo = ASoccerRondoGameMode::Find(this);
+
 	if (!bIsHumanStealAttemptActive)
 	{
 		return;
@@ -9255,18 +9280,18 @@ void AThirdPersonCppCharacter::UpdateHumanStealAttempt()
 		return;
 	}
 
-	if (!IsValid(MatchManager))
+	if (!IsValid(MatchManager) && !Rondo)
 	{
 		FindMatchManager();
 	}
 
-	if (!IsValid(MatchManager))
+	if (!IsValid(MatchManager) && !Rondo)
 	{
 		FailHumanStealAttempt();
 		return;
 	}
 
-	ASoccerBall* SoccerBall = MatchManager->GetSoccerBall();
+	ASoccerBall* SoccerBall = Rondo ? Rondo->GetBall() : MatchManager->GetSoccerBall();
 
 	if (!IsValid(SoccerBall))
 	{
@@ -9319,12 +9344,14 @@ void AThirdPersonCppCharacter::UpdateHumanStealAttempt()
 
 void AThirdPersonCppCharacter::MoveTowardHumanStealTarget()
 {
-	if (!IsValid(MatchManager))
+	auto* Rondo = ASoccerRondoGameMode::Find(this);
+
+	if (!IsValid(MatchManager) && !Rondo)
 	{
 		return;
 	}
 
-	ASoccerBall* SoccerBall = MatchManager->GetSoccerBall();
+	ASoccerBall* SoccerBall = Rondo ? Rondo->GetBall() : MatchManager->GetSoccerBall();
 
 	if (!IsValid(SoccerBall))
 	{
@@ -10151,4 +10178,9 @@ void AThirdPersonCppCharacter::UpdateDribbleComparison6F(float DeltaSeconds)
         LinearDamping, AngularDamping);
     FFileHelper::SaveStringToFile(Line, *DribbleComparisonCsvPath6F,
         FFileHelper::EEncodingOptions::AutoDetect, &IFileManager::Get(), FILEWRITE_Append);
+}
+
+void AThirdPersonCppCharacter::BindRondoBall(ASoccerBall* NewBall)
+{
+    if (ASoccerRondoGameMode::Find(this)) ControlledBall = NewBall;
 }

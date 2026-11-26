@@ -4,6 +4,7 @@
 #include "Training/Shared/SoccerTrainingPlayerController6B.h"
 
 #include "SoccerBall.h"
+#include "SoccerPassShared.h"
 #include "SoccerAICharacter.h"
 #include "SoccerAIController.h"
 #include "SoccerTacklePredictionShared.h"
@@ -3553,8 +3554,7 @@ bool ASoccerTrainingMovementGameMode6B::TryLaunchGroundPass6AN1()
     UPrimitiveComponent* BallBody = Cast<UPrimitiveComponent>(PracticeBall6B->GetRootComponent());
     const float Damping = BallBody ? FMath::Clamp(BallBody->GetLinearDamping(), 0.1f, 3.f) : 1.8f;
     const float PassDistance = FVector::Dist2D(Ball, Target);
-    const float Speed = FMath::Clamp((PassDistance * (Damping + 0.30f) + 250.f) /
-        FMath::Max(0.1f, TrainingHorizontalLaunchScale6G), 1100.f, 4400.f);
+    const float Speed = SoccerPassShared::GroundPassInput6AN(PassDistance, Damping, TrainingHorizontalLaunchScale6G);
     if (AAIController* AI = Cast<AAIController>(Mate->GetController())) AI->StopMovement();
     // The last flag allows short pass montages; aerial mode still uses KickToAirTarget.
     const float LaunchSpeed = bAerialPassLesson6AO ? AerialPassSpeed6AO : Speed;

@@ -1,9 +1,11 @@
 //SoccerAIController.cpp
 
 #include "SoccerAIController.h"
+#include "Rondo/SoccerRondoGameMode.h"
 
 #include "SoccerAICharacter.h"
 #include "SoccerBall.h"
+#include "SoccerPassShared.h"
 #include "SoccerTacklePredictionShared.h"
 #include "SoccerCharacterBase.h"
 #include "SoccerDebugManager.h"
@@ -20751,32 +20753,11 @@ bool ASoccerAIController::IsAerialHeaderPassLaneBlocked(
 			continue;
 		}
 
-		FVector ToOpponent =
-			Candidate->GetActorLocation() - StartLocation;
-		ToOpponent.Z = 0.0f;
-
-		const float Alpha = FVector::DotProduct(
-			ToOpponent,
-			Segment
-		) / SegmentLengthSquared;
-
-		if (Alpha <= 0.08f || Alpha >= 0.92f)
-		{
-			continue;
-		}
-
-		const FVector ClosestPoint =
-			StartLocation + Segment * Alpha;
-		const float DistanceToLane =
-			FVector::Dist2D(
-				Candidate->GetActorLocation(),
-				ClosestPoint
-			);
-
-		if (DistanceToLane <= LaneHalfWidth)
-		{
-			return true;
-		}
+		if (SoccerPassShared::IsPlayerInPassLane(StartLocation, TargetLocation,
+            Candidate->GetActorLocation(), LaneHalfWidth))
+        {
+            return true;
+        }
 	}
 
 	return false;
@@ -26067,15 +26048,8 @@ bool ASoccerAIController::TryBuildSmartAttackPassPlan(
 		return false;
 	}
 
-	OutHorizontalSpeed = SmartAttackPassToFeetHorizontalSpeed;
-	if (OutPassType == ESoccerAttackPassType::ForwardSpace)
-	{
-		OutHorizontalSpeed = SmartAttackPassToSpaceHorizontalSpeed;
-	}
-	else if (OutPassType == ESoccerAttackPassType::RetentionSpace)
-	{
-		OutHorizontalSpeed = SmartAttackRetentionPassHorizontalSpeed;
-	}
+    float MinTime = 0.f, MaxTime = 0.f;
+    GetSmartAttackPassKickSettings(OutPassType, OutHorizontalSpeed, MinTime, MaxTime);
 
 	return true;
 }
@@ -26175,4 +26149,56 @@ bool ASoccerAIController::TrySmartAttackPass(
 	}
 
 	return true;
+}
+
+// Rondo only: reuse the match's physical limits and steal geometry; the mode
+// owns the loose-ball race rather than a MatchManager tactical order.
+void ASoccerAIController::GetSmartAttackPassKickSettings(ESoccerAttackPassType PassType,
+    float& OutSpeed, float& OutMinTime, float& OutMaxTime) const
+{
+    OutSpeed = SmartAttackPassToFeetHorizontalSpeed;
+    if (PassType == ESoccerAttackPassType::ForwardSpace) OutSpeed = SmartAttackPassToSpaceHorizontalSpeed;
+    else if (PassType == ESoccerAttackPassType::RetentionSpace) OutSpeed = SmartAttackRetentionPassHorizontalSpeed;
+    OutMinTime = SmartAttackPassMinTravelTime;
+    OutMaxTime = SmartAttackPassMaxTravelTime;
+}
+void ASoccerAIController::GetAutoPassKickSettings(float& OutSpeed, float& OutMinTime, float& OutMaxTime) const
+{
+    OutSpeed = AIAutoPassHorizontalSpeed;
+    OutMinTime = AIAutoPassMinTravelTime;
+    OutMaxTime = AIAutoPassMaxTravelTime;
+}
+bool ASoccerAIController::CanRondoRecoverReleasedBall(const ASoccerAICharacter* Player) const
+{
+    return IsValid(Player) && Player->GetTimeSinceAIBallReleased() >= AIPostReleaseRepossessCooldown;
+}
+bool ASoccerAIController::CanRondoFootContact(ASoccerAICharacter* Player, ASoccerBall* Ball) const
+{
+    return IsValid(Player) && IsValid(Ball) && IsBallAtAIPossessionHeight(Player,Ball) &&
+        FVector::Dist2D(Player->GetActorLocation(),Ball->GetActorLocation()) <= AIBallPossessionDistance;
+}
+bool ASoccerAIController::HasRondoPhysicalControl(ASoccerAICharacter* Player, ASoccerBall* Ball) const
+{
+    return IsValid(Player) && IsValid(Ball) && IsBallAtAIPossessionHeight(Player,Ball) &&
+        FVector::Dist2D(Player->GetActorLocation(),Ball->GetActorLocation()) <= AIPhysicalPossessionMaxDistance;
+}
+bool ASoccerAIController::TryRondoCollect(ASoccerAICharacter* Player, ASoccerBall* Ball, ASoccerCharacterBase* Carrier)
+{
+    auto* Mode=ASoccerRondoGameMode::Find(this);
+    if (!Mode || !Mode->ContainsPlayer(Player) || !Mode->IsOurBall(Ball) || !CanRondoFootContact(Player,Ball) ||
+        !CanRondoRecoverReleasedBall(Player) || Player->IsAIAutoPassActive()) return false;
+    Carrier=Mode->GetCarrier();
+    if (Carrier)
+    {
+        if (Carrier==Player || Carrier->GetTeam()==Player->GetTeam() || !CanStealPossessedBall(Player,Carrier,Ball)) return false;
+        if (auto* Other=Cast<ASoccerAICharacter>(Carrier))
+        {
+            if (Other->IsAIPossessionProtected(AIPossessionProtectionTime)) return false;
+            Other->ReleaseAIBall();
+        }
+        else if(auto* Human=Cast<AThirdPersonCppCharacter>(Carrier)) Human->ReleaseBallForAISteal();
+        else return false;
+    }
+    Player->PossessAIBall(Ball);
+    return Player->IsAIPossessingBall();
 }

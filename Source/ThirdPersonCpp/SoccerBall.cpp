@@ -1,6 +1,8 @@
 //SoccerBall.cpp
 
 #include "SoccerBall.h"
+#include "SoccerPassShared.h"
+#include "Rondo/SoccerRondoGameMode.h"
 
 #include "SoccerAICharacter.h"
 #include "SoccerCharacterBase.h"
@@ -496,6 +498,8 @@ void ASoccerBall::UpdatePassiveCharacterBodyContact(float DeltaTime)
 
     UWorld* World = GetWorld();
     ASoccerMatchManager* MatchManager = ResolveMatchManager();
+    ASoccerRondoGameMode* Rondo = ASoccerRondoGameMode::Find(this);
+    const bool bRondo = Rondo && Rondo->IsOurBall(this);
 
     /*
      * Field possession is logical in this project: the rigid body can remain
@@ -504,10 +508,8 @@ void ASoccerBall::UpdatePassiveCharacterBodyContact(float DeltaTime)
      */
     if (
         World == nullptr ||
-        !IsValid(MatchManager) ||
-        MatchManager->GetMatchPlayState() !=
-            ESoccerMatchPlayState::Playing ||
-        IsValid(MatchManager->GetPossessingCharacter())
+        (bRondo ? false :
+            (!IsValid(MatchManager) || MatchManager->GetMatchPlayState() != ESoccerMatchPlayState::Playing || IsValid(MatchManager->GetPossessingCharacter())))
         )
     {
         AdvanceTrackingSample();
@@ -520,7 +522,7 @@ void ASoccerBall::UpdatePassiveCharacterBodyContact(float DeltaTime)
 
     if (
         IncomingBallSpeed <
-            FMath::Max(0.0f, PassiveCharacterBodyMinimumBallSpeed) ||
+            FMath::Max(0.0f, bRondo ? FMath::Min(PassiveCharacterBodyMinimumBallSpeed, 80.f) : PassiveCharacterBodyMinimumBallSpeed) ||
         !bHasPreviousPassiveCharacterBodyBallLocation
         )
     {
@@ -623,7 +625,7 @@ void ASoccerBall::UpdatePassiveCharacterBodyContact(float DeltaTime)
             continue;
         }
 
-        if (!MatchManager->CanCharacterTouchBallNow(Candidate))
+        if (bRondo ? (!Rondo->ContainsPlayer(Candidate) || Candidate==Rondo->GetCarrier()) : !MatchManager->CanCharacterTouchBallNow(Candidate))
         {
             continue;
         }
@@ -812,10 +814,8 @@ void ASoccerBall::UpdatePassiveCharacterBodyContact(float DeltaTime)
     bHasPreviousPassiveCharacterBodyBallLocation = true;
 
     MarkTrajectoryChanged();
-    MatchManager->RegisterPassiveBallDeflection(
-        BestCharacter,
-        ContactBallLocation
-    );
+    if (bRondo) ASoccerRondoGameMode::Report(BestCharacter, this, ERondoContact::Body, BestContactBallLocation);
+    else MatchManager->RegisterPassiveBallDeflection(BestCharacter, ContactBallLocation);
 
     if (bDebugPassiveCharacterBodyContact)
     {
@@ -2185,6 +2185,8 @@ void ASoccerBall::OnBallHit(
     if (bMeaningfulTrajectoryChange)
     {
         MarkTrajectoryChanged();
+        if (auto* Character = Cast<ASoccerCharacterBase>(OtherActor))
+            ASoccerRondoGameMode::Report(Character, this, ERondoContact::Body, GetActorLocation());
     }
 
     if (IsGoalNetComponent(OtherComp))
@@ -2854,6 +2856,16 @@ void ASoccerBall::KickToTarget(
             )
         );
     }
+}
+
+float ASoccerBall::CalculateGroundPassInput6AN(float DistanceCm, bool* bWithinCalibration) const
+{
+    // Plan the rolling phase using the configured grass damping, not a
+    // possibly stale airborne rigid-body setting during possession.
+    const float Damping = FMath::Clamp(GroundLinearDamping, 0.1f, 3.f);
+    const float Required = SoccerPassShared::GroundPassRequiredInput6AN(DistanceCm, Damping, HorizontalLaunchSpeedScale);
+    if (bWithinCalibration) *bWithinCalibration = Required <= 4400.f;
+    return SoccerPassShared::GroundPassInput6AN(DistanceCm, Damping, HorizontalLaunchSpeedScale);
 }
 
 void ASoccerBall::KickGroundToTarget(

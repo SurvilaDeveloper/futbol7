@@ -102,7 +102,8 @@ public:
 		float MaxTravelTime,
 		bool bUseAirTarget,
 		bool bTreatAsShot,
-		bool bTreatAsControlledTouch
+		bool bTreatAsControlledTouch,
+		bool bForceGroundPass = false
 	);
 
 	bool IsAIPossessingBall() const;
@@ -224,7 +225,8 @@ public:
 		float MinTravelTime,
 		float MaxTravelTime,
 		bool bUseAirTarget = false,
-		bool bForceGroundPass6AN = false
+		bool bForceGroundPass6AN = false,
+		bool bResolveAtContact = false
 	);
 
 	// True while an AI pass/shot/restart montage is still active.

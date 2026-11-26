@@ -39,6 +39,7 @@ class THIRDPERSONCPP_API AThirdPersonCppCharacter : public ASoccerCharacterBase
 
 public:
 	AThirdPersonCppCharacter();
+	void BindRondoBall(ASoccerBall* NewBall);
 
 	virtual void Tick(float DeltaTime) override;
 

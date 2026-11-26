@@ -86,6 +86,9 @@ public:
         float HorizontalSpeed
     );
 
+    // Reuse the original 6AN ground-pass calibration with this ball's scale.
+    float CalculateGroundPassInput6AN(float DistanceCm, bool* bWithinCalibration = nullptr) const;
+
     // bPlayKickSound=false for throw-ins and goalkeeper hand releases.
     void KickToAirTarget(
         const FVector& TargetLocation,

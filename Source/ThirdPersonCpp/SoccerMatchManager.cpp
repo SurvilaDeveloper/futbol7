@@ -1,6 +1,7 @@
 //SoccerMatchManager.cpp
 
 #include "SoccerMatchManager.h"
+#include "SoccerPassShared.h"
 #include "SoccerGoalkeeperPositioningShared6AA.h"
 #include "SoccerMatchHistory5L.h"
 #include "SoccerPenaltyKickRestart.h"
@@ -5656,27 +5657,10 @@ bool ASoccerMatchManager::IsOpenPlayPassIntentValid() const
 	const float ElapsedTime =
 		World->GetTimeSeconds() - OpenPlayPassIntentStartTime;
 
-	if (ElapsedTime > FMath::Max(0.1f, OpenPlayPassIntentMaxLifetime))
-	{
-		return false;
-	}
-
-	// Si el pase murio lejos del receptor, deja de tener sentido seguir
-	// reservandole la pelota. Desde ese momento vuelve la carrera normal.
-	if (
-		ElapsedTime >= FMath::Max(0.0f, OpenPlayPassIntentSlowBallGraceTime) &&
-		SoccerBall->GetVelocity().Size2D() <=
-			FMath::Max(0.0f, OpenPlayPassIntentMinimumBallSpeed) &&
-		FVector::Dist2D(
-			SoccerBall->GetActorLocation(),
-			OpenPlayIntendedReceiver->GetActorLocation()
-		) > FMath::Max(0.0f, OpenPlayPassIntentAbandonedDistance)
-		)
-	{
-		return false;
-	}
-
-	return true;
+    return SoccerPassShared::IsPassTravelActive(ElapsedTime, SoccerBall->GetVelocity().Size2D(),
+        FVector::Dist2D(SoccerBall->GetActorLocation(), OpenPlayIntendedReceiver->GetActorLocation()),
+        OpenPlayPassIntentMaxLifetime, OpenPlayPassIntentSlowBallGraceTime,
+        OpenPlayPassIntentMinimumBallSpeed, OpenPlayPassIntentAbandonedDistance);
 }
 
 bool ASoccerMatchManager::HasOpenPlayPassIntentForTeam(

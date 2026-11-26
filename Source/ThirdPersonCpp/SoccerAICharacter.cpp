@@ -1,6 +1,7 @@
 ﻿//SoccerAICharacter.cpp
 
 #include "SoccerAICharacter.h"
+#include "Rondo/SoccerRondoGameMode.h"
 
 #include "GameFramework/CharacterMovementComponent.h"
 #include "SoccerBall.h"
@@ -595,6 +596,7 @@ void ASoccerAICharacter::PossessAIBall(ASoccerBall* NewControlledBall)
 	// Field possession is logical only. SetPossessed(false) guarantees that the
 	// rigid body is awake without erasing the velocity with which it arrived.
 	ControlledBall->SetPossessed(false);
+	ASoccerRondoGameMode::Report(this, ControlledBall, ERondoContact::Control, ControlledBall->GetActorLocation());
 
 	RequestAIMovementReevaluation();
 }
@@ -670,7 +672,8 @@ void ASoccerAICharacter::ExecuteImmediateAIContactKick(
 	float MaxTravelTime,
 	bool bUseAirTarget,
 	bool bTreatAsShot,
-	bool bTreatAsControlledTouch
+	bool bTreatAsControlledTouch,
+	bool bForceGroundPass
 )
 {
 	if (!IsValid(SoccerBall) || TargetLocation.IsNearlyZero())
@@ -699,7 +702,8 @@ void ASoccerAICharacter::ExecuteImmediateAIContactKick(
 		UAnimMontage* ContactMontage = SelectAIKickMontageForBallLocation(
 			BallLocation,
 			ExecutedTarget,
-			MontageAdjustedSpeed
+			MontageAdjustedSpeed,
+			bForceGroundPass
 		);
 
 		if (ContactMontage != nullptr)
@@ -717,7 +721,11 @@ void ASoccerAICharacter::ExecuteImmediateAIContactKick(
 	}
 
 	SoccerBall->SetPossessed(false);
-	if (bUseAirTarget)
+	if (bForceGroundPass && !bUseAirTarget)
+	{
+		SoccerBall->KickGroundToTarget(ExecutedTarget, ExecutedSpeed);
+	}
+	else if (bUseAirTarget)
 	{
 		SoccerBall->KickToAirTarget(ExecutedTarget, ExecutedSpeed, MinTravelTime, MaxTravelTime);
 	}
@@ -1549,6 +1557,7 @@ void ASoccerAICharacter::KickAIBallToTarget(
 
 	ReleaseAIBall();
 
+	ASoccerRondoGameMode::Report(this, BallToKick, ERondoContact::Kick, BallToKick->GetActorLocation());
 	BallToKick->KickToTarget(
 		ExecutedTarget,
 		ExecutedHorizontalSpeed,
@@ -1616,6 +1625,7 @@ void ASoccerAICharacter::KickAIBallToAirTarget(
 
 	ReleaseAIBall();
 
+	ASoccerRondoGameMode::Report(this, BallToKick, ERondoContact::Kick, BallToKick->GetActorLocation());
 	BallToKick->KickToAirTarget(
 		ExecutedTarget,
 		ExecutedHorizontalSpeed,
@@ -1690,7 +1700,8 @@ bool ASoccerAICharacter::TryStartAIKickMontageForOpenPlay(
 	float MinTravelTime,
 	float MaxTravelTime,
 	bool bUseAirTarget,
-	bool bForceGroundPass6AN
+	bool bForceGroundPass6AN,
+	bool bResolveAtContact
 )
 {
 	if (!IsValid(BallToKick) || !bAIIsPossessingBall ||
@@ -1699,21 +1710,46 @@ bool ASoccerAICharacter::TryStartAIKickMontageForOpenPlay(
 		return false;
 	}
 
-	float SpeedToUse = HorizontalSpeed;
-	UAnimMontage* KickMontage = bForceGroundPass6AN
-        ? SelectAIKickMontageForBallLocation(BallToKick->GetActorLocation(), TargetLocation, SpeedToUse, true)
-        : SelectAIKickMontageForTarget(TargetLocation, SpeedToUse);
-	if (!KickMontage)
+	// A first-contact action must validate the live ball BEFORE releasing control.
+	if (bResolveAtContact && (!IsBallWithinAIKickPhysicalContact(BallToKick) ||
+		FVector::Dist2D(BallToKick->GetActorLocation(), TargetLocation) < 10.f))
 	{
+		UE_LOG(LogTemp, Display, TEXT("[AIKickContact2] REJECT actor=%s distance=%.1f"),
+			*GetName(), FVector::Dist2D(GetActorLocation(), BallToKick->GetActorLocation()));
 		return false;
 	}
-	// Reuse the match's normal montage, ball-release, impact timer, and
-	// physical-contact validation. No restart ball freeze and no fallback kick.
-	const bool bStarted = StartAIKickMontage(
+	float SpeedToUse = HorizontalSpeed;
+	UAnimMontage* KickMontage = (bForceGroundPass6AN || bResolveAtContact)
+        ? SelectAIKickMontageForBallLocation(BallToKick->GetActorLocation(), TargetLocation, SpeedToUse, true)
+        : SelectAIKickMontageForTarget(TargetLocation, SpeedToUse);
+	const bool bStarted = KickMontage && StartAIKickMontage(
 		KickMontage, TargetLocation, SpeedToUse,
 		MinTravelTime, MaxTravelTime, bUseAirTarget, false);
-	if (bStarted) bPendingAIKickForceGround6AN = bForceGroundPass6AN && !bUseAirTarget;
-	return bStarted;
+	if (bStarted)
+	{
+		bPendingAIKickForceGround6AN = bForceGroundPass6AN && !bUseAirTarget;
+		if (bResolveAtContact)
+		{
+			// The complete action is now initialized. No other player's Tick can
+			// acquire the released ball between this contact and the impulse.
+			GetWorldTimerManager().ClearTimer(AIKickImpactTimerHandle);
+			PerformPendingAIKickImpact();
+			return HasAIKickMontageImpactedBall();
+		}
+		return true;
+	}
+	if (!bResolveAtContact || !bAIIsPossessingBall || ControlledBall != BallToKick)
+		return false;
+	// No suitable/playing montage: reuse the match's immediate defensive
+	// contact action, including profile adjustments and normal physics.
+	const FVector ContactLocation = BallToKick->GetActorLocation();
+	ReleaseAIBall();
+	ExecuteImmediateAIContactKick(BallToKick, TargetLocation, HorizontalSpeed,
+		MinTravelTime, MaxTravelTime, bUseAirTarget, false, false, bForceGroundPass6AN);
+	ASoccerRondoGameMode::Report(this, BallToKick, ERondoContact::Kick, ContactLocation);
+	UE_LOG(LogTemp, Display, TEXT("[AIKickContact2] FALLBACK APPLIED actor=%s speed=%.1f"),
+		*GetName(), BallToKick->GetBallPhysicsVelocity().Size2D());
+	return true;
 }
 
 bool ASoccerAICharacter::IsAIKickMontageActive() const
@@ -1832,6 +1868,12 @@ void ASoccerAICharacter::StartAIAutoPassToLocation(
 		)
 		)
 	{
+		if (ASoccerRondoGameMode::Find(this) &&
+			GetAIKickImpactDelayForMontage(AutoPassMontage, AutoPassMontage->GetPlayLength()) <= 0.f)
+		{
+			GetWorldTimerManager().ClearTimer(AIKickImpactTimerHandle);
+			PerformPendingAIKickImpact();
+		}
 		return;
 	}
 
@@ -2378,6 +2420,10 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 
 	if (ShouldCancelPendingAIKickAnimation())
 	{
+		if (ASoccerRondoGameMode::Find(this))
+		{
+			UE_LOG(LogTemp, Display, TEXT("[AIKickContact2] CANCEL actor=%s reason=state_or_carrier"), *GetName());
+		}
 		CancelPendingAIKickAnimation(true);
 		return;
 	}
@@ -2395,6 +2441,10 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 		!IsPendingAIKickBallWithinPhysicalContact()
 		)
 	{
+		if (ASoccerRondoGameMode::Find(this))
+		{
+			UE_LOG(LogTemp, Display, TEXT("[AIKickContact2] CANCEL actor=%s reason=physical_contact distance=%.1f"), *GetName(), FVector::Dist2D(GetActorLocation(), BallToKick->GetActorLocation()));
+		}
 		// A moving ball escaped before the authored contact frame. Missing the
 		// kick is preferable to pulling it back or striking it remotely.
 		CancelPendingAIKickAnimation(false);
@@ -2450,6 +2500,7 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 		);
 	}
 
+	const FVector ContactLocation = BallToKick->GetActorLocation();
 	if (bPendingAIKickForceGround6AN)
 	{
 		BallToKick->KickGroundToTarget(ExecutedKickTarget, ExecutedKickHorizontalSpeed);
@@ -2471,6 +2522,13 @@ void ASoccerAICharacter::PerformPendingAIKickImpact()
 			PendingAIKickMinTravelTime,
 			PendingAIKickMaxTravelTime
 		);
+	}
+	if (ASoccerRondoGameMode::Find(this))
+	{
+		UE_LOG(LogTemp, Display, TEXT("[AIKickContact2] APPLIED actor=%s montage=%s speed=%.1f requested=%.1f ground=%d autopass=%d"),
+			*GetName(), *GetNameSafe(ActiveAIKickMontage), BallToKick->GetBallPhysicsVelocity().Size2D(),
+			ExecutedKickHorizontalSpeed, bPendingAIKickForceGround6AN ? 1 : 0, bPendingAIKickIsAutoPass ? 1 : 0);
+		ASoccerRondoGameMode::Report(this, BallToKick, bPendingAIKickIsAutoPass ? ERondoContact::Dribble : ERondoContact::Kick, ContactLocation);
 	}
     if (bPendingAIKickIsShotForStatistics5E)
     {
@@ -2543,6 +2601,10 @@ void ASoccerAICharacter::CancelPendingAIKickAnimation(
 	UAnimMontage* MontageToStop = ActiveAIKickMontage;
 	const bool bBallAlreadyKicked = bPendingAIKickHasImpactedBall;
 	const bool bWasRestartKick = bPendingAIKickIsRestart;
+	if (!bBallAlreadyKicked && ASoccerRondoGameMode::Find(this))
+	{
+		UE_LOG(LogTemp, Display, TEXT("[AIKickContact2] CANCEL BEFORE IMPACT actor=%s montage=%s"), *GetName(), *GetNameSafe(MontageToStop));
+	}
 
 	bool bBallClaimedByAnotherCharacter = false;
 
@@ -2660,6 +2722,11 @@ bool ASoccerAICharacter::ShouldCancelPendingAIKickAnimation() const
 		return true;
 	}
 
+	if (auto* Rondo = ASoccerRondoGameMode::Find(this))
+	{
+		const auto* Carrier = Rondo->GetCarrier();
+		if (Carrier && Carrier != this) return true;
+	}
 	if (UWorld* World = GetWorld())
 	{
 		for (TActorIterator<ASoccerMatchManager> It(World); It; ++It)
@@ -2874,6 +2941,7 @@ void ASoccerAICharacter::ExecuteAIAutoPassImmediate(
 
 	ReleaseAIBall();
 
+	ASoccerRondoGameMode::Report(this, BallToKick, ERondoContact::Dribble, BallToKick->GetActorLocation());
 	BallToKick->KickToTarget(
 		ExecutedAutoPassTarget,
 		ExecutedAutoPassSpeed,
