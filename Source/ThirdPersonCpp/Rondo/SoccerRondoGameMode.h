@@ -16,6 +16,7 @@ class USoccerClubProfile;
 class USkeletalMesh;
 class UMaterialInterface;
 class USoundBase;
+class ULineBatchComponent;
 class USoccerRondoResultWidget8;
 
 enum class ERondoContact : uint8 { Body, Control, Kick, Dribble, Aerial, Tackle };
@@ -80,6 +81,16 @@ private:
     // Null materials preserve the club Home kit independently for each garment.
     UPROPERTY(EditDefaultsOnly, Category="Rondo|Appearance")
     TArray<FSoccerRondoParticipantKit> ParticipantKits;
+    // World-space role markers, exclusive to Rondo (centimetres, not diameter).
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Appearance", meta=(ClampMin="45.0", UIMax="100.0"))
+    float RoleRingRadiusCm = 55.f;
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Appearance", meta=(ClampMin="1.0", UIMax="10.0"))
+    float RoleRingThickness = 4.f;
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Appearance")
+    FLinearColor LocoRingColor = FLinearColor::Red;
+    UPROPERTY(EditDefaultsOnly, Category="Rondo|Appearance")
+    FLinearColor AtRiskRingColor = FLinearColor::Yellow;
+    UPROPERTY(Transient) ULineBatchComponent* RoleRingLines = nullptr;
     UPROPERTY(EditDefaultsOnly, Category="Rondo", meta=(ClampMin="0.2", ClampMax="1.0")) float CircleDiameterWidthFraction = 0.60f;
     UPROPERTY(EditDefaultsOnly, Category="Rondo") bool bHumanStartsAsLoco = false;
     UPROPERTY(EditDefaultsOnly, Category="Rondo|Session", meta=(ClampMin="1.0")) float SessionDurationSeconds = 300.f;
@@ -163,4 +174,6 @@ private:
     ASoccerCharacterBase* ChoosePassReceiver(ASoccerAICharacter* Player, bool& bOutAir, bool& bOutBlocked) const;
     void MoveBot(ASoccerAICharacter* Bot, const FVector& Target, bool bChase);
     void DrawBoundary() const;
+    void DrawRoleRings();
+    void ClearRoleRings();
 };

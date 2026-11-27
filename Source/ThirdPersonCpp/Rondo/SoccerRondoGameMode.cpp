@@ -20,6 +20,8 @@
 #include "Materials/MaterialInterface.h"
 #include "ThirdPersonCppCharacter.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/LineBatchComponent.h"
+#include "GameFramework/Actor.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "EngineUtils.h"
@@ -245,6 +247,7 @@ void ASoccerRondoGameMode::InitializeRondo()
     InitialCarrier->PossessAIBall(Ball);
     // Initial scripted placement is not earned contact. Keep the same initial
     // possession and LastTouch, but defer all actual play and scoring.
+    DrawRoleRings();
     BeginStartCountdown9();
     UE_LOG(LogTemp,Display,TEXT("[Rondo1] READY players=%d radius=%.1f loco=%s"),Players.Num(),Radius,*GetNameSafe(Loco));
     UE_LOG(LogTemp,Display,TEXT("[Rondo5] READY club=%s participants=%d locoId=%s"),*RondoClub->ClubId.ToString(),Players.Num(),*Loco->GetPlayerProfileId().ToString());
@@ -296,6 +299,7 @@ void ASoccerRondoGameMode::ReturnToMainMenu9()
         return;
     }
     bExitRequested9 = true;
+    ClearRoleRings();
     bScoringActive = false;
     UE_LOG(LogTemp,Display,TEXT("[Rondo9] EXIT to main menu (session abandoned)"));
     if (UGameplayStatics::IsGamePaused(this)) UGameplayStatics::SetGamePaused(this,false);
@@ -551,6 +555,7 @@ void ASoccerRondoGameMode::Tick(float DeltaSeconds)
         EndPassFlight(TEXT("intent ended"));
     if (Now>=PassRequestUntil) PassRequest=ESoccerHumanPassRequestType::None;
     if(Now>=NextDecision) { NextDecision=Now+DecisionInterval; DecideBots(); }
+    DrawRoleRings();
 }
 FVector ASoccerRondoGameMode::PredictChase(const ASoccerCharacterBase* Player) const
 {
@@ -771,6 +776,97 @@ void ASoccerRondoGameMode::DrawBoundary() const
         DrawDebugLine(GetWorld(),Field->PitchLocalToWorld(FVector(Radius*FMath::Cos(A),Radius*FMath::Sin(A),4.f)),Field->PitchLocalToWorld(FVector(Radius*FMath::Cos(B),Radius*FMath::Sin(B),4.f)),bChallenge?FColor::Orange:FColor::Yellow,false,0.f,0,5.f);
     }
 }
+void ASoccerRondoGameMode::ClearRoleRings()
+{
+    if (IsValid(RoleRingLines)) RoleRingLines->Flush();
+}
+
+void ASoccerRondoGameMode::DrawRoleRings()
+{
+    if (!IsValid(Field) || !GetWorld() || bFinished || bExitRequested9)
+    {
+        ClearRoleRings();
+        return;
+    }
+    // AGameModeBase inherits AInfo, whose actor is normally hidden in game.
+    // A primitive owned by that actor inherits its visibility. Use a separate
+    // visible world actor instead; no attachment to the GameMode or player.
+    bool bCreatedRenderer = false;
+    if (!IsValid(RoleRingLines))
+    {
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.ObjectFlags |= RF_Transient;
+        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        AActor* VisualActor = GetWorld()->SpawnActor<AActor>(
+            AActor::StaticClass(), Field->GetPitchCenterWorldLocation(), FRotator::ZeroRotator, SpawnParams);
+        if (!IsValid(VisualActor))
+        {
+            UE_LOG(LogTemp,Warning,TEXT("[Rondo11.1] Could not spawn role ring visual actor."));
+            return;
+        }
+        VisualActor->SetActorHiddenInGame(false);
+        VisualActor->SetActorEnableCollision(false);
+        VisualActor->SetActorTickEnabled(false);
+        RoleRingLines = NewObject<ULineBatchComponent>(VisualActor, NAME_None, RF_Transient);
+        if (!IsValid(RoleRingLines))
+        {
+            VisualActor->Destroy();
+            return;
+        }
+        VisualActor->AddInstanceComponent(RoleRingLines);
+        VisualActor->SetRootComponent(RoleRingLines);
+        RoleRingLines->SetMobility(EComponentMobility::Movable);
+        RoleRingLines->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        RoleRingLines->SetVisibility(true);
+        RoleRingLines->SetHiddenInGame(false);
+        RoleRingLines->RegisterComponent();
+        if (!RoleRingLines->IsRegistered())
+        {
+            UE_LOG(LogTemp,Warning,TEXT("[Rondo11.1] Could not register role ring component."));
+            VisualActor->Destroy();
+            RoleRingLines = nullptr;
+            return;
+        }
+        // The plain actor may have been spawned without a root component.
+        // Set its transform once the root is registered; line vertices use world space.
+        VisualActor->SetActorLocation(Field->GetPitchCenterWorldLocation());
+        bCreatedRenderer = true;
+    }
+    // Replace the previous frame's geometry, including on a role swap.
+    // Negative lifetime keeps the initial rings visible during the countdown.
+    ClearRoleRings();
+    constexpr int32 Segments = 48;
+    const float RingRadius = FMath::Max(45.f, RoleRingRadiusCm);
+    const float Thickness = FMath::Max(1.f, RoleRingThickness);
+    const auto DrawRing = [&](const ASoccerCharacterBase* Player, const FLinearColor& Color)
+    {
+        if (!IsValid(Player)) return;
+        FVector Center = Field->WorldToPitchLocal(Player->GetActorLocation());
+        // The field's own ground plane, not the player's capsule height:
+        // rings stay on the grass even when their player jumps or falls.
+        // The pitch surface reaches local Z=2 cm; leave a small clearance.
+        Center.Z = 6.f;
+        for (int32 Index = 0; Index < Segments; ++Index)
+        {
+            const float A = 2.f * PI * Index / Segments;
+            const float B = 2.f * PI * (Index + 1) / Segments;
+            const FVector Start = Field->PitchLocalToWorld(Center + FVector(RingRadius*FMath::Cos(A), RingRadius*FMath::Sin(A), 0.f));
+            const FVector End = Field->PitchLocalToWorld(Center + FVector(RingRadius*FMath::Cos(B), RingRadius*FMath::Sin(B), 0.f));
+            RoleRingLines->DrawLine(Start, End, Color, 0, Thickness, -1.f);
+        }
+    };
+    DrawRing(Loco, LocoRingColor);
+    if (bChallenge && AtRisk != Loco) DrawRing(AtRisk, AtRiskRingColor);
+    // Refresh spatial bounds after generating the world-space vertices.
+    RoleRingLines->UpdateBounds();
+    if (bCreatedRenderer)
+    {
+        UE_LOG(LogTemp,Display,TEXT("[Rondo11.1] RINGS READY actor=%s registered=%d visible=%d radius=%.1f thickness=%.1f"),
+            *GetNameSafe(RoleRingLines->GetOwner()), RoleRingLines->IsRegistered()?1:0,
+            RoleRingLines->IsVisible()?1:0, RingRadius, Thickness);
+    }
+}
+
 int32 ASoccerRondoGameMode::GetTouches(const ASoccerCharacterBase* Player) const
 {
     if (!IsValid(Player)) return 0;
@@ -824,6 +920,7 @@ void ASoccerRondoGameMode::FinishSession()
 {
     if (bFinished) return;
     bFinished=true;
+    ClearRoleRings();
     bScoringActive=false;
     PassRequest=ESoccerHumanPassRequestType::None;
     EndPassFlight(TEXT("session finished"));

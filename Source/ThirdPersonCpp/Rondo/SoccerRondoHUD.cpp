@@ -62,9 +62,6 @@ void ASoccerRondoHUD::DrawHUD()
     for (auto* Player : Mode->GetPlayers())
     {
         if (!IsValid(Player)) continue;
-        const bool bLoco = Player == Mode->GetLoco();
-        const bool bRisk = Player == Mode->GetAtRisk();
-
         FVector2D Screen;
         if (PlayerOwner->ProjectWorldLocationToScreen(Player->GetActorLocation()+FVector(0,0,125),Screen))
         {
@@ -72,12 +69,6 @@ void ASoccerRondoHUD::DrawHUD()
             float Width=0.f,Height=0.f;
             GetTextSize(Name,Width,Height,GEngine->GetSmallFont(),1.f);
             DrawText(Name,FLinearColor::White,Screen.X-Width*0.5f,Screen.Y,GEngine->GetSmallFont(),1.f);
-            if (bLoco || bRisk)
-            {
-                const FString RoleLabel=bLoco?TEXT("LOCO"):TEXT("EN RIESGO");
-                GetTextSize(RoleLabel,Width,Height,GEngine->GetSmallFont(),1.1f);
-                DrawText(RoleLabel,bLoco?FLinearColor::Red:FLinearColor::Yellow,Screen.X-Width*0.5f,Screen.Y-Height,GEngine->GetSmallFont(),1.1f);
-            }
         }
     }
     if (Mode->IsStartCountdownActive())
